@@ -3,7 +3,9 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "engines": { "node": "20.x" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -13,10 +15,11 @@
   },
   "dependencies": {
     "express": "^4.19.2",
-    "serve-static": "^1.15.0",
     "firebase": "^11.0.0",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "react-router-dom": "^7.8.0",
+    "serve-static": "^1.15.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.32.0",
