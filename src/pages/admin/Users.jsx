@@ -19,7 +19,7 @@ import {
 
 const PAGE_SIZE = 10;
 
-// seed list; you can grow this over time via the "+ Add role" UI on page
+// You can grow this via the "+ Add role" UI on page
 const DEFAULT_ROLE_OPTIONS = [
   "admin",
   "member",
@@ -38,7 +38,7 @@ export default function Users() {
   const [toast, setToast] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // local role catalog shown as checkboxes (starts with defaults; can add more)
+  // local role catalog
   const [roleOptions, setRoleOptions] = useState(DEFAULT_ROLE_OPTIONS);
   const [newRole, setNewRole] = useState("");
 
@@ -66,9 +66,9 @@ export default function Users() {
           const roles = Array.isArray(v.roles)
             ? v.roles
             : v.role
-            ? [v.role] // migrate old single role on the fly
+            ? [v.role]
             : [];
-        return {
+          return {
             id: d.id,
             ...v,
             roles,
@@ -129,7 +129,7 @@ export default function Users() {
     try {
       const actor = getAuth().currentUser;
       await addDoc(collection(db, "adminLogs"), {
-        action,              // 'setRoles' | 'toggleSuspend'
+        action,              // 'setRole' | 'toggleSuspend' | 'toggleAdminVerified'
         targetUid,
         actorUid: actor?.uid ?? null,
         actorEmail: actor?.email ?? null,
@@ -141,27 +141,25 @@ export default function Users() {
     }
   }
 
-  // Toggle one role inside the roles[]
-  async function toggleRole(uid, role, currentRoles) {
-    const next = currentRoles.includes(role)
-      ? currentRoles.filter((r) => r !== role)
-      : [...currentRoles, role];
-
+  // Set a single role (dropdown) — writes roles: [value] and legacy role
+  async function setSingleRole(uid, value) {
+    const nextRoles = value ? [value] : [];
     setSaving((s) => ({ ...s, [uid]: true }));
     const prev = rows;
-    setRows((rs) => rs.map((r) => (r.id === uid ? { ...r, roles: next } : r)));
+    setRows((rs) => rs.map((r) => (r.id === uid ? { ...r, roles: nextRoles, role: value ?? null } : r)));
 
     try {
       await updateDoc(doc(db, "users", uid), {
-        roles: next,               // plain strings, e.g., ["admin","member"]
+        roles: nextRoles,           // authoritative
+        role: value ?? null,        // legacy field for older code
         updatedAt: serverTimestamp(),
       });
-      await writeAudit("setRoles", uid, { roles: next });
-      showToast("Roles updated");
+      await writeAudit("setRole", uid, { role: value ?? null });
+      showToast("Role updated");
     } catch (e) {
       console.error(e);
       setRows(prev); // rollback
-      showToast("Failed to update roles", "error");
+      showToast("Failed to update role", "error");
     } finally {
       setSaving((s) => {
         const { [uid]: _, ...rest } = s;
@@ -182,6 +180,31 @@ export default function Users() {
       });
       await writeAudit("toggleSuspend", uid, { to: !current });
       showToast(!current ? "User suspended" : "User unsuspended");
+    } catch (e) {
+      console.error(e);
+      setRows(prev);
+      showToast("Failed to update", "error");
+    } finally {
+      setSaving((s) => {
+        const { [uid]: _, ...rest } = s;
+        return rest;
+      });
+    }
+  }
+
+  // Admin-verified override (bypasses email verification requirements)
+  async function toggleAdminVerified(uid, current) {
+    setSaving((s) => ({ ...s, [uid]: true }));
+    const prev = rows;
+    setRows((rs) => rs.map((r) => (r.id === uid ? { ...r, verifiedByAdmin: !current } : r)));
+
+    try {
+      await updateDoc(doc(db, "users", uid), {
+        verifiedByAdmin: !current,
+        updatedAt: serverTimestamp(),
+      });
+      await writeAudit("toggleAdminVerified", uid, { to: !current });
+      showToast(!current ? "Marked as verified by admin" : "Admin verification removed");
     } catch (e) {
       console.error(e);
       setRows(prev);
@@ -262,52 +285,70 @@ export default function Users() {
       </div>
 
       <div className="overflow-x-auto">
-        <table className="min-w-[900px] w-full border border-gray-200 rounded">
+        <table className="min-w-[1100px] w-full border border-gray-200 rounded">
           <thead className="bg-gray-50">
             <tr>
               <th className="text-left p-2 border-b">Email</th>
               <th className="text-left p-2 border-b">Name</th>
               <th className="text-left p-2 border-b">Member ID</th>
-              <th className="text-left p-2 border-b">Roles</th>
+              <th className="text-left p-2 border-b">Role</th>
               <th className="text-left p-2 border-b">Suspended</th>
+              <th className="text-left p-2 border-b">Admin Verified</th>
               <th className="text-left p-2 border-b">Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
               <tr>
-                <td className="p-4 text-gray-500" colSpan={6}>
+                <td className="p-4 text-gray-500" colSpan={7}>
                   Loading users…
                 </td>
               </tr>
             )}
+
             {!loading && filtered.map((u) => {
               const busy = !!saving[u.id];
+              const currentRole = u.roles?.[0] ?? ""; // single-select
+              const adminVerified = !!u.verifiedByAdmin;
+
               return (
                 <tr key={u.id} className="odd:bg-white even:bg-gray-50">
                   <td className="p-2 border-b">{u.email || "—"}</td>
                   <td className="p-2 border-b">{u.displayName || "—"}</td>
                   <td className="p-2 border-b">{u.memberId || "—"}</td>
+
+                  {/* Role: single-select dropdown */}
                   <td className="p-2 border-b">
-                    <div className="flex flex-wrap gap-2">
-                      {roleOptions.map((r) => {
-                        const checked = u.roles?.includes(r);
-                        return (
-                          <label key={r} className="inline-flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4"
-                              checked={!!checked}
-                              disabled={busy}
-                              onChange={() => toggleRole(u.id, r, u.roles || [])}
-                            />
-                            <span className="text-sm">{r}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
+                    <select
+                      className="border rounded px-2 py-1"
+                      value={currentRole}
+                      disabled={busy}
+                      onChange={(e) => setSingleRole(u.id, e.target.value)}
+                    >
+                      <option value="">— Select role —</option>
+                      {roleOptions.map((r) => (
+                        <option key={r} value={r}>{r}</option>
+                      ))}
+                    </select>
                   </td>
+
+                  {/* Suspended flag */}
                   <td className="p-2 border-b">{u.suspended ? "Yes" : "No"}</td>
+
+                  {/* Admin verification override */}
+                  <td className="p-2 border-b">
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4"
+                        checked={adminVerified}
+                        disabled={busy}
+                        onChange={() => toggleAdminVerified(u.id, adminVerified)}
+                      />
+                      <span className="text-sm">Verified</span>
+                    </label>
+                  </td>
+
                   <td className="p-2 border-b">
                     <button
                       onClick={() => toggleSuspend(u.id, u.suspended)}
@@ -320,9 +361,10 @@ export default function Users() {
                 </tr>
               );
             })}
+
             {!loading && filtered.length === 0 && (
               <tr>
-                <td className="p-4 text-gray-500" colSpan={6}>
+                <td className="p-4 text-gray-500" colSpan={7}>
                   No users found.
                 </td>
               </tr>

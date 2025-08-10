@@ -1,3 +1,4 @@
+// src/pages/Dashboard.jsx
 import React, { useEffect, useState } from "react";
 import { useAuth } from "../AuthContext";
 import { auth, db } from "../lib/firebase";
@@ -22,7 +23,6 @@ export default function Dashboard() {
   const [err, setErr] = useState("");
 
   useEffect(() => {
-    // If no user, ensure we are NOT loading and clear profile
     if (!user?.uid) {
       setProfile(null);
       setLoading(false);
@@ -38,9 +38,11 @@ export default function Dashboard() {
           uid: user.uid,
           email: user.email || "",
           displayName: user.displayName || "",
-          role: "member",
+          role: "member",              // legacy single role (kept for compat)
+          roles: ["member"],           // modern roles array
           phone: "",
           memberId: "",
+          verifiedByAdmin: false,      // <-- ensure field exists
           createdAt: serverTimestamp(),
         });
       }
@@ -48,7 +50,7 @@ export default function Dashboard() {
       setProfile(fresh.data());
       setLoading(false);
     })();
-  }, [user?.uid]);
+  }, [user?.uid, db]);
 
   function startEdit() {
     setErr("");
@@ -101,9 +103,7 @@ export default function Dashboard() {
         <main className="max-w-3xl mx-auto p-6">
           <div className="card p-8 text-center">
             <h2 className="text-2xl font-bold">You’re not signed in</h2>
-            <p className="mt-2 text-ink/70">
-              Please sign in to view your dashboard.
-            </p>
+            <p className="mt-2 text-ink/70">Please sign in to view your dashboard.</p>
             <div className="mt-6 flex items-center justify-center gap-3">
               <Link to="/login" className="btn btn-primary">Go to Login</Link>
               <Link to="/signup" className="btn btn-outline">Create account</Link>
@@ -128,6 +128,9 @@ export default function Dashboard() {
   }
 
   const emailToShow = profile?.email || user?.email || "";
+  const adminVerified = profile?.verifiedByAdmin === true;
+  const emailVerified = user?.emailVerified === true;
+  const isVerified = emailVerified || adminVerified;
 
   return (
     <div className="min-h-screen bg-surface text-ink">
@@ -137,9 +140,10 @@ export default function Dashboard() {
             <h2 className="text-2xl font-bold tracking-tight">Member Dashboard</h2>
           </header>
 
-          {user && !user.emailVerified && (
+          {/* Show ONLY if neither email-verified nor admin-verified */}
+          {!isVerified && (
             <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-              Please verify your email to unlock all features.{" "}
+              Your account is not verified yet. Please verify your email or wait for admin verification.{" "}
               <Link to="/verify" className="underline decoration-amber-600 hover:text-amber-700">
                 Go to verification
               </Link>
@@ -217,7 +221,12 @@ export default function Dashboard() {
                 <button type="submit" disabled={saving} className="btn btn-primary disabled:opacity-60">
                   {saving ? "Saving…" : "Save"}
                 </button>
-                <button type="button" onClick={() => setEditing(false)} disabled={saving} className="btn btn-outline disabled:opacity-60">
+                <button
+                  type="button"
+                  onClick={() => setEditing(false)}
+                  disabled={saving}
+                  className="btn btn-outline disabled:opacity-60"
+                >
                   Cancel
                 </button>
               </div>

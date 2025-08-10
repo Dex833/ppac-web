@@ -2,26 +2,20 @@
 import React from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../AuthContext";
+import useUserProfile from "../hooks/useUserProfile"; // ← add this
 
-/**
- * ProtectedRoute
- * - Blocks if not logged in (redirects to /login)
- * - If requireVerified === true, redirects unverified users to /verify
- * - Does NOT block suspended users here (admin areas are blocked by RequireRole/AdminRoute)
- */
 export default function ProtectedRoute({ children, requireVerified = false }) {
   const { user, loading } = useAuth();
+  const { profile, loading: profileLoading } = useUserProfile(); // ← read admin override
   const loc = useLocation();
 
-  // Keep layout stable while auth initializes
-  if (loading) return null;
+  if (loading || profileLoading) return null;
 
-  // Not signed in → go to login, remember where they came from
   if (!user) return <Navigate to="/login" replace state={{ from: loc }} />;
 
-  // Optionally require email verified
-  if (requireVerified && user.emailVerified !== true) {
-    return <Navigate to="/verify" replace />;
+  if (requireVerified) {
+    const ok = user.emailVerified === true || profile?.verifiedByAdmin === true;
+    if (!ok) return <Navigate to="/verify" replace />;
   }
 
   return children;
