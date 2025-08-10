@@ -34,6 +34,10 @@ export default function Login() {
         {err && <small style={{color:'crimson'}}>{err}</small>}
       </form>
       <p>No account? <Link to="/signup">Create one</Link></p>
+	  <p style={{marginTop:8}}>
+  <Link to="/reset">Forgot your password?</Link>
+</p>
+
     </div>
   );
 }
