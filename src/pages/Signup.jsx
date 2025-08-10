@@ -1,8 +1,9 @@
 import React, { useState } from "react";
 import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
-import { auth } from "../lib/firebase";
+import { auth, db } from "../lib/firebase";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../AuthContext";
+import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 
 export default function Signup() {
   const nav = useNavigate();
@@ -20,6 +21,16 @@ export default function Signup() {
     try {
       const cred = await createUserWithEmailAndPassword(auth, email, pass);
       if (name) await updateProfile(cred.user, { displayName: name });
+
+      // Create Firestore profile: users/{uid}
+      await setDoc(doc(db, "users", cred.user.uid), {
+        uid: cred.user.uid,
+        email,
+        displayName: name || "",
+        role: "member",
+        createdAt: serverTimestamp(),
+      });
+
       nav("/dashboard");
     } catch (e) {
       setErr(e.code || "Signup failed");
