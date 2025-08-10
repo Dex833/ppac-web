@@ -1,42 +1,92 @@
-import { Routes, Route, Link } from 'react-router-dom'
-import Login from './pages/Login.jsx'
-import Signup from './pages/Signup.jsx'
-import Dashboard from './pages/Dashboard.jsx'
-import ProtectedRoute from './components/ProtectedRoute.jsx'
-import VerifyEmail from "./pages/VerifyEmail.jsx";
-import ResetPassword from "./pages/ResetPassword.jsx";
+import React from "react";
+import { Routes, Route, Link, NavLink } from "react-router-dom";
+import Login from "./pages/Login.jsx";
+import Signup from "./pages/Signup.jsx";
+import Dashboard from "./pages/Dashboard.jsx";
 
-
+function NavItem({ to, children }) {
+  return (
+    <NavLink
+      to={to}
+      className={({ isActive }) =>
+        [
+          "px-3 py-2 rounded-lg text-sm font-medium transition",
+          isActive
+            ? "bg-brand-600 text-white shadow-sm"
+            : "text-ink/70 hover:bg-brand-50 hover:text-ink"
+        ].join(" ")
+      }
+    >
+      {children}
+    </NavLink>
+  );
+}
 
 export default function App() {
   return (
-    <div style={{ maxWidth: 960, margin: '0 auto', padding: 24 }}>
-      <header style={{ marginBottom: 24 }}>
-        <h1 style={{ margin: 0 }}>PPAC Web (Fresh)</h1>
-        <nav style={{ display: 'flex', gap: 12 }}>
-          <Link to="/">Home</Link>
-          <Link to="/login">Login</Link>
-          <Link to="/signup">Signup</Link>
-          <Link to="/dashboard">Dashboard</Link>
-        </nav>
+    <div className="min-h-screen text-ink">
+      {/* Top bar */}
+      <header className="sticky top-0 z-40 bg-white/80 backdrop-blur border-b border-border">
+        <div className="mx-auto max-w-5xl px-4 h-16 flex items-center justify-between">
+          <Link to="/" className="flex items-center gap-3">
+            {/* Logo is served from /public */}
+            <img
+              src="/ppac-logo.png"
+              alt="Puerto Princesa Agriculture Cooperative"
+              className="h-9 w-9 rounded-full"
+            />
+            <span className="text-lg sm:text-xl font-semibold">
+              Puerto Princesa Agriculture Cooperative
+            </span>
+          </Link>
+
+          <nav className="flex gap-1">
+            <NavItem to="/">Home</NavItem>
+            <NavItem to="/login">Login</NavItem>
+            <NavItem to="/signup">Signup</NavItem>
+            <NavItem to="/dashboard">Dashboard</NavItem>
+          </nav>
+        </div>
       </header>
 
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/signup" element={<Signup />} />
-		<Route path="/verify" element={<VerifyEmail />} />
-		<Route path="/reset" element={<ResetPassword />} />
-        <Route path="/dashboard"element={<ProtectedRoute>
-              <Dashboard />
-            </ProtectedRoute>
-          }
-        />
-        <Route path="*" element={<NotFound />} />
-      </Routes>
-    </div>
-  )
-}
+      {/* Page container */}
+      <main className="mx-auto max-w-5xl px-4 py-10">
+        <Routes>
+          <Route
+            path="/"
+            element={
+              <div className="max-w-2xl card p-6">
+                <h2 className="text-2xl font-bold mb-3">Welcome 👋</h2>
+                <p className="text-ink/70">
+                  Use the navigation to log in, create an account, or open your
+                  dashboard.
+                </p>
+              </div>
+            }
+          />
+          <Route path="/login" element={<Login />} />
+          <Route path="/signup" element={<Signup />} />
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route
+            path="*"
+            element={
+              <div className="text-center py-20">
+                <h2 className="text-3xl font-bold mb-2">404 — Page Not Found</h2>
+                <p className="text-ink/70">
+                  Check the URL or use the navigation above.
+                </p>
+              </div>
+            }
+          />
+        </Routes>
+      </main>
 
-function Home() { return <h2>Home Page</h2> }
-function NotFound() { return <h2>404 — Page Not Found</h2> }
+      {/* Footer */}
+      <footer className="border-t border-border bg-white/70 backdrop-blur">
+        <div className="mx-auto max-w-5xl px-4 py-6 text-sm text-ink/60">
+          © {new Date().getFullYear()} Puerto Princesa Agriculture Cooperative
+        </div>
+      </footer>
+    </div>
+  );
+}
