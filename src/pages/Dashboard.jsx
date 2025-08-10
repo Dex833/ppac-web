@@ -86,6 +86,11 @@ export default function Dashboard() {
   return (
     <div>
       <h2>Member Dashboard</h2>
+	  {user && !user.emailVerified && (
+  <div style={{background:"#fff3cd", padding:8, marginBottom:12, border:"1px solid #ffe69c"}}>
+    Please verify your email to unlock all features. <a href="/verify">Go to verification</a>
+  </div>
+)}
 
       {!editing ? (
         <>
