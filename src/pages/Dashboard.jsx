@@ -119,6 +119,7 @@ export default function Dashboard() {
             Member ID
             <input value={memberId} onChange={e=>setMemberId(e.target.value)} />
           </label>
+			<h1 className="text-3xl font-bold text-blue-600">Tailwind OK</h1>
 
           {err && <small style={{ color: "crimson" }}>{err}</small>}
 

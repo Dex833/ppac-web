@@ -57,6 +57,7 @@ export default function Login() {
       <p style={{marginTop:8}}>
         <Link to="/reset">Forgot your password?</Link>
       </p>
+	  <h1 className="text-3xl font-bold text-blue-600">Tailwind OK</h1>
     </div>
   );
 }

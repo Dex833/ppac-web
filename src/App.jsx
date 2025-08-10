@@ -7,6 +7,7 @@ import VerifyEmail from "./pages/VerifyEmail.jsx";
 import ResetPassword from "./pages/ResetPassword.jsx";
 
 
+
 export default function App() {
   return (
     <div style={{ maxWidth: 960, margin: '0 auto', padding: 24 }}>
