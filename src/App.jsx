@@ -3,6 +3,10 @@ import { Routes, Route, Link, NavLink } from "react-router-dom";
 import Login from "./pages/Login.jsx";
 import Signup from "./pages/Signup.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
+import ProtectedRoute from "./components/ProtectedRoute.jsx";
+import GuestRoute from "./components/GuestRoute.jsx";
+import Verify from "./pages/Verify.jsx";
+import Reset from "./pages/Reset.jsx";
 
 function NavItem({ to, children }) {
   return (
@@ -67,6 +71,11 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
           <Route path="/dashboard" element={<Dashboard />} />
+		  <Route path="/login" element={<GuestRoute><Login/></GuestRoute>} />
+		  <Route path="/signup" element={<GuestRoute><Signup/></GuestRoute>} />
+		  <Route path="/reset" element={<GuestRoute><Reset/></GuestRoute>} />
+		  <Route path="/verify" element={<ProtectedRoute><Verify/></ProtectedRoute>} />
+		  <Route path="/dashboard" element={<ProtectedRoute><Dashboard/></ProtectedRoute>} />
           <Route
             path="*"
             element={
