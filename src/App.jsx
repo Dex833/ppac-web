@@ -1,12 +1,17 @@
 import React from "react";
 import { Routes, Route, Link, NavLink } from "react-router-dom";
+
 import Login from "./pages/Login.jsx";
 import Signup from "./pages/Signup.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
-import ProtectedRoute from "./components/ProtectedRoute.jsx";
-import GuestRoute from "./components/GuestRoute.jsx";
 import Verify from "./pages/Verify.jsx";
 import Reset from "./pages/Reset.jsx";
+import Admin from "./pages/Admin.jsx"; // <- new admin page
+
+import ProtectedRoute from "./components/ProtectedRoute.jsx";
+import GuestRoute from "./components/GuestRoute.jsx";
+import RequireRole from "./components/RequireRole.jsx"; // <- role guard
+import useUserProfile from "./hooks/useUserProfile";      // <- live role
 
 function NavItem({ to, children }) {
   return (
@@ -27,6 +32,8 @@ function NavItem({ to, children }) {
 }
 
 export default function App() {
+  const { role } = useUserProfile(); // shows Admin link only for admins
+
   return (
     <div className="min-h-screen text-ink">
       {/* Top bar */}
@@ -49,6 +56,7 @@ export default function App() {
             <NavItem to="/login">Login</NavItem>
             <NavItem to="/signup">Signup</NavItem>
             <NavItem to="/dashboard">Dashboard</NavItem>
+            {role === "admin" && <NavItem to="/admin">Admin</NavItem>}
           </nav>
         </div>
       </header>
@@ -68,14 +76,63 @@ export default function App() {
               </div>
             }
           />
-          <Route path="/login" element={<Login />} />
-          <Route path="/signup" element={<Signup />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-		  <Route path="/login" element={<GuestRoute><Login/></GuestRoute>} />
-		  <Route path="/signup" element={<GuestRoute><Signup/></GuestRoute>} />
-		  <Route path="/reset" element={<GuestRoute><Reset/></GuestRoute>} />
-		  <Route path="/verify" element={<ProtectedRoute><Verify/></ProtectedRoute>} />
-		  <Route path="/dashboard" element={<ProtectedRoute><Dashboard/></ProtectedRoute>} />
+
+          {/* Guest-only */}
+          <Route
+            path="/login"
+            element={
+              <GuestRoute>
+                <Login />
+              </GuestRoute>
+            }
+          />
+          <Route
+            path="/signup"
+            element={
+              <GuestRoute>
+                <Signup />
+              </GuestRoute>
+            }
+          />
+          <Route
+            path="/reset"
+            element={
+              <GuestRoute>
+                <Reset />
+              </GuestRoute>
+            }
+          />
+
+          {/* Auth-only */}
+          <Route
+            path="/verify"
+            element={
+              <ProtectedRoute>
+                <Verify />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute>
+                <Dashboard />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* Admin-only (auth + role) */}
+          <Route
+            path="/admin"
+            element={
+              <ProtectedRoute>
+                <RequireRole allowed={["admin"]}>
+                  <Admin />
+                </RequireRole>
+              </ProtectedRoute>
+            }
+          />
+
           <Route
             path="*"
             element={
