@@ -16,6 +16,9 @@ import GuestRoute from "./components/GuestRoute.jsx";
 import RequireRole from "./components/RequireRole.jsx";
 import useUserProfile from "./hooks/useUserProfile";
 
+// import the transparent PNG from src/assets
+import ppacLogo from "./assets/ppac-logo.png";
+
 function NavItem({ to, children }) {
   return (
     <NavLink
@@ -53,9 +56,10 @@ export default function App() {
         <div className="mx-auto max-w-5xl px-4 h-16 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-3">
             <img
-              src="/ppac-logo.png"
+              src={ppacLogo}
               alt="Puerto Princesa Agriculture Cooperative"
-              className="h-9 w-9 rounded-full"
+              className="h-9 w-auto rounded-full"
+              style={{ maxHeight: "36px" }}
             />
             <span className="text-lg sm:text-xl font-semibold">
               Puerto Princesa Agriculture Cooperative
