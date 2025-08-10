@@ -1,14 +1,32 @@
+// src/pages/Admin.jsx
 import React from "react";
+import { NavLink, Outlet } from "react-router-dom";
 
-export default function Admin() {
+export default function AdminLayout() {
   return (
-    <div className="mx-auto max-w-4xl">
-      <div className="card p-8">
-        <h2 className="text-2xl font-bold tracking-tight mb-2">Admin</h2>
-        <p className="text-slate-600">
-          Only users with the <span className="badge">admin</span> role can see this page.
-        </p>
+    <div className="card p-6">
+      <h1 className="text-3xl font-bold mb-4">Admin</h1>
+
+      {/* simple tabs */}
+      <div className="mb-6 flex gap-3">
+        <NavLink
+          to="/admin/users"
+          className={({ isActive }) =>
+            [
+              "px-3 py-2 rounded-lg text-sm font-medium transition",
+              isActive
+                ? "bg-brand-600 text-white shadow-sm"
+                : "text-ink/70 hover:bg-brand-50 hover:text-ink",
+            ].join(" ")
+          }
+        >
+          Users
+        </NavLink>
+        {/* add more tabs later */}
       </div>
+
+      {/* child route renders here */}
+      <Outlet />
     </div>
   );
 }
