@@ -41,7 +41,7 @@ export async function generateMemberId(db) {
     return inc;
   });
 
-  // Build YYYY000XXX (pad to 3 digits)
+  // Build YYYY000XXX ( ok pad to 3 digits)
   const suffix = String(nextNumber).padStart(3, "0");
   return `${yearNow}000${suffix}`;
 }
