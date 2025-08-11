@@ -1,5 +1,4 @@
-
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { db } from "../../lib/firebase";
 import {
   collection,
@@ -11,7 +10,6 @@ import {
   orderBy
 } from "firebase/firestore";
 
-
 const ACCOUNT_TYPES = [
   "Asset",
   "Liability",
@@ -19,9 +17,6 @@ const ACCOUNT_TYPES = [
   "Income",
   "Expense",
 ];
-
-
-
 
 export default function ChartOfAccounts() {
   const [accounts, setAccounts] = useState([]);
@@ -43,6 +38,14 @@ export default function ChartOfAccounts() {
     });
     return () => unsub();
   }, []);
+
+  // Unique main names (for the combo box suggestions)
+  const mainOptions = useMemo(() => {
+    const set = new Set(
+      accounts.filter(a => !a.archived).map(a => (a.main || "").trim()).filter(Boolean)
+    );
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [accounts]);
 
   function getTypePrefix(type) {
     switch (type) {
@@ -67,8 +70,8 @@ export default function ChartOfAccounts() {
 
   function isDuplicate(main, individual, type) {
     return accounts.some(
-      a => a.main.trim().toLowerCase() === main.trim().toLowerCase() &&
-           a.individual.trim().toLowerCase() === individual.trim().toLowerCase() &&
+      a => (a.main || "").trim().toLowerCase() === main.trim().toLowerCase() &&
+           (a.individual || "").trim().toLowerCase() === individual.trim().toLowerCase() &&
            a.type === type &&
            a.archived !== true
     );
@@ -89,7 +92,7 @@ export default function ChartOfAccounts() {
         main: form.main.trim(),
         individual: form.individual.trim(),
         type: form.type,
-        description: form.description.trim(),
+        description: (form.description || "").trim(),
         archived: false,
         createdAt: new Date(),
         createdBy: (window.firebaseAuth?.currentUser?.email || null),
@@ -102,18 +105,31 @@ export default function ChartOfAccounts() {
 
   async function handleArchive(id) {
     if (!window.confirm("Archive (deactivate) this account?")) return;
-    await updateDoc(doc(db, "accounts", id), { archived: true, archivedAt: new Date(), archivedBy: (window.firebaseAuth?.currentUser?.email || null) });
+    await updateDoc(doc(db, "accounts", id), {
+      archived: true,
+      archivedAt: new Date(),
+      archivedBy: (window.firebaseAuth?.currentUser?.email || null)
+    });
   }
 
   function handleEdit(acc) {
     setEditId(acc.id);
-    setEditForm({ main: acc.main, individual: acc.individual, type: acc.type, description: acc.description || "" });
+    setEditForm({
+      main: acc.main || "",
+      individual: acc.individual || "",
+      type: acc.type || "Asset",
+      description: acc.description || ""
+    });
   }
 
   async function handleEditSave(id) {
     if (!editForm.main.trim() || !editForm.individual.trim()) return;
-    if (isDuplicate(editForm.main, editForm.individual, editForm.type) &&
-        (editForm.main !== accounts.find(a => a.id === id)?.main || editForm.individual !== accounts.find(a => a.id === id)?.individual || editForm.type !== accounts.find(a => a.id === id)?.type)) {
+    const orig = accounts.find(a => a.id === id);
+    const changingIdentity =
+      (editForm.main !== (orig?.main || "")) ||
+      (editForm.individual !== (orig?.individual || "")) ||
+      (editForm.type !== (orig?.type || ""));
+    if (changingIdentity && isDuplicate(editForm.main, editForm.individual, editForm.type)) {
       alert("Duplicate account for this main/individual/type.");
       return;
     }
@@ -121,7 +137,7 @@ export default function ChartOfAccounts() {
       main: editForm.main.trim(),
       individual: editForm.individual.trim(),
       type: editForm.type,
-      description: editForm.description.trim(),
+      description: (editForm.description || "").trim(),
       updatedAt: new Date(),
       updatedBy: (window.firebaseAuth?.currentUser?.email || null),
     });
@@ -154,8 +170,12 @@ export default function ChartOfAccounts() {
 
   function handleExport() {
     setExporting(true);
-    const rows = accounts.filter(a => !a.archived).map(a => [a.code, a.main, a.individual, a.type, a.description || ""]);
-    const csv = ["Code,Main Account,Individual Account,Type,Description"].concat(rows.map(r => r.map(x => `"${x}"`).join(","))).join("\n");
+    const rows = accounts
+      .filter(a => !a.archived)
+      .map(a => [a.code, a.main, a.individual, a.type, a.description || ""]);
+    const csv = ["Code,Main Account,Individual Account,Type,Description"]
+      .concat(rows.map(r => r.map(x => `"${String(x).replace(/"/g, '""')}"`).join(",")))
+      .join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -173,9 +193,9 @@ export default function ChartOfAccounts() {
     if (a.archived) return false;
     const s = search.trim().toLowerCase();
     return (
-      a.main.toLowerCase().includes(s) ||
-      a.individual.toLowerCase().includes(s) ||
-      a.type.toLowerCase().includes(s) ||
+      (a.main || "").toLowerCase().includes(s) ||
+      (a.individual || "").toLowerCase().includes(s) ||
+      (a.type || "").toLowerCase().includes(s) ||
       (a.description || "").toLowerCase().includes(s)
     );
   });
@@ -184,28 +204,43 @@ export default function ChartOfAccounts() {
   // Group by main account
   const grouped = {};
   for (const acc of sorted) {
-    if (!grouped[acc.main]) grouped[acc.main] = [];
-    grouped[acc.main].push(acc);
+    const m = (acc.main || "").trim();
+    if (!grouped[m]) grouped[m] = [];
+    grouped[m].push(acc);
   }
 
   return (
     <div>
       <h3 className="text-xl font-semibold mb-4">Chart of Accounts</h3>
+
+      {/* Add form */}
       <form className="flex flex-wrap gap-2 mb-6" onSubmit={handleAdd}>
+        {/* Main as combo box: free-type + suggestions */}
         <input
+          list="main-list"
           className="border rounded px-2 py-1 w-40"
           placeholder="Main Account"
           value={form.main}
           onChange={e => setForm(f => ({ ...f, main: e.target.value }))}
+          onBlur={e => setForm(f => ({ ...f, main: e.target.value.trim() }))}
           required
         />
+        {/* One shared datalist for all main inputs */}
+        <datalist id="main-list">
+          {mainOptions.map(m => (
+            <option key={m} value={m} />
+          ))}
+        </datalist>
+
         <input
           className="border rounded px-2 py-1 w-48"
           placeholder="Individual Account"
           value={form.individual}
           onChange={e => setForm(f => ({ ...f, individual: e.target.value }))}
+          onBlur={e => setForm(f => ({ ...f, individual: e.target.value.trim() }))}
           required
         />
+
         <select
           className="border rounded px-2 py-1"
           value={form.type}
@@ -215,17 +250,16 @@ export default function ChartOfAccounts() {
             <option key={t} value={t}>{t}</option>
           ))}
         </select>
+
         <input
           className="border rounded px-2 py-1 w-56"
           placeholder="Description (optional)"
           value={form.description}
           onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+          onBlur={e => setForm(f => ({ ...f, description: e.target.value.trim() }))}
         />
-        <button
-          type="submit"
-          className="btn btn-primary"
-          disabled={saving}
-        >
+
+        <button type="submit" className="btn btn-primary" disabled={saving}>
           {saving ? "Adding…" : "Add Account"}
         </button>
         <button
@@ -238,6 +272,7 @@ export default function ChartOfAccounts() {
         </button>
       </form>
 
+      {/* Search */}
       <input
         className="border rounded px-2 py-1 mb-4 w-80"
         placeholder="Search accounts…"
@@ -252,27 +287,87 @@ export default function ChartOfAccounts() {
           <table className="min-w-full border rounded">
             <thead className="bg-gray-50">
               <tr>
-                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("code")}>Code {sortBy === "code" ? (sortDir === "asc" ? "▲" : "▼") : ""}</th>
-                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("main")}>Main Account {sortBy === "main" ? (sortDir === "asc" ? "▲" : "▼") : ""}</th>
-                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("individual")}>Individual Account {sortBy === "individual" ? (sortDir === "asc" ? "▲" : "▼") : ""}</th>
-                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("type")}>Type {sortBy === "type" ? (sortDir === "asc" ? "▲" : "▼") : ""}</th>
+                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("code")}>
+                  Code {sortBy === "code" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                </th>
+                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("main")}>
+                  Main Account {sortBy === "main" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                </th>
+                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("individual")}>
+                  Individual Account {sortBy === "individual" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                </th>
+                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("type")}>
+                  Type {sortBy === "type" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                </th>
                 <th className="text-left p-2 border-b">Description</th>
                 <th className="text-left p-2 border-b">Actions</th>
               </tr>
             </thead>
             <tbody>
               {Object.keys(grouped).map(main => (
-                <React.Fragment key={main}>
+                <React.Fragment key={main || "(blank)"}>
                   <tr className="bg-blue-50">
-                    <td colSpan={6} className="font-bold p-2 border-b">{main}</td>
+                    <td colSpan={6} className="font-bold p-2 border-b">{main || "(blank main)"}</td>
                   </tr>
                   {grouped[main].map(acc => (
                     <tr key={acc.id} className="odd:bg-white even:bg-gray-50">
                       <td className="p-2 border-b font-mono">{acc.code}</td>
-                      <td className="p-2 border-b">{editId === acc.id ? <input className="border rounded px-2 py-1 w-32" value={editForm.main} onChange={e => setEditForm(f => ({ ...f, main: e.target.value }))} /> : acc.main}</td>
-                      <td className="p-2 border-b">{editId === acc.id ? <input className="border rounded px-2 py-1 w-40" value={editForm.individual} onChange={e => setEditForm(f => ({ ...f, individual: e.target.value }))} /> : acc.individual}</td>
-                      <td className="p-2 border-b">{editId === acc.id ? <select className="border rounded px-2 py-1" value={editForm.type} onChange={e => setEditForm(f => ({ ...f, type: e.target.value }))}>{ACCOUNT_TYPES.map(t => (<option key={t} value={t}>{t}</option>))}</select> : acc.type}</td>
-                      <td className="p-2 border-b">{editId === acc.id ? <input className="border rounded px-2 py-1 w-40" value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} /> : acc.description}</td>
+
+                      {/* EDITABLE Main uses the same datalist for suggestions */}
+                      <td className="p-2 border-b">
+                        {editId === acc.id ? (
+                          <input
+                            list="main-list"
+                            className="border rounded px-2 py-1 w-32"
+                            value={editForm.main}
+                            onChange={e => setEditForm(f => ({ ...f, main: e.target.value }))}
+                            onBlur={e => setEditForm(f => ({ ...f, main: e.target.value.trim() }))}
+                          />
+                        ) : (
+                          acc.main
+                        )}
+                      </td>
+
+                      <td className="p-2 border-b">
+                        {editId === acc.id ? (
+                          <input
+                            className="border rounded px-2 py-1 w-40"
+                            value={editForm.individual}
+                            onChange={e => setEditForm(f => ({ ...f, individual: e.target.value }))}
+                            onBlur={e => setEditForm(f => ({ ...f, individual: e.target.value.trim() }))}
+                          />
+                        ) : (
+                          acc.individual
+                        )}
+                      </td>
+
+                      <td className="p-2 border-b">
+                        {editId === acc.id ? (
+                          <select
+                            className="border rounded px-2 py-1"
+                            value={editForm.type}
+                            onChange={e => setEditForm(f => ({ ...f, type: e.target.value }))}
+                          >
+                            {ACCOUNT_TYPES.map(t => (<option key={t} value={t}>{t}</option>))}
+                          </select>
+                        ) : (
+                          acc.type
+                        )}
+                      </td>
+
+                      <td className="p-2 border-b">
+                        {editId === acc.id ? (
+                          <input
+                            className="border rounded px-2 py-1 w-40"
+                            value={editForm.description}
+                            onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
+                            onBlur={e => setEditForm(f => ({ ...f, description: e.target.value.trim() }))}
+                          />
+                        ) : (
+                          acc.description
+                        )}
+                      </td>
+
                       <td className="p-2 border-b">
                         {editId === acc.id ? (
                           <>

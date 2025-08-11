@@ -40,6 +40,12 @@ function formatRange(from, to) {
   return `${left} - ${right}`;
 }
 
+/* -------------------- type helpers -------------------- */
+const isRevenueType = (t) => {
+  const v = (t || "").toLowerCase();
+  return v === "revenue" || v === "income";
+};
+
 /* -------------------- accounts hook -------------------- */
 function useAccounts() {
   const [accounts, setAccounts] = useState([]);
@@ -97,9 +103,9 @@ export default function IncomeStatement() {
     getRecentIncomeStatementReports().then(setRecentReports);
   }, [generating]);
 
-  /* ---- group accounts ---- */
-  const revenues = accounts.filter((a) => a.type === "Revenue");
-  const expenses = accounts.filter((a) => a.type === "Expense");
+  /* ---- group accounts (Income and Revenue both count as revenue) ---- */
+  const revenues = accounts.filter((a) => isRevenueType(a.type));
+  const expenses = accounts.filter((a) => (a.type || "").toLowerCase() === "expense");
 
   function filterEntriesByDate(list, fromDate, toDate) {
     if (!fromDate && !toDate) return list;
@@ -122,7 +128,8 @@ export default function IncomeStatement() {
           }
         });
       });
-      return sum + (acc.type === "Revenue" ? credit - debit : debit - credit);
+      // revenues: credit - debit, expenses: debit - credit
+      return sum + (isRevenueType(acc.type) ? credit - debit : debit - credit);
     }, 0);
   }
 
