@@ -43,7 +43,7 @@ function MainCombo({
           setQ(e.target.value);
           onChange(e.target.value);
           setOpen(true);
-        })}
+        }}
         onFocus={() => setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 120)} // allow click
       />
