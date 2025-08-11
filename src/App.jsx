@@ -11,6 +11,16 @@ import Reset from "./pages/Reset.jsx";
 import AdminLayout from "./pages/Admin.jsx";
 import AdminUsers from "./pages/admin/Users.jsx";
 
+// Lazy load accounting pages
+import { Suspense, lazy } from "react";
+const Accounting = lazy(() => import("./pages/accounting/index.jsx"));
+const ChartOfAccounts = lazy(() => import("./pages/accounting/ChartOfAccounts.jsx"));
+const JournalEntries = lazy(() => import("./pages/accounting/JournalEntries.jsx"));
+const GeneralJournal = lazy(() => import("./pages/accounting/GeneralJournal.jsx"));
+const Ledger = lazy(() => import("./pages/accounting/Ledger.jsx"));
+const TrialBalance = lazy(() => import("./pages/accounting/TrialBalance.jsx"));
+const FinancialStatements = lazy(() => import("./pages/accounting/FinancialStatements.jsx"));
+
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import GuestRoute from "./components/GuestRoute.jsx";
 import RequireRole from "./components/RequireRole.jsx";
@@ -49,6 +59,8 @@ export default function App() {
     : [];
 
   const isAdmin = roles.includes("admin");
+  const isTreasurer = roles.includes("treasurer");
+  const isManager = roles.includes("manager");
   const notSuspended = profile?.suspended !== true;
 
   return (
@@ -74,6 +86,10 @@ export default function App() {
             <NavItem to="/dashboard">Dashboard</NavItem>
             {/* Show Admin tab only when user is admin and not suspended */}
             {isAdmin && notSuspended && <NavItem to="/admin/users">Admin</NavItem>}
+            {/* Show Accounting tab only for admin, treasurer, or manager and not suspended */}
+            {(notSuspended && (isAdmin || isTreasurer || isManager)) && (
+              <NavItem to="/accounting">Accounting</NavItem>
+            )}
           </nav>
         </div>
       </header>
@@ -100,7 +116,7 @@ export default function App() {
           {/* Auth-only */}
           <Route path="/verify" element={<ProtectedRoute><Verify /></ProtectedRoute>} />
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-		  <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+          <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
 
           {/* Admin-only (nested) */}
           <Route
@@ -116,6 +132,28 @@ export default function App() {
           >
             <Route index element={<Navigate to="users" replace />} />
             <Route path="users" element={<AdminUsers />} />
+          </Route>
+
+          {/* Accounting-only (nested) */}
+          <Route
+            path="/accounting"
+            element={
+              <ProtectedRoute>
+                <RequireRole allowed={["admin", "treasurer", "manager"]}>
+                  <Suspense fallback={<div className="p-6">Loading…</div>}>
+                    <Accounting />
+                  </Suspense>
+                </RequireRole>
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<Navigate to="chart-of-accounts" replace />} />
+            <Route path="chart-of-accounts" element={<Suspense fallback={<div className="p-6">Loading…</div>}><ChartOfAccounts /></Suspense>} />
+            <Route path="journal-entries" element={<Suspense fallback={<div className="p-6">Loading…</div>}><JournalEntries /></Suspense>} />
+            <Route path="general-journal" element={<Suspense fallback={<div className="p-6">Loading…</div>}><GeneralJournal /></Suspense>} />
+            <Route path="ledger" element={<Suspense fallback={<div className="p-6">Loading…</div>}><Ledger /></Suspense>} />
+            <Route path="trial-balance" element={<Suspense fallback={<div className="p-6">Loading…</div>}><TrialBalance /></Suspense>} />
+            <Route path="financial-statements" element={<Suspense fallback={<div className="p-6">Loading…</div>}><FinancialStatements /></Suspense>} />
           </Route>
 
           {/* 404 */}
