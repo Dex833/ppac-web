@@ -4,7 +4,7 @@ import { db } from "../../lib/firebase";
 import {
   collection,
   addDoc,
-  deleteDoc,
+  updateDoc,
   doc,
   onSnapshot,
   query,
@@ -22,11 +22,18 @@ const ACCOUNT_TYPES = [
 
 
 
+
 export default function ChartOfAccounts() {
   const [accounts, setAccounts] = useState([]);
-  const [form, setForm] = useState({ main: "", individual: "", type: "Asset" });
+  const [form, setForm] = useState({ main: "", individual: "", type: "Asset", description: "" });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
+  const [editId, setEditId] = useState(null);
+  const [editForm, setEditForm] = useState({ main: "", individual: "", type: "Asset", description: "" });
+  const [sortBy, setSortBy] = useState("code");
+  const [sortDir, setSortDir] = useState("asc");
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     const q = query(collection(db, "accounts"), orderBy("code"));
@@ -37,7 +44,6 @@ export default function ChartOfAccounts() {
     return () => unsub();
   }, []);
 
-  // Helper to get prefix for type
   function getTypePrefix(type) {
     switch (type) {
       case "Asset": return 1000;
@@ -51,7 +57,6 @@ export default function ChartOfAccounts() {
 
   function getNextCode(type) {
     const prefix = getTypePrefix(type);
-    // Filter accounts of this type, get max code
     const codes = accounts
       .filter(a => a.type === type && typeof a.code === "number")
       .map(a => a.code)
@@ -60,9 +65,22 @@ export default function ChartOfAccounts() {
     return Math.max(...codes) + 1;
   }
 
+  function isDuplicate(main, individual, type) {
+    return accounts.some(
+      a => a.main.trim().toLowerCase() === main.trim().toLowerCase() &&
+           a.individual.trim().toLowerCase() === individual.trim().toLowerCase() &&
+           a.type === type &&
+           a.archived !== true
+    );
+  }
+
   async function handleAdd(e) {
     e.preventDefault();
     if (!form.main.trim() || !form.individual.trim()) return;
+    if (isDuplicate(form.main, form.individual, form.type)) {
+      alert("Duplicate account for this main/individual/type.");
+      return;
+    }
     setSaving(true);
     try {
       const code = getNextCode(form.type);
@@ -71,16 +89,103 @@ export default function ChartOfAccounts() {
         main: form.main.trim(),
         individual: form.individual.trim(),
         type: form.type,
+        description: form.description.trim(),
+        archived: false,
+        createdAt: new Date(),
+        createdBy: (window.firebaseAuth?.currentUser?.email || null),
       });
-      setForm({ main: "", individual: "", type: "Asset" });
+      setForm({ main: "", individual: "", type: "Asset", description: "" });
     } finally {
       setSaving(false);
     }
   }
 
-  async function handleDelete(id) {
-    if (!window.confirm("Delete this account?")) return;
-    await deleteDoc(doc(db, "accounts", id));
+  async function handleArchive(id) {
+    if (!window.confirm("Archive (deactivate) this account?")) return;
+    await updateDoc(doc(db, "accounts", id), { archived: true, archivedAt: new Date(), archivedBy: (window.firebaseAuth?.currentUser?.email || null) });
+  }
+
+  function handleEdit(acc) {
+    setEditId(acc.id);
+    setEditForm({ main: acc.main, individual: acc.individual, type: acc.type, description: acc.description || "" });
+  }
+
+  async function handleEditSave(id) {
+    if (!editForm.main.trim() || !editForm.individual.trim()) return;
+    if (isDuplicate(editForm.main, editForm.individual, editForm.type) &&
+        (editForm.main !== accounts.find(a => a.id === id)?.main || editForm.individual !== accounts.find(a => a.id === id)?.individual || editForm.type !== accounts.find(a => a.id === id)?.type)) {
+      alert("Duplicate account for this main/individual/type.");
+      return;
+    }
+    await updateDoc(doc(db, "accounts", id), {
+      main: editForm.main.trim(),
+      individual: editForm.individual.trim(),
+      type: editForm.type,
+      description: editForm.description.trim(),
+      updatedAt: new Date(),
+      updatedBy: (window.firebaseAuth?.currentUser?.email || null),
+    });
+    setEditId(null);
+  }
+
+  function handleEditCancel() {
+    setEditId(null);
+  }
+
+  function handleSort(field) {
+    if (sortBy === field) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortBy(field);
+      setSortDir("asc");
+    }
+  }
+
+  function getSorted(filtered) {
+    return [...filtered].sort((a, b) => {
+      let v1 = a[sortBy], v2 = b[sortBy];
+      if (typeof v1 === "string") v1 = v1.toLowerCase();
+      if (typeof v2 === "string") v2 = v2.toLowerCase();
+      if (v1 < v2) return sortDir === "asc" ? -1 : 1;
+      if (v1 > v2) return sortDir === "asc" ? 1 : -1;
+      return 0;
+    });
+  }
+
+  function handleExport() {
+    setExporting(true);
+    const rows = accounts.filter(a => !a.archived).map(a => [a.code, a.main, a.individual, a.type, a.description || ""]);
+    const csv = ["Code,Main Account,Individual Account,Type,Description"].concat(rows.map(r => r.map(x => `"${x}"`).join(","))).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "chart-of-accounts.csv";
+    a.click();
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+      setExporting(false);
+    }, 500);
+  }
+
+  // Search and filter
+  const filtered = accounts.filter(a => {
+    if (a.archived) return false;
+    const s = search.trim().toLowerCase();
+    return (
+      a.main.toLowerCase().includes(s) ||
+      a.individual.toLowerCase().includes(s) ||
+      a.type.toLowerCase().includes(s) ||
+      (a.description || "").toLowerCase().includes(s)
+    );
+  });
+  const sorted = getSorted(filtered);
+
+  // Group by main account
+  const grouped = {};
+  for (const acc of sorted) {
+    if (!grouped[acc.main]) grouped[acc.main] = [];
+    grouped[acc.main].push(acc);
   }
 
   return (
@@ -110,6 +215,12 @@ export default function ChartOfAccounts() {
             <option key={t} value={t}>{t}</option>
           ))}
         </select>
+        <input
+          className="border rounded px-2 py-1 w-56"
+          placeholder="Description (optional)"
+          value={form.description}
+          onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+        />
         <button
           type="submit"
           className="btn btn-primary"
@@ -117,45 +228,76 @@ export default function ChartOfAccounts() {
         >
           {saving ? "Adding…" : "Add Account"}
         </button>
+        <button
+          type="button"
+          className="btn btn-outline"
+          onClick={handleExport}
+          disabled={exporting}
+        >
+          Export CSV
+        </button>
       </form>
+
+      <input
+        className="border rounded px-2 py-1 mb-4 w-80"
+        placeholder="Search accounts…"
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+      />
 
       {loading ? (
         <div>Loading…</div>
       ) : (
-        <table className="min-w-full border rounded">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="text-left p-2 border-b">Code</th>
-              <th className="text-left p-2 border-b">Main Account</th>
-              <th className="text-left p-2 border-b">Individual Account</th>
-              <th className="text-left p-2 border-b">Type</th>
-              <th className="text-left p-2 border-b">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {accounts.map(acc => (
-              <tr key={acc.id} className="odd:bg-white even:bg-gray-50">
-                <td className="p-2 border-b font-mono">{acc.code}</td>
-                <td className="p-2 border-b">{acc.main}</td>
-                <td className="p-2 border-b">{acc.individual}</td>
-                <td className="p-2 border-b">{acc.type}</td>
-                <td className="p-2 border-b">
-                  <button
-                    className="btn btn-sm btn-outline"
-                    onClick={() => handleDelete(acc.id)}
-                  >
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {accounts.length === 0 && (
+        <div className="overflow-x-auto">
+          <table className="min-w-full border rounded">
+            <thead className="bg-gray-50">
               <tr>
-                <td colSpan={5} className="p-4 text-gray-500 text-center">No accounts yet.</td>
+                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("code")}>Code {sortBy === "code" ? (sortDir === "asc" ? "▲" : "▼") : ""}</th>
+                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("main")}>Main Account {sortBy === "main" ? (sortDir === "asc" ? "▲" : "▼") : ""}</th>
+                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("individual")}>Individual Account {sortBy === "individual" ? (sortDir === "asc" ? "▲" : "▼") : ""}</th>
+                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("type")}>Type {sortBy === "type" ? (sortDir === "asc" ? "▲" : "▼") : ""}</th>
+                <th className="text-left p-2 border-b">Description</th>
+                <th className="text-left p-2 border-b">Actions</th>
               </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {Object.keys(grouped).map(main => (
+                <React.Fragment key={main}>
+                  <tr className="bg-blue-50">
+                    <td colSpan={6} className="font-bold p-2 border-b">{main}</td>
+                  </tr>
+                  {grouped[main].map(acc => (
+                    <tr key={acc.id} className="odd:bg-white even:bg-gray-50">
+                      <td className="p-2 border-b font-mono">{acc.code}</td>
+                      <td className="p-2 border-b">{editId === acc.id ? <input className="border rounded px-2 py-1 w-32" value={editForm.main} onChange={e => setEditForm(f => ({ ...f, main: e.target.value }))} /> : acc.main}</td>
+                      <td className="p-2 border-b">{editId === acc.id ? <input className="border rounded px-2 py-1 w-40" value={editForm.individual} onChange={e => setEditForm(f => ({ ...f, individual: e.target.value }))} /> : acc.individual}</td>
+                      <td className="p-2 border-b">{editId === acc.id ? <select className="border rounded px-2 py-1" value={editForm.type} onChange={e => setEditForm(f => ({ ...f, type: e.target.value }))}>{ACCOUNT_TYPES.map(t => (<option key={t} value={t}>{t}</option>))}</select> : acc.type}</td>
+                      <td className="p-2 border-b">{editId === acc.id ? <input className="border rounded px-2 py-1 w-40" value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} /> : acc.description}</td>
+                      <td className="p-2 border-b">
+                        {editId === acc.id ? (
+                          <>
+                            <button className="btn btn-sm btn-primary mr-1" onClick={() => handleEditSave(acc.id)}>Save</button>
+                            <button className="btn btn-sm btn-outline" onClick={handleEditCancel}>Cancel</button>
+                          </>
+                        ) : (
+                          <>
+                            <button className="btn btn-sm btn-outline mr-1" onClick={() => handleEdit(acc)}>Edit</button>
+                            <button className="btn btn-sm btn-outline" onClick={() => handleArchive(acc.id)}>Archive</button>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </React.Fragment>
+              ))}
+              {sorted.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="p-4 text-gray-500 text-center">No accounts yet.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
