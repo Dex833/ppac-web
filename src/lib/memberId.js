@@ -2,7 +2,7 @@
 import { doc, runTransaction, serverTimestamp } from "firebase/firestore";
 
 /**
- * Generates a new memberId in the format YYYY000XXX using a Firestore transaction.
+ * Generates a new memberId in the format YYYY##### using a Firestore transaction.
  * - Uses sequences/members with fields: { lastNumber: number, year: number }
  * - Resets the counter when the year changes.
  * Returns the string memberId, e.g. "202500001".
@@ -41,7 +41,7 @@ export async function generateMemberId(db) {
     return inc;
   });
 
-  // Build YYYY000XXX ( ok pad to 3 digits)
-  const suffix = String(nextNumber).padStart(3, "0");
-  return `${yearNow}000${suffix}`;
+  // Build YYYY##### (year + zero-padded 5-digit counter)
+  const suffix = String(nextNumber).padStart(5, "0");
+  return `${yearNow}${suffix}`;
 }
