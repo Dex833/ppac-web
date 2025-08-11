@@ -7,6 +7,8 @@ import {
   onSnapshot,
   deleteDoc,
   doc,
+  updateDoc,
+  serverTimestamp,
 } from "firebase/firestore";
 import {
   saveIncomeStatementReport,
@@ -33,33 +35,39 @@ function useAccounts() {
 }
 
 export default function IncomeStatement() {
+  // --- state
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [notes, setNotes] = useState("");
   const [recentReports, setRecentReports] = useState([]);
-  const [showReport, setShowReport] = useState(null); // {from, to, report, ...}
+  const [showReport, setShowReport] = useState(null); // {id?, from, to, report}
   const [generating, setGenerating] = useState(false);
   const [downloading, setDownloading] = useState(false);
+
+  // for edit modal
+  const [editingEntry, setEditingEntry] = useState(null);
+  const [editDate, setEditDate] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+
   const accounts = useAccounts();
   const { profile } = useUserProfile();
-  const isAdmin =
-    profile?.roles?.includes("admin") || profile?.role === "admin";
+  const isAdmin = profile?.roles?.includes("admin") || profile?.role === "admin";
   const isTreasurer =
     profile?.roles?.includes("treasurer") || profile?.role === "treasurer";
   const isManager =
     profile?.roles?.includes("manager") || profile?.role === "manager";
+  const canEditDelete = isAdmin || isTreasurer || isManager;
+
   const userName = profile?.displayName || profile?.email || "Unknown";
   const userId = profile?.uid || "";
   const notesRef = useRef();
 
+  // --- load journal entries (used by report + history list)
   useEffect(() => {
     setLoading(true);
-    const q = query(
-      collection(db, "journalEntries"),
-      orderBy("createdAt", "asc")
-    );
+    const q = query(collection(db, "journalEntries"), orderBy("createdAt", "asc"));
     const unsub = onSnapshot(q, (snap) => {
       setEntries(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setLoading(false);
@@ -67,19 +75,30 @@ export default function IncomeStatement() {
     return () => unsub();
   }, []);
 
+  // --- load recent saved IS reports
   useEffect(() => {
     getRecentIncomeStatementReports().then(setRecentReports);
   }, [generating]);
 
-  // Group accounts by type
+  // --- account groups
   const revenues = accounts.filter((a) => a.type === "Revenue");
   const expenses = accounts.filter((a) => a.type === "Expense");
 
-  function getTotal(accountList, filteredEntries) {
+  function filterEntriesByDate(list, fromDate, toDate) {
+    if (!fromDate && !toDate) return list;
+    return list.filter((e) => {
+      const d = e.date || ""; // expect "YYYY-MM-DD"
+      if (fromDate && d < fromDate) return false;
+      if (toDate && d > toDate) return false;
+      return true;
+    });
+  }
+
+  function getTotal(accountList, filtered) {
     return accountList.reduce((sum, acc) => {
       let credit = 0,
         debit = 0;
-      filteredEntries.forEach((entry) => {
+      filtered.forEach((entry) => {
         (entry.lines || []).forEach((line) => {
           if (line.accountId === acc.id) {
             debit += parseFloat(line.debit) || 0;
@@ -87,31 +106,22 @@ export default function IncomeStatement() {
           }
         });
       });
-      return (
-        sum +
-        (acc.type === "Revenue" ? credit - debit : debit - credit)
-      );
+      // revenues: credit - debit, expenses: debit - credit
+      return sum + (acc.type === "Revenue" ? credit - debit : debit - credit);
     }, 0);
   }
 
-  function filterEntriesByDate(entries, from, to) {
-    if (!from && !to) return entries;
-    return entries.filter((e) => {
-      if (from && e.date < from) return false;
-      if (to && e.date > to) return false;
-      return true;
-    });
-  }
-
-  // For current view (not saved report)
+  // compute current (unsaved) report numbers
   const filteredEntries = filterEntriesByDate(entries, from, to);
   const totalRevenue = getTotal(revenues, filteredEntries);
   const totalExpense = getTotal(expenses, filteredEntries);
   const netIncome = totalRevenue - totalExpense;
 
+  // --- actions: generate, delete, download reports
   async function handleGenerate() {
     setGenerating(true);
     const now = new Date();
+
     const report = {
       revenues: revenues.map((acc) => {
         let credit = 0,
@@ -155,6 +165,7 @@ export default function IncomeStatement() {
       generatedById: userId,
       generatedAt: now.toISOString(),
     };
+
     await saveIncomeStatementReport({ from, to, report });
     setGenerating(false);
     setShowReport({ from, to, report });
@@ -163,9 +174,11 @@ export default function IncomeStatement() {
   }
 
   async function handleDeleteReport(id) {
-    if (!window.confirm("Delete this report?")) return;
+    if (!id) return;
+    if (!window.confirm("Delete this saved report?")) return;
     await deleteDoc(doc(db, "incomeStatementReports", id));
     getRecentIncomeStatementReports().then(setRecentReports);
+    // if you were viewing that report, go back
     setShowReport(null);
   }
 
@@ -175,17 +188,8 @@ export default function IncomeStatement() {
     docPDF.setFontSize(16);
     docPDF.text("Income Statement", 14, 16);
     docPDF.setFontSize(10);
-    // FIXED: removed stray quote inside template string
-    docPDF.text(
-      `Period: ${reportObj.from || "-"} to ${reportObj.to || "-"}`,
-      14,
-      24
-    );
-    docPDF.text(
-      `Generated by: ${reportObj.report.generatedBy || "-"}`,
-      14,
-      30
-    );
+    docPDF.text(`Period: ${reportObj.from || "-"} to ${reportObj.to || "-"}`, 14, 24);
+    docPDF.text(`Generated by: ${reportObj.report.generatedBy || "-"}`, 14, 30);
     docPDF.text(
       `Generated at: ${
         reportObj.report.generatedAt
@@ -258,19 +262,16 @@ export default function IncomeStatement() {
       16,
       y
     );
-    y += 8;
 
+    y += 8;
     if (reportObj.report.notes) {
       docPDF.text("Notes:", 14, y);
       y += 6;
       docPDF.text(reportObj.report.notes, 16, y);
     }
+
     docPDF.save(
-      "IncomeStatement_" +
-        (reportObj.from || "") +
-        "_" +
-        (reportObj.to || "") +
-        ".pdf"
+      "IncomeStatement_" + (reportObj.from || "") + "_" + (reportObj.to || "") + ".pdf"
     );
     setDownloading(false);
   }
@@ -279,7 +280,7 @@ export default function IncomeStatement() {
     let csv = `Income Statement\nPeriod:,${reportObj.from || "-"},to,${
       reportObj.to || "-"
     }\n`;
-    csv += `Generated by:,${reportObj.report.generatedBy || "-"}\nGenerated at:,${
+    csv += `Generated by:,${reportObj.report.generatedBy || "-"}\nGenerated at:${
       reportObj.report.generatedAt
         ? new Date(reportObj.report.generatedAt).toLocaleString()
         : "-"
@@ -300,9 +301,7 @@ export default function IncomeStatement() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `IncomeStatement_${reportObj.from || ""}_${
-      reportObj.to || ""
-    }.csv`;
+    a.download = `IncomeStatement_${reportObj.from || ""}_${reportObj.to || ""}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -312,12 +311,38 @@ export default function IncomeStatement() {
   function handleShowReport(r) {
     setShowReport(r);
   }
-
   function handleBackToCurrent() {
     setShowReport(null);
   }
 
-  // Render either current or saved report
+  // --- Journal History actions (EDIT / DELETE)
+  async function handleDeleteEntry(id) {
+    if (!canEditDelete) return;
+    if (!window.confirm("Delete this journal entry?")) return;
+    await deleteDoc(doc(db, "journalEntries", id));
+    // onSnapshot will refresh the list automatically
+  }
+
+  function handleEditEntry(entry) {
+    if (!canEditDelete) return;
+    setEditingEntry(entry);
+    setEditDate(entry?.date || "");
+    setEditDescription(entry?.description || "");
+  }
+
+  async function handleSaveEdit() {
+    if (!editingEntry?.id) return;
+    await updateDoc(doc(db, "journalEntries", editingEntry.id), {
+      date: editDate || null,
+      description: editDescription || "",
+      updatedAt: serverTimestamp(),
+    });
+    setEditingEntry(null);
+    setEditDate("");
+    setEditDescription("");
+  }
+
+  // --- renderer for report (current or saved)
   const renderReport = (reportObj, showActions = false) => (
     <div className="mb-6">
       <div className="flex flex-wrap items-center gap-4 mb-2">
@@ -332,9 +357,7 @@ export default function IncomeStatement() {
           <span
             className={
               "font-bold " +
-              (reportObj.report.netIncome >= 0
-                ? "text-green-700"
-                : "text-red-600")
+              (reportObj.report.netIncome >= 0 ? "text-green-700" : "text-red-600")
             }
           >
             {reportObj.report.netIncome.toLocaleString(undefined, {
@@ -350,8 +373,7 @@ export default function IncomeStatement() {
         )}
         {reportObj.report.generatedAt && (
           <div className="text-xs text-gray-500">
-            Generated at:{" "}
-            {new Date(reportObj.report.generatedAt).toLocaleString()}
+            Generated at: {new Date(reportObj.report.generatedAt).toLocaleString()}
           </div>
         )}
         {showActions && (
@@ -380,16 +402,16 @@ export default function IncomeStatement() {
           </div>
         )}
       </div>
+
       <IncomeStatementChart
         revenues={reportObj.report.revenues}
         expenses={reportObj.report.expenses}
       />
+
       <table className="min-w-full border border-gray-300 rounded text-sm mb-4">
         <thead className="bg-gray-50">
           <tr>
-            <th className="text-left p-2 border-b border-r border-gray-200">
-              Account
-            </th>
+            <th className="text-left p-2 border-b border-r border-gray-200">Account</th>
             <th className="text-right p-2 border-b">Amount</th>
           </tr>
         </thead>
@@ -465,6 +487,7 @@ export default function IncomeStatement() {
           </tr>
         </tbody>
       </table>
+
       {reportObj.report.notes && (
         <div className="bg-yellow-50 border-l-4 border-yellow-400 p-3 mb-2 text-sm text-yellow-900">
           <div className="font-semibold mb-1">Notes:</div>
@@ -474,10 +497,18 @@ export default function IncomeStatement() {
     </div>
   );
 
+  // --- derive journal history (latest first, show last 20)
+  const recentEntries = [...entries].sort((a, b) => {
+    const aa = a.createdAt?.seconds || 0;
+    const bb = b.createdAt?.seconds || 0;
+    return bb - aa;
+  }).slice(0, 20);
+
   return (
     <div className="flex gap-8">
       <div className="flex-1">
         <h3 className="text-xl font-semibold mb-4">Income Statement</h3>
+
         <div className="mb-4 flex gap-2 items-end">
           <div>
             <label className="block text-sm font-medium">From</label>
@@ -516,9 +547,7 @@ export default function IncomeStatement() {
 
         {!showReport && (
           <div className="mb-4">
-            <label className="block text-sm font-medium mb-1">
-              Notes (optional)
-            </label>
+            <label className="block text-sm font-medium mb-1">Notes (optional)</label>
             <textarea
               ref={notesRef}
               className="border rounded px-2 py-1 w-full min-h-[40px]"
@@ -553,9 +582,7 @@ export default function IncomeStatement() {
                   });
                   return {
                     code: acc.code,
-                    name:
-                      acc.main +
-                      (acc.individual ? " / " + acc.individual : ""),
+                    name: acc.main + (acc.individual ? " / " + acc.individual : ""),
                     amount: credit - debit,
                   };
                 }),
@@ -572,9 +599,7 @@ export default function IncomeStatement() {
                   });
                   return {
                     code: acc.code,
-                    name:
-                      acc.main +
-                      (acc.individual ? " / " + acc.individual : ""),
+                    name: acc.main + (acc.individual ? " / " + acc.individual : ""),
                     amount: debit - credit,
                   };
                 }),
@@ -593,8 +618,9 @@ export default function IncomeStatement() {
       </div>
 
       <div className="w-80">
+        {/* Saved reports */}
         <h4 className="text-lg font-semibold mb-2">Recent Reports</h4>
-        <ul className="space-y-2">
+        <ul className="space-y-2 mb-6">
           {recentReports.map((r) => (
             <li key={r.id}>
               <button
@@ -606,7 +632,104 @@ export default function IncomeStatement() {
             </li>
           ))}
         </ul>
+
+        {/* Journal History with Edit/Delete */}
+        <h4 className="text-lg font-semibold mb-2">Journal History</h4>
+        <ul className="space-y-2">
+          {recentEntries.map((entry) => (
+            <li
+              key={entry.id}
+              className="flex items-center justify-between border rounded p-2 hover:bg-gray-50"
+            >
+              <div className="min-w-0">
+                <div className="font-medium truncate">
+                  {entry.refNo || entry.reference || entry.id}
+                </div>
+                <div className="text-xs text-gray-500">
+                  {entry.date || "-"} • {(entry.description || "").slice(0, 60)}
+                </div>
+              </div>
+
+              {canEditDelete && (
+                <div className="flex gap-2 shrink-0">
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded bg-blue-100 hover:bg-blue-200"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleEditEntry(entry);
+                    }}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    className="px-2 py-1 text-xs rounded bg-red-100 hover:bg-red-200"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteEntry(entry.id);
+                    }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              )}
+            </li>
+          ))}
+          {recentEntries.length === 0 && (
+            <li className="text-sm text-gray-500">No journal entries yet.</li>
+          )}
+        </ul>
       </div>
+
+      {/* Edit Modal */}
+      {editingEntry && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-lg w-[420px] p-4">
+            <div className="text-lg font-semibold mb-3">Edit Journal Entry</div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium">Date</label>
+                <input
+                  type="date"
+                  className="border rounded px-2 py-1 w-full"
+                  value={editDate}
+                  onChange={(e) => setEditDate(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium">Description</label>
+                <input
+                  type="text"
+                  className="border rounded px-2 py-1 w-full"
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  placeholder="Short description"
+                  maxLength={120}
+                />
+              </div>
+              <div className="text-xs text-gray-500">
+                Ref: {editingEntry.refNo || editingEntry.reference || editingEntry.id}
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                className="px-3 py-1 rounded bg-gray-200"
+                onClick={() => setEditingEntry(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-3 py-1 rounded bg-green-600 text-white"
+                onClick={handleSaveEdit}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
