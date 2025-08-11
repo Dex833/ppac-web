@@ -7,19 +7,22 @@ import {
   doc,
   onSnapshot,
   query,
-  orderBy
+  orderBy,
 } from "firebase/firestore";
 
-const ACCOUNT_TYPES = [
-  "Asset",
-  "Liability",
-  "Equity",
-  "Income",   // keep as-is; IS now handles Income/Revenue together
-  "Expense",
-];
+const ACCOUNT_TYPES = ["Asset", "Liability", "Equity", "Income", "Expense"];
 
-// Lightweight custom combobox for "Main Account"
-function MainCombo({ value, onChange, options, placeholder = "Main Account", inputClass = "" }) {
+/* ---------- CSV helper ---------- */
+const csvEscape = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+
+/* ---------- Lightweight custom combobox for "Main Account" ---------- */
+function MainCombo({
+  value,
+  onChange,
+  options,
+  placeholder = "Main Account",
+  inputClass = "",
+}) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState(value || "");
 
@@ -27,9 +30,7 @@ function MainCombo({ value, onChange, options, placeholder = "Main Account", inp
 
   const filtered = useMemo(() => {
     const s = (q || "").toLowerCase();
-    return options
-      .filter((o) => o.toLowerCase().includes(s))
-      .slice(0, 12);
+    return options.filter((o) => o.toLowerCase().includes(s)).slice(0, 12);
   }, [options, q]);
 
   return (
@@ -42,7 +43,7 @@ function MainCombo({ value, onChange, options, placeholder = "Main Account", inp
           setQ(e.target.value);
           onChange(e.target.value);
           setOpen(true);
-        }}
+        })}
         onFocus={() => setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 120)} // allow click
       />
@@ -84,12 +85,22 @@ function MainCombo({ value, onChange, options, placeholder = "Main Account", inp
 
 export default function ChartOfAccounts() {
   const [accounts, setAccounts] = useState([]);
-  const [form, setForm] = useState({ main: "", individual: "", type: "Asset", description: "" });
+  const [form, setForm] = useState({
+    main: "",
+    individual: "",
+    type: "Asset",
+    description: "",
+  });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
   const [editId, setEditId] = useState(null);
-  const [editForm, setEditForm] = useState({ main: "", individual: "", type: "Asset", description: "" });
+  const [editForm, setEditForm] = useState({
+    main: "",
+    individual: "",
+    type: "Asset",
+    description: "",
+  });
   const [sortBy, setSortBy] = useState("code");
   const [sortDir, setSortDir] = useState("asc");
   const [exporting, setExporting] = useState(false);
@@ -116,30 +127,37 @@ export default function ChartOfAccounts() {
 
   function getTypePrefix(type) {
     switch (type) {
-      case "Asset": return 1000;
-      case "Liability": return 2000;
-      case "Equity": return 3000;
-      case "Income": return 4000;   // keep matching your current data
-      case "Expense": return 5000;
-      default: return 9000;
+      case "Asset":
+        return 1000;
+      case "Liability":
+        return 2000;
+      case "Equity":
+        return 3000;
+      case "Income":
+        return 4000; // keeping your existing data
+      case "Expense":
+        return 5000;
+      default:
+        return 9000;
     }
   }
 
   function getNextCode(type) {
     const prefix = getTypePrefix(type);
     const codes = accounts
-      .filter(a => a.type === type && typeof a.code === "number")
-      .map(a => a.code)
-      .filter(c => c >= prefix && c < prefix + 1000);
+      .filter((a) => a.type === type)
+      .map((a) => Number(a.code))
+      .filter((c) => !Number.isNaN(c) && c >= prefix && c < prefix + 1000);
     if (codes.length === 0) return prefix + 1;
     return Math.max(...codes) + 1;
   }
 
   function isDuplicate(main, individual, type) {
     return accounts.some(
-      a =>
+      (a) =>
         (a.main || "").trim().toLowerCase() === main.trim().toLowerCase() &&
-        (a.individual || "").trim().toLowerCase() === individual.trim().toLowerCase() &&
+        (a.individual || "").trim().toLowerCase() ===
+          individual.trim().toLowerCase() &&
         a.type === type &&
         a.archived !== true
     );
@@ -163,7 +181,7 @@ export default function ChartOfAccounts() {
         description: (form.description || "").trim(),
         archived: false,
         createdAt: new Date(),
-        createdBy: (window.firebaseAuth?.currentUser?.email || null),
+        createdBy: window.firebaseAuth?.currentUser?.email || null,
       });
       setForm({ main: "", individual: "", type: "Asset", description: "" });
     } finally {
@@ -176,7 +194,7 @@ export default function ChartOfAccounts() {
     await updateDoc(doc(db, "accounts", id), {
       archived: true,
       archivedAt: new Date(),
-      archivedBy: (window.firebaseAuth?.currentUser?.email || null),
+      archivedBy: window.firebaseAuth?.currentUser?.email || null,
     });
   }
 
@@ -197,7 +215,10 @@ export default function ChartOfAccounts() {
       editForm.main !== (orig?.main || "") ||
       editForm.individual !== (orig?.individual || "") ||
       editForm.type !== (orig?.type || "");
-    if (changingIdentity && isDuplicate(editForm.main, editForm.individual, editForm.type)) {
+    if (
+      changingIdentity &&
+      isDuplicate(editForm.main, editForm.individual, editForm.type)
+    ) {
       alert("Duplicate account for this main/individual/type.");
       return;
     }
@@ -207,7 +228,7 @@ export default function ChartOfAccounts() {
       type: editForm.type,
       description: (editForm.description || "").trim(),
       updatedAt: new Date(),
-      updatedBy: (window.firebaseAuth?.currentUser?.email || null),
+      updatedBy: window.firebaseAuth?.currentUser?.email || null,
     });
     setEditId(null);
   }
@@ -227,7 +248,8 @@ export default function ChartOfAccounts() {
 
   function getSorted(filtered) {
     return [...filtered].sort((a, b) => {
-      let v1 = a[sortBy], v2 = b[sortBy];
+      let v1 = a[sortBy],
+        v2 = b[sortBy];
       if (typeof v1 === "string") v1 = v1.toLowerCase();
       if (typeof v2 === "string") v2 = v2.toLowerCase();
       if (v1 < v2) return sortDir === "asc" ? -1 : 1;
@@ -237,31 +259,36 @@ export default function ChartOfAccounts() {
   }
 
   function handleExport() {
-  setExporting(true);
+    setExporting(true);
 
-  const rows = accounts
-    .filter((a) => !a.archived)
-    .map((a) => [a.code, a.main, a.individual, a.type, a.description || ""]);
+    const rows = accounts
+      .filter((a) => !a.archived)
+      .map((a) => [a.code, a.main, a.individual, a.type, a.description || ""]);
 
-  const header = ["Code", "Main Account", "Individual Account", "Type", "Description"];
+    const header = [
+      "Code",
+      "Main Account",
+      "Individual Account",
+      "Type",
+      "Description",
+    ];
 
-  const csv =
-    [header.map(csvEscape).join(",")]
+    const csv = [header.map(csvEscape).join(",")]
       .concat(rows.map((r) => r.map(csvEscape).join(",")))
       .join("\n");
 
-  const blob = new Blob([csv], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "chart-of-accounts.csv";
-  a.click();
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "chart-of-accounts.csv";
+    a.click();
 
-  setTimeout(() => {
-    URL.revokeObjectURL(url);
-    setExporting(false);
-  }, 500);
-}
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+      setExporting(false);
+    }, 500);
+  }
 
   // Search and filter
   const filtered = accounts.filter((a) => {
@@ -302,8 +329,12 @@ export default function ChartOfAccounts() {
           className="border rounded px-2 py-1 w-48"
           placeholder="Individual Account"
           value={form.individual}
-          onChange={(e) => setForm((f) => ({ ...f, individual: e.target.value }))}
-          onBlur={(e) => setForm((f) => ({ ...f, individual: e.target.value.trim() }))}
+          onChange={(e) =>
+            setForm((f) => ({ ...f, individual: e.target.value }))
+          }
+          onBlur={(e) =>
+            setForm((f) => ({ ...f, individual: e.target.value.trim() }))
+          }
           required
         />
 
@@ -323,8 +354,12 @@ export default function ChartOfAccounts() {
           className="border rounded px-2 py-1 w-56"
           placeholder="Description (optional)"
           value={form.description}
-          onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-          onBlur={(e) => setForm((f) => ({ ...f, description: e.target.value.trim() }))}
+          onChange={(e) =>
+            setForm((f) => ({ ...f, description: e.target.value }))
+          }
+          onBlur={(e) =>
+            setForm((f) => ({ ...f, description: e.target.value.trim() }))
+          }
         />
 
         <button type="submit" className="btn btn-primary" disabled={saving}>
@@ -365,7 +400,8 @@ export default function ChartOfAccounts() {
                   className="text-left p-2 border-b cursor-pointer"
                   onClick={() => handleSort("main")}
                 >
-                  Main Account {sortBy === "main" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                  Main Account{" "}
+                  {sortBy === "main" ? (sortDir === "asc" ? "▲" : "▼") : ""}
                 </th>
                 <th
                   className="text-left p-2 border-b cursor-pointer"
@@ -401,7 +437,9 @@ export default function ChartOfAccounts() {
                         {editId === acc.id ? (
                           <MainCombo
                             value={editForm.main}
-                            onChange={(val) => setEditForm((f) => ({ ...f, main: val }))}
+                            onChange={(val) =>
+                              setEditForm((f) => ({ ...f, main: val }))
+                            }
                             options={mainOptions}
                             inputClass="w-32"
                           />
@@ -416,10 +454,16 @@ export default function ChartOfAccounts() {
                             className="border rounded px-2 py-1 w-40"
                             value={editForm.individual}
                             onChange={(e) =>
-                              setEditForm((f) => ({ ...f, individual: e.target.value }))
+                              setEditForm((f) => ({
+                                ...f,
+                                individual: e.target.value,
+                              }))
                             }
                             onBlur={(e) =>
-                              setEditForm((f) => ({ ...f, individual: e.target.value.trim() }))
+                              setEditForm((f) => ({
+                                ...f,
+                                individual: e.target.value.trim(),
+                              }))
                             }
                           />
                         ) : (
@@ -453,7 +497,10 @@ export default function ChartOfAccounts() {
                             className="border rounded px-2 py-1 w-40"
                             value={editForm.description}
                             onChange={(e) =>
-                              setEditForm((f) => ({ ...f, description: e.target.value }))
+                              setEditForm((f) => ({
+                                ...f,
+                                description: e.target.value,
+                              }))
                             }
                             onBlur={(e) =>
                               setEditForm((f) => ({
@@ -517,4 +564,4 @@ export default function ChartOfAccounts() {
       )}
     </div>
   );
-}handleExport
+}
