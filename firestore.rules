@@ -113,6 +113,11 @@ service cloud.firestore {
 
     // ACCOUNTING (lock to admins for now)
     // ACCOUNTING (only the currently logged-in admin can write)
+    // Income Statement Reports (admin only)
+match /incomeStatementReports/{docId} {
+  allow get, list: if isAdmin();
+  allow create, update, delete: if isAdmin();
+}
 match /accounts/{id} {
   allow get, list: if isAdmin();
   allow create, update, delete: if isAdmin() && request.auth.uid == userDoc().id;
