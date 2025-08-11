@@ -45,6 +45,17 @@ const isRevenueType = (t) => {
   const v = (t || "").toLowerCase();
   return v === "revenue" || v === "income";
 };
+const isExpenseType = (t) => (t || "").toLowerCase() === "expense";
+
+/* COGS detection: strictly by MAIN name === "COGS" */
+function isCOGSAccount(acc) {
+  return ((acc.main || "").trim().toLowerCase() === "cogs");
+}
+
+/* Extract main from the rendered "Main / Individual" name */
+function mainFromRenderedName(name = "") {
+  return name.split(" / ")[0].trim().toLowerCase();
+}
 
 /* -------------------- accounts hook -------------------- */
 function useAccounts() {
@@ -61,6 +72,23 @@ function useAccounts() {
     return () => unsub();
   }, []);
   return accounts;
+}
+
+/* Sum helper for a single account over filtered entries */
+function sumForAccount(acc, filteredEntries) {
+  let debit = 0, credit = 0;
+  filteredEntries.forEach((entry) => {
+    (entry.lines || []).forEach((line) => {
+      if (line.accountId === acc.id) {
+        debit += parseFloat(line.debit) || 0;
+        credit += parseFloat(line.credit) || 0;
+      }
+    });
+  });
+  // revenues: credit - debit; expenses (incl. COGS): debit - credit
+  const isRevenue = isRevenueType(acc.type);
+  const amount = isRevenue ? (credit - debit) : (debit - credit);
+  return { amount };
 }
 
 export default function IncomeStatement() {
@@ -87,7 +115,7 @@ export default function IncomeStatement() {
   const userId = profile?.uid || "";
   const notesRef = useRef();
 
-  /* ---- load journal entries (used for computing IS) ---- */
+  /* ---- load journal entries ---- */
   useEffect(() => {
     setLoading(true);
     const q = query(collection(db, "journalEntries"), orderBy("createdAt", "asc"));
@@ -103,41 +131,59 @@ export default function IncomeStatement() {
     getRecentIncomeStatementReports().then(setRecentReports);
   }, [generating]);
 
-  /* ---- group accounts (Income and Revenue both count as revenue) ---- */
-  const revenues = accounts.filter((a) => isRevenueType(a.type));
-  const expenses = accounts.filter((a) => (a.type || "").toLowerCase() === "expense");
+  /* ---- group accounts ---- */
+  const revenueAccounts = accounts.filter((a) => isRevenueType(a.type));
+  const expenseAccounts = accounts.filter((a) => isExpenseType(a.type));
+
+  // Split expenses into COGS vs Operating, strictly by main "COGS"
+  const cogsAccountsRaw = expenseAccounts.filter(isCOGSAccount);
+  const opExAccountsRaw = expenseAccounts.filter((a) => !isCOGSAccount(a));
 
   function filterEntriesByDate(list, fromDate, toDate) {
     if (!fromDate && !toDate) return list;
     return list.filter((e) => {
-      const d = e.date || ""; // expect "YYYY-MM-DD"
+      const d = e.date || ""; // "YYYY-MM-DD"
       if (fromDate && d < fromDate) return false;
       if (toDate && d > toDate) return false;
       return true;
     });
   }
 
-  function getTotal(accountList, filtered) {
-    return accountList.reduce((sum, acc) => {
-      let credit = 0, debit = 0;
-      filtered.forEach((entry) => {
-        (entry.lines || []).forEach((line) => {
-          if (line.accountId === acc.id) {
-            debit += parseFloat(line.debit) || 0;
-            credit += parseFloat(line.credit) || 0;
-          }
-        });
-      });
-      // revenues: credit - debit, expenses: debit - credit
-      return sum + (isRevenueType(acc.type) ? credit - debit : debit - credit);
-    }, 0);
-  }
-
   /* ---- compute current (unsaved) report numbers ---- */
   const filteredEntries = filterEntriesByDate(entries, from, to);
-  const totalRevenue = getTotal(revenues, filteredEntries);
-  const totalExpense = getTotal(expenses, filteredEntries);
-  const netIncome = totalRevenue - totalExpense;
+
+  const revenues = revenueAccounts.map((acc) => {
+    const { amount } = sumForAccount(acc, filteredEntries);
+    return {
+      code: acc.code,
+      name: acc.main + (acc.individual ? " / " + acc.individual : ""),
+      amount,
+    };
+  });
+
+  const cogs = cogsAccountsRaw.map((acc) => {
+    const { amount } = sumForAccount(acc, filteredEntries);
+    return {
+      code: acc.code,
+      name: acc.main + (acc.individual ? " / " + acc.individual : ""),
+      amount,
+    };
+  });
+
+  const expenses = opExAccountsRaw.map((acc) => {
+    const { amount } = sumForAccount(acc, filteredEntries);
+    return {
+      code: acc.code,
+      name: acc.main + (acc.individual ? " / " + acc.individual : ""),
+      amount,
+    };
+  });
+
+  const totalRevenue = revenues.reduce((s, a) => s + a.amount, 0);
+  const totalCOGS = cogs.reduce((s, a) => s + a.amount, 0);
+  const grossProfit = totalRevenue - totalCOGS;
+  const totalExpense = expenses.reduce((s, a) => s + a.amount, 0);
+  const netIncome = grossProfit - totalExpense;
 
   /* -------------------- actions -------------------- */
   async function handleGenerate() {
@@ -145,39 +191,12 @@ export default function IncomeStatement() {
     const now = new Date();
 
     const report = {
-      revenues: revenues.map((acc) => {
-        let credit = 0, debit = 0;
-        filteredEntries.forEach((entry) => {
-          (entry.lines || []).forEach((line) => {
-            if (line.accountId === acc.id) {
-              debit += parseFloat(line.debit) || 0;
-              credit += parseFloat(line.credit) || 0;
-            }
-          });
-        });
-        return {
-          code: acc.code,
-          name: acc.main + (acc.individual ? " / " + acc.individual : ""),
-          amount: credit - debit,
-        };
-      }),
-      expenses: expenses.map((acc) => {
-        let credit = 0, debit = 0;
-        filteredEntries.forEach((entry) => {
-          (entry.lines || []).forEach((line) => {
-            if (line.accountId === acc.id) {
-              debit += parseFloat(line.debit) || 0;
-              credit += parseFloat(line.credit) || 0;
-            }
-          });
-        });
-        return {
-          code: acc.code,
-          name: acc.main + (acc.individual ? " / " + acc.individual : ""),
-          amount: debit - credit,
-        };
-      }),
+      revenues,
+      cogs,                 // new field
+      expenses,
       totalRevenue,
+      totalCOGS,            // new field
+      grossProfit,          // new field
       totalExpense,
       netIncome,
       notes,
@@ -221,72 +240,79 @@ export default function IncomeStatement() {
     );
     let y = 44;
 
-    docPDF.text("Revenues", 14, y);
-    y += 6;
-    reportObj.report.revenues.forEach((acc) => {
+    // Revenues
+    docPDF.text("Revenues", 14, y); y += 6;
+    (reportObj.report.revenues || []).forEach((acc) => {
       docPDF.text(acc.code + " - " + acc.name, 16, y);
       docPDF.text(
-        acc.amount.toLocaleString(undefined, {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        }),
-        120,
-        y,
-        { align: "right" }
+        acc.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        120, y, { align: "right" }
       );
       y += 6;
     });
     docPDF.text(
       "Total Revenue: " +
-        reportObj.report.totalRevenue.toLocaleString(undefined, {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        }),
-      16,
-      y
+        (reportObj.report.totalRevenue ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      16, y
+    ); y += 8;
+
+    // COGS
+    const cogsList = reportObj.report.cogs || [];
+    if (cogsList.length) {
+      docPDF.text("Less: Cost of Goods Sold (COGS)", 14, y); y += 6;
+      cogsList.forEach((acc) => {
+        docPDF.text(acc.code + " - " + acc.name, 16, y);
+        docPDF.text(
+          acc.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+          120, y, { align: "right" }
+        );
+        y += 6;
+      });
+      docPDF.text(
+        "Total COGS: " +
+          (reportObj.report.totalCOGS ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        16, y
+      ); y += 8;
+    }
+
+    // Gross Profit
+    docPDF.setFont(undefined, "bold");
+    docPDF.text(
+      "Gross Profit: " +
+        (reportObj.report.grossProfit ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      16, y
     );
+    docPDF.setFont(undefined, "normal");
     y += 8;
 
-    docPDF.text("Expenses", 14, y);
-    y += 6;
-    reportObj.report.expenses.forEach((acc) => {
+    // Expenses
+    docPDF.text("Expenses", 14, y); y += 6;
+    (reportObj.report.expenses || []).forEach((acc) => {
       docPDF.text(acc.code + " - " + acc.name, 16, y);
       docPDF.text(
-        acc.amount.toLocaleString(undefined, {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        }),
-        120,
-        y,
-        { align: "right" }
+        acc.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        120, y, { align: "right" }
       );
       y += 6;
     });
     docPDF.text(
       "Total Expenses: " +
-        reportObj.report.totalExpense.toLocaleString(undefined, {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        }),
-      16,
-      y
-    );
-    y += 8;
+        (reportObj.report.totalExpense ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      16, y
+    ); y += 8;
 
+    // Net Income
+    docPDF.setFont(undefined, "bold");
     docPDF.text(
       "Net Income: " +
-        reportObj.report.netIncome.toLocaleString(undefined, {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        }),
-      16,
-      y
+        (reportObj.report.netIncome ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      16, y
     );
-
+    docPDF.setFont(undefined, "normal");
     y += 8;
+
     if (reportObj.report.notes) {
-      docPDF.text("Notes:", 14, y);
-      y += 6;
+      docPDF.text("Notes:", 14, y); y += 6;
       docPDF.text(reportObj.report.notes, 16, y);
     }
 
@@ -306,15 +332,27 @@ export default function IncomeStatement() {
         ? new Date(reportObj.report.generatedAt).toLocaleString()
         : "-"
     }\n`;
+
     csv += `\nRevenues\nAccount,Amount\n`;
-    reportObj.report.revenues.forEach((acc) => {
+    (reportObj.report.revenues || []).forEach((acc) => {
       csv += `"${acc.code} - ${acc.name}",${acc.amount}\n`;
     });
-    csv += `Total Revenue,${reportObj.report.totalRevenue}\n\nExpenses\nAccount,Amount\n`;
-    reportObj.report.expenses.forEach((acc) => {
+    csv += `Total Revenue,${reportObj.report.totalRevenue ?? 0}\n`;
+
+    const cogsList = reportObj.report.cogs || [];
+    csv += `\nLess: Cost of Goods Sold (COGS)\nAccount,Amount\n`;
+    cogsList.forEach((acc) => {
       csv += `"${acc.code} - ${acc.name}",${acc.amount}\n`;
     });
-    csv += `Total Expenses,${reportObj.report.totalExpense}\n\nNet Income,${reportObj.report.netIncome}\n`;
+    csv += `Total COGS,${reportObj.report.totalCOGS ?? 0}\n`;
+    csv += `Gross Profit,${reportObj.report.grossProfit ?? 0}\n`;
+
+    csv += `\nExpenses\nAccount,Amount\n`;
+    (reportObj.report.expenses || []).forEach((acc) => {
+      csv += `"${acc.code} - ${acc.name}",${acc.amount}\n`;
+    });
+    csv += `Total Expenses,${reportObj.report.totalExpense ?? 0}\n\nNet Income,${reportObj.report.netIncome ?? 0}\n`;
+
     if (reportObj.report.notes) {
       csv += `\nNotes:,"${reportObj.report.notes.replace(/"/g, '""')}"\n`;
     }
@@ -330,6 +368,31 @@ export default function IncomeStatement() {
   }
 
   function handleShowReport(r) {
+    // Backward-compat: if an older saved report lacks cogs, split by MAIN === "COGS"
+    if (!r.report.cogs) {
+      const expenses = r.report.expenses || [];
+      const guessedCogs = expenses.filter((e) => mainFromRenderedName(e.name) === "cogs");
+      const rest = expenses.filter((e) => mainFromRenderedName(e.name) !== "cogs");
+
+      const totalCOGS = guessedCogs.reduce((s, a) => s + (a.amount || 0), 0);
+      const totalRevenue = r.report.totalRevenue ?? (r.report.revenues || []).reduce((s, a) => s + (a.amount || 0), 0);
+      const grossProfit = totalRevenue - totalCOGS;
+      const totalExpense = rest.reduce((s, a) => s + (a.amount || 0), 0);
+      const netIncome = grossProfit - totalExpense;
+
+      r = {
+        ...r,
+        report: {
+          ...r.report,
+          cogs: guessedCogs,
+          expenses: rest,
+          totalCOGS,
+          grossProfit,
+          totalExpense,
+          netIncome,
+        },
+      };
+    }
     setShowReport(r);
   }
   function handleBackToCurrent() {
@@ -337,138 +400,111 @@ export default function IncomeStatement() {
   }
 
   /* -------------------- report renderer -------------------- */
-  const renderReport = (reportObj) => (
-    <div className="mb-6">
-      <div className="flex flex-wrap items-center gap-4 mb-2">
-        <div className="font-semibold text-base">
-          Period: <span className="font-normal">{formatRange(reportObj.from, reportObj.to)}</span>
-        </div>
-        <div className="font-semibold text-base">
-          Net Income:{" "}
-          <span
-            className={
-              "font-bold " +
-              (reportObj.report.netIncome >= 0 ? "text-green-700" : "text-red-600")
-            }
-          >
-            {reportObj.report.netIncome.toLocaleString(undefined, {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })}
-          </span>
-        </div>
-        {reportObj.report.generatedBy && (
-          <div className="text-xs text-gray-500">
-            Generated by: {reportObj.report.generatedBy}
-          </div>
-        )}
-        {reportObj.report.generatedAt && (
-          <div className="text-xs text-gray-500">
-            Generated at: {new Date(reportObj.report.generatedAt).toLocaleString()}
-          </div>
-        )}
-        <div className="flex gap-2 ml-auto">
-          <button
-            className="px-2 py-1 rounded bg-blue-100 hover:bg-blue-200 text-blue-800 text-xs font-semibold"
-            onClick={() => handleDownloadPDF(reportObj)}
-            disabled={downloading}
-          >
-            PDF
-          </button>
-          <button
-            className="px-2 py-1 rounded bg-green-100 hover:bg-green-200 text-green-800 text-xs font-semibold"
-            onClick={() => handleDownloadCSV(reportObj)}
-          >
-            CSV
-          </button>
-        </div>
-      </div>
+  const renderReport = (reportObj) => {
+    const revs = reportObj.report.revenues || [];
+    const cogs = reportObj.report.cogs || [];
+    const exps = reportObj.report.expenses || [];
 
-      <IncomeStatementChart
-        revenues={reportObj.report.revenues}
-        expenses={reportObj.report.expenses}
-      />
+    const totalRevenue = reportObj.report.totalRevenue ?? revs.reduce((s,a)=>s+a.amount,0);
+    const totalCOGS = reportObj.report.totalCOGS ?? cogs.reduce((s,a)=>s+a.amount,0);
+    const grossProfit = reportObj.report.grossProfit ?? (totalRevenue - totalCOGS);
+    const totalExpense = reportObj.report.totalExpense ?? exps.reduce((s,a)=>s+a.amount,0);
+    const netIncome = reportObj.report.netIncome ?? (grossProfit - totalExpense);
 
-      <table className="min-w-full border border-gray-300 rounded text-sm mb-4">
-        <thead className="bg-gray-50">
-          <tr>
-            <th className="text-left p-2 border-b border-r border-gray-200">Account</th>
-            <th className="text-right p-2 border-b">Amount</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td colSpan={2} className="font-bold p-2">Revenues</td>
-          </tr>
-          {reportObj.report.revenues.map((acc, i) => (
-            <tr key={acc.code + i}>
-              <td className="p-2 border-b border-r border-gray-200">
-                {acc.code} - {acc.name}
-              </td>
-              <td className="p-2 border-b text-right">
-                {acc.amount.toLocaleString(undefined, {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}
+    return (
+      <>
+        <table className="min-w-full border border-gray-300 rounded text-sm mb-6">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="text-left p-2 border-b border-r border-gray-200">Account</th>
+              <th className="text-right p-2 border-b">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {/* Revenues */}
+            <tr><td colSpan={2} className="font-bold p-2">Revenues</td></tr>
+            {revs.map((acc, i) => (
+              <tr key={acc.code + i}>
+                <td className="p-2 border-b border-r border-gray-200">{acc.code} - {acc.name}</td>
+                <td className="p-2 border-b text-right">
+                  {acc.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </td>
+              </tr>
+            ))}
+            <tr className="font-semibold">
+              <td className="p-2 border-t border-r border-gray-200 text-right">Total Revenue</td>
+              <td className="p-2 border-t text-right">
+                {totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </td>
             </tr>
-          ))}
-          <tr className="font-bold">
-            <td className="p-2 border-t border-r border-gray-200 text-right">Total Revenue</td>
-            <td className="p-2 border-t text-right">
-              {reportObj.report.totalRevenue.toLocaleString(undefined, {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              })}
-            </td>
-          </tr>
 
-          <tr>
-            <td colSpan={2} className="font-bold p-2">Expenses</td>
-          </tr>
-          {reportObj.report.expenses.map((acc, i) => (
-            <tr key={acc.code + i}>
-              <td className="p-2 border-b border-r border-gray-200">
-                {acc.code} - {acc.name}
-              </td>
-              <td className="p-2 border-b text-right">
-                {acc.amount.toLocaleString(undefined, {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}
+            {/* COGS */}
+            {cogs.length > 0 && <tr><td colSpan={2} className="font-bold p-2">Less: Cost of Goods Sold (COGS)</td></tr>}
+            {cogs.map((acc, i) => (
+              <tr key={acc.code + i}>
+                <td className="p-2 border-b border-r border-gray-200">{acc.code} - {acc.name}</td>
+                <td className="p-2 border-b text-right">
+                  {acc.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </td>
+              </tr>
+            ))}
+            {cogs.length > 0 && (
+              <tr className="font-semibold">
+                <td className="p-2 border-t border-r border-gray-200 text-right">Total COGS</td>
+                <td className="p-2 border-t text-right">
+                  {totalCOGS.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </td>
+              </tr>
+            )}
+
+            {/* Gross Profit */}
+            <tr className="font-bold bg-gray-50">
+              <td className="p-2 border-t border-r border-gray-200 text-right">Gross Profit</td>
+              <td className="p-2 border-t text-right">
+                {grossProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </td>
             </tr>
-          ))}
-          <tr className="font-bold">
-            <td className="p-2 border-t border-r border-gray-200 text-right">Total Expenses</td>
-            <td className="p-2 border-t text-right">
-              {reportObj.report.totalExpense.toLocaleString(undefined, {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              })}
-            </td>
-          </tr>
 
-          <tr className="font-bold bg-gray-100">
-            <td className="p-2 border-t border-r border-gray-200 text-right">Net Income</td>
-            <td className="p-2 border-t text-right">
-              {reportObj.report.netIncome.toLocaleString(undefined, {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              })}
-            </td>
-          </tr>
-        </tbody>
-      </table>
+            {/* Expenses */}
+            <tr><td colSpan={2} className="font-bold p-2">Expenses</td></tr>
+            {exps.map((acc, i) => (
+              <tr key={acc.code + i}>
+                <td className="p-2 border-b border-r border-gray-200">{acc.code} - {acc.name}</td>
+                <td className="p-2 border-b text-right">
+                  {acc.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </td>
+              </tr>
+            ))}
+            <tr className="font-semibold">
+              <td className="p-2 border-t border-r border-gray-200 text-right">Total Expenses</td>
+              <td className="p-2 border-t text-right">
+                {totalExpense.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </td>
+            </tr>
 
-      {reportObj.report.notes && (
-        <div className="bg-yellow-50 border-l-4 border-yellow-400 p-3 mb-2 text-sm text-yellow-900">
-          <div className="font-semibold mb-1">Notes:</div>
-          <div>{reportObj.report.notes}</div>
-        </div>
-      )}
-    </div>
-  );
+            {/* Net Income */}
+            <tr className="font-bold bg-gray-100">
+              <td className="p-2 border-t border-r border-gray-200 text-right">Net Income</td>
+              <td className="p-2 border-t text-right">
+                {netIncome.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        {reportObj.report.notes && (
+          <div className="bg-yellow-50 border-l-4 border-yellow-400 p-3 mb-2 text-sm text-yellow-900">
+            <div className="font-semibold mb-1">Notes:</div>
+            <div>{reportObj.report.notes}</div>
+          </div>
+        )}
+        <IncomeStatementChart
+          revenues={revs}
+          expenses={exps}
+        />
+      </>
+    );
+  };
 
   /* -------------------- render -------------------- */
   return (
@@ -535,39 +571,12 @@ export default function IncomeStatement() {
             from,
             to,
             report: {
-              revenues: revenues.map((acc) => {
-                let credit = 0, debit = 0;
-                filteredEntries.forEach((entry) => {
-                  (entry.lines || []).forEach((line) => {
-                    if (line.accountId === acc.id) {
-                      debit += parseFloat(line.debit) || 0;
-                      credit += parseFloat(line.credit) || 0;
-                    }
-                  });
-                });
-                return {
-                  code: acc.code,
-                  name: acc.main + (acc.individual ? " / " + acc.individual : ""),
-                  amount: credit - debit,
-                };
-              }),
-              expenses: expenses.map((acc) => {
-                let credit = 0, debit = 0;
-                filteredEntries.forEach((entry) => {
-                  (entry.lines || []).forEach((line) => {
-                    if (line.accountId === acc.id) {
-                      debit += parseFloat(line.debit) || 0;
-                      credit += parseFloat(line.credit) || 0;
-                    }
-                  });
-                });
-                return {
-                  code: acc.code,
-                  name: acc.main + (acc.individual ? " / " + acc.individual : ""),
-                  amount: debit - credit,
-                };
-              }),
+              revenues,
+              cogs,
+              expenses,
               totalRevenue,
+              totalCOGS,
+              grossProfit,
               totalExpense,
               netIncome,
               notes,

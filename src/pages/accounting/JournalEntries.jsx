@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { db } from "../../lib/firebase";
 import {
   collection,
@@ -59,6 +59,10 @@ export default function JournalEntries() {
     comments: "",
   });
 
+  // Dirty form tracking
+  const [isDirty, setIsDirty] = useState(false);
+  const initialForm = useRef(null);
+
   // Fetch latest 10 journal entries (live)
   useEffect(() => {
     setEntryLoading(true);
@@ -97,6 +101,32 @@ export default function JournalEntries() {
       refNumber: (lastRef + 1).toString().padStart(5, "0"),
     }));
   }, [lastRef]);
+
+  // Track initial form state for dirty check
+  useEffect(() => {
+    initialForm.current = JSON.stringify(form);
+  }, []);
+
+  // Mark as dirty if form changes
+  useEffect(() => {
+    if (initialForm.current && JSON.stringify(form) !== initialForm.current) {
+      setIsDirty(true);
+    }
+  }, [form]);
+
+  // Warn on navigation away if dirty
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue =
+          "Are you sure you want to leave this page? Unsaved changes will be lost.";
+        return e.returnValue;
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isDirty]);
 
   function handleLineChange(idx, field, value) {
     setForm((f) => ({
@@ -172,6 +202,7 @@ export default function JournalEntries() {
         lines: [{ accountId: "", debit: "", credit: "", memo: "" }],
       });
       setLastRef((r) => r + 1);
+      setIsDirty(false); // Reset dirty flag after save
       setNotif({
         show: true,
         type: "success",

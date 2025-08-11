@@ -1,12 +1,12 @@
 // src/pages/Signup.jsx
 import React, { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
 import { auth, db } from "../lib/firebase";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 import { generateMemberId } from "../lib/memberId";
 
-export default function Signup() {
+export default function Signup({ openLoginModal }) {
   const nav = useNavigate();
 
   const [email, setEmail] = useState("");
@@ -141,9 +141,13 @@ export default function Signup() {
 
         <p className="text-sm text-ink/70 mt-4">
           Already have an account?{" "}
-          <Link to="/login" className="underline">
+          <button
+            type="button"
+            className="underline text-brand-600 hover:text-brand-800"
+            onClick={openLoginModal}
+          >
             Log in
-          </Link>
+          </button>
         </p>
       </div>
     </div>

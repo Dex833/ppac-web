@@ -1,8 +1,7 @@
 // src/App.jsx
 import React from "react";
-import { Routes, Route, Link, NavLink, Navigate } from "react-router-dom";
+import { Routes, Route, Link, NavLink, Navigate, useNavigate } from "react-router-dom";
 
-import Login from "./pages/Login.jsx";
 import Signup from "./pages/Signup.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import Verify from "./pages/Verify.jsx";
@@ -26,6 +25,8 @@ import GuestRoute from "./components/GuestRoute.jsx";
 import RequireRole from "./components/RequireRole.jsx";
 import useUserProfile from "./hooks/useUserProfile";
 import Profile from "./pages/Profile.jsx";
+import LoginModal from "./components/LoginModal.jsx";
+import { useAuth } from "./AuthContext";
 
 // import the transparent PNG from src/assets
 import ppacLogo from "./assets/ppac-logo.png";
@@ -50,6 +51,9 @@ function NavItem({ to, children }) {
 
 export default function App() {
   const { loading, profile } = useUserProfile();
+  const [loginOpen, setLoginOpen] = React.useState(false);
+  const nav = useNavigate();
+  const { user, signout } = useAuth();
 
   // Normalize roles to an array; backward-compatible with single 'role'
   const roles = Array.isArray(profile?.roles)
@@ -79,10 +83,20 @@ export default function App() {
             </span>
           </Link>
 
-          <nav className="flex gap-1">
+          <nav className="flex gap-1 items-center flex-1 justify-end">
             <NavItem to="/">Home</NavItem>
-            <NavItem to="/login">Login</NavItem>
-            <NavItem to="/signup">Signup</NavItem>
+            {!profile && (
+              <>
+                <button
+                  className="px-3 py-2 rounded-lg text-sm font-medium transition text-ink/70 hover:bg-brand-50 hover:text-ink"
+                  style={{ background: loginOpen ? '#e0f2fe' : undefined }}
+                  onClick={() => setLoginOpen(true)}
+                >
+                  Login
+                </button>
+                <NavItem to="/signup">Signup</NavItem>
+              </>
+            )}
             <NavItem to="/dashboard">Dashboard</NavItem>
             {/* Show Admin tab only when user is admin and not suspended */}
             {isAdmin && notSuspended && <NavItem to="/admin/users">Admin</NavItem>}
@@ -90,10 +104,26 @@ export default function App() {
             {(notSuspended && (isAdmin || isTreasurer || isManager)) && (
               <NavItem to="/accounting">Accounting</NavItem>
             )}
+            {profile && (
+              <>
+                <span className="ml-4 px-2 text-sm text-ink/80 font-medium whitespace-nowrap">Welcome, {profile.displayName || profile.email || "User"}</span>
+                <button
+                  className="ml-2 px-3 py-2 rounded-lg text-sm font-medium transition text-rose-700 hover:bg-rose-50 hover:text-rose-900"
+                  onClick={async () => {
+                    if (window.confirm("Are you sure you want to sign out?")) {
+                      await signout();
+                      nav("/", { replace: true });
+                    }
+                  }}
+                >
+                  Sign out
+                </button>
+              </>
+            )}
           </nav>
         </div>
       </header>
-
+      <LoginModal open={loginOpen} onClose={() => setLoginOpen(false)} onSuccess={() => { setLoginOpen(false); nav("/", { replace: true }); }} />
       <main className="mx-auto max-w-5xl px-4 py-10">
         <Routes>
           <Route
@@ -108,9 +138,8 @@ export default function App() {
             }
           />
 
-          {/* Guest-only */}
-          <Route path="/login" element={<GuestRoute><Login /></GuestRoute>} />
-          <Route path="/signup" element={<GuestRoute><Signup /></GuestRoute>} />
+          {/* Guest-only (no /login route) */}
+          <Route path="/signup" element={<GuestRoute><Signup openLoginModal={() => setLoginOpen(true)} /></GuestRoute>} />
           <Route path="/reset" element={<GuestRoute><Reset /></GuestRoute>} />
 
           {/* Auth-only */}

@@ -55,7 +55,6 @@ export default function Dashboard() {
             <h2 className="text-2xl font-bold">You’re not signed in</h2>
             <p className="mt-2 text-ink/70">Please sign in to view your dashboard.</p>
             <div className="mt-6 flex items-center justify-center gap-3">
-              <Link to="/login" className="btn btn-primary">Go to Login</Link>
               <Link to="/signup" className="btn btn-outline">Create account</Link>
             </div>
           </div>
@@ -146,15 +145,6 @@ export default function Dashboard() {
       alive = false;
     };
   }, [user?.uid]);
-
-  async function handleSignOut() {
-    try {
-      setSigningOut(true);
-      await signout();
-    } finally {
-      nav("/", { replace: true });
-    }
-  }
 
   // Spinners while fetching both docs
   if (loadingUserDoc || loadingMemberDoc) {
@@ -262,27 +252,13 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Actions: only ONE profile button + Sign out */}
+          {/* Actions: only ONE profile button, no Sign out */}
           <div className="mt-8 flex items-center gap-3">
             {memberComplete ? (
               <Link to="/profile" className="btn btn-primary">Edit Profile</Link>
             ) : (
               <Link to="/profile" className="btn btn-primary">Complete Member Profile</Link>
             )}
-            <button
-              onClick={async () => {
-                try {
-                  setSigningOut(true);
-                  await signout();
-                } finally {
-                  nav("/", { replace: true });
-                }
-              }}
-              disabled={signingOut}
-              className="btn btn-outline disabled:opacity-60"
-            >
-              {signingOut ? "Signing out…" : "Sign out"}
-            </button>
           </div>
         </div>
       </main>
