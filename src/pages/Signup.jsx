@@ -1,120 +1,151 @@
+// src/pages/Signup.jsx
 import React, { useState } from "react";
-import {
-  createUserWithEmailAndPassword,
-  updateProfile,
-  sendEmailVerification,
-} from "firebase/auth";
+import { useNavigate, Link } from "react-router-dom";
+import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
 import { auth, db } from "../lib/firebase";
-import { Link, useNavigate } from "react-router-dom";
-import { useAuth } from "../AuthContext";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { generateMemberId } from "../lib/memberId";
 
 export default function Signup() {
   const nav = useNavigate();
-  const { user } = useAuth();
 
-  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [pass, setPass] = useState("");
-  const [err, setErr] = useState("");
+  const [password, setPassword] = useState("");
+  const [fullName, setFullName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
 
-  if (user) return <p>Already logged in. <a href="/dashboard">Go to dashboard</a></p>;
-
-  async function handleSignup(e) {
+  async function onSubmit(e) {
     e.preventDefault();
     setErr("");
     setBusy(true);
     try {
-      const cred = await createUserWithEmailAndPassword(auth, email, pass);
+      // 1) Create Auth user
+      const cred = await createUserWithEmailAndPassword(
+        auth,
+        email.trim(),
+        password
+      );
 
-      if (name) {
-        await updateProfile(cred.user, { displayName: name });
+      // 2) Optionally set display name in Auth
+      if (fullName.trim()) {
+        await updateProfile(cred.user, { displayName: fullName.trim() });
       }
 
-      await setDoc(doc(db, "users", cred.user.uid), {
-        uid: cred.user.uid,
-        email,
-        displayName: name || "",
-        role: "member",
-        createdAt: serverTimestamp(),
-      });
+      // 3) Generate next memberId (YYYY000XXX) via transaction
+      const memberId = await generateMemberId(db); // keep as STRING
 
-      await sendEmailVerification(cred.user);
-      nav("/verify");
+      // 4) Create users/{uid} (include memberId as string)
+      await setDoc(
+        doc(db, "users", cred.user.uid),
+        {
+          uid: cred.user.uid,
+          email: cred.user.email || email.trim(),
+          displayName: fullName.trim() || "",
+          // roles
+          role: "member",          // legacy compatibility
+          roles: ["member"],       // authoritative
+          // status
+          verifiedByAdmin: false,
+          suspended: false,
+          // identity
+          memberId,                // keep as STRING to preserve leading zeros
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      // 5) Public lookup: memberId -> { uid, email } (for login by memberId)
+      // If this fails (rules not deployed yet), don’t block signup.
+      try {
+        await setDoc(doc(db, "memberLookup", memberId), {
+          uid: cred.user.uid,
+          email: cred.user.email || email.trim(),
+        });
+      } catch (e) {
+        console.warn(
+          "[memberLookup] create failed (email login still works):",
+          e
+        );
+      }
+
+      // 6) Go to dashboard
+      nav("/dashboard", { replace: true });
     } catch (e) {
-      setErr(e.code || "Signup failed");
-    } finally {
+      const msg =
+        e?.code === "auth/email-already-in-use"
+          ? "That email is already in use."
+          : e?.code === "auth/weak-password"
+          ? "Password should be at least 6 characters."
+          : e?.code || "Failed to create account";
+      setErr(msg);
       setBusy(false);
     }
   }
 
   return (
-    <div className="mx-auto max-w-md">
-      <h2 className="text-2xl font-bold mb-6">Create your account</h2>
-
-      <form onSubmit={handleSignup} className="card p-6 space-y-4">
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-slate-700">Full name</label>
-          <input
-            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 shadow-sm
-                       focus:border-brand-500 focus:ring-2 focus:ring-brand-400/30 outline-none"
-            placeholder="Ruth Acantilado"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            autoComplete="name"
-          />
-        </div>
-
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-slate-700">Email</label>
-          <input
-            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 shadow-sm
-                       focus:border-brand-500 focus:ring-2 focus:ring-brand-400/30 outline-none"
-            placeholder="you@example.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            autoComplete="email"
-          />
-        </div>
-
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-slate-700">Password</label>
-          <input
-            type="password"
-            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 shadow-sm
-                       focus:border-brand-500 focus:ring-2 focus:ring-brand-400/30 outline-none"
-            placeholder="Minimum 6 characters"
-            value={pass}
-            onChange={(e) => setPass(e.target.value)}
-            autoComplete="new-password"
-          />
-        </div>
+    <div className="max-w-md mx-auto">
+      <div className="card p-6">
+        <h2 className="text-xl font-bold mb-4">Create your account</h2>
 
         {err && (
-          <div className="rounded-md bg-red-50 text-red-700 px-3 py-2 text-sm border border-red-200">
+          <div className="mb-3 rounded border border-rose-200 bg-rose-50 text-rose-700 px-3 py-2 text-sm">
             {err}
           </div>
         )}
 
-        <button
-          type="submit"
-          disabled={busy}
-          className="btn btn-primary w-full h-10 disabled:opacity-60"
-        >
-          {busy ? "Creating…" : "Create Account"}
-        </button>
+        <form onSubmit={onSubmit} className="grid gap-3">
+          <label className="block">
+            <span className="text-sm">Full name (optional)</span>
+            <input
+              className="border rounded px-3 py-2 w-full"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              autoComplete="name"
+            />
+          </label>
 
-        <p className="text-sm text-slate-600 pt-1">
-          Have an account?{" "}
-          <Link
-            to="/login"
-            className="text-brand-700 hover:text-brand-800 underline-offset-2 hover:underline"
+          <label className="block">
+            <span className="text-sm">Email</span>
+            <input
+              className="border rounded px-3 py-2 w-full"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+              required
+            />
+          </label>
+
+          <label className="block">
+            <span className="text-sm">Password</span>
+            <input
+              className="border rounded px-3 py-2 w-full"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="new-password"
+              required
+            />
+          </label>
+
+          <button
+            type="submit"
+            disabled={busy}
+            className="btn btn-primary disabled:opacity-60 mt-2"
           >
-            Login
+            {busy ? "Creating…" : "Sign up"}
+          </button>
+        </form>
+
+        <p className="text-sm text-ink/70 mt-4">
+          Already have an account?{" "}
+          <Link to="/login" className="underline">
+            Log in
           </Link>
         </p>
-      </form>
+      </div>
     </div>
   );
 }

@@ -15,6 +15,7 @@ import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import GuestRoute from "./components/GuestRoute.jsx";
 import RequireRole from "./components/RequireRole.jsx";
 import useUserProfile from "./hooks/useUserProfile";
+import Profile from "./pages/Profile.jsx";
 
 // import the transparent PNG from src/assets
 import ppacLogo from "./assets/ppac-logo.png";
@@ -99,6 +100,7 @@ export default function App() {
           {/* Auth-only */}
           <Route path="/verify" element={<ProtectedRoute><Verify /></ProtectedRoute>} />
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+		  <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
 
           {/* Admin-only (nested) */}
           <Route
