@@ -202,7 +202,7 @@ export default function JournalEntries() {
           <button type="button" className="mt-2 px-3 py-1 bg-gray-200 rounded" onClick={addLine}>+ Add Line</button>
         </div>
         <div className="flex gap-8 mt-2">
-          <div>Total Debit: <span className="font-mono">{total("debit").toFixed(2)}</span></div>
+          <div>Total Debit: <span className="font-mono">{total("debit").toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
           <div>Total Credit: <span className="font-mono">{total("credit").toFixed(2)}</span></div>
         </div>
         <div>
@@ -246,8 +246,8 @@ export default function JournalEntries() {
                   <td className="p-2 border-b font-mono">{entry.refNumber}</td>
                   <td className="p-2 border-b">{entry.date}</td>
                   <td className="p-2 border-b">{entry.description}</td>
-                  <td className="p-2 border-b">{entry.lines.reduce((sum, l) => sum + (l.debit || 0), 0).toFixed(2)}</td>
-                  <td className="p-2 border-b">{entry.lines.reduce((sum, l) => sum + (l.credit || 0), 0).toFixed(2)}</td>
+                  <td className="p-2 border-b">{entry.lines.reduce((sum, l) => sum + (l.debit || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td className="p-2 border-b">{entry.lines.reduce((sum, l) => sum + (l.credit || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   <td className="p-2 border-b">{entry.createdBy || "-"}</td>
                   <td className="p-2 border-b">
                     {/* Edit/Delete buttons (to be implemented) */}

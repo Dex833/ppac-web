@@ -136,8 +136,8 @@ export default function GeneralJournal() {
                   <td className="p-2 border-b">{line.description}</td>
                   <td className="p-2 border-b">{getAccountName(line.accountId)}</td>
                   <td className="p-2 border-b">{getAccountType(line.accountId)}</td>
-                  <td className="p-2 border-b text-right">{line.debit ? Number(line.debit).toFixed(2) : ""}</td>
-                  <td className="p-2 border-b text-right">{line.credit ? Number(line.credit).toFixed(2) : ""}</td>
+                  <td className="p-2 border-b text-right">{line.debit ? Number(line.debit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ""}</td>
+                  <td className="p-2 border-b text-right">{line.credit ? Number(line.credit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ""}</td>
                   <td className="p-2 border-b">{line.memo || ""}</td>
                   <td className="p-2 border-b">{line.createdBy || "-"}</td>
                 </tr>
@@ -151,8 +151,8 @@ export default function GeneralJournal() {
             <tfoot>
               <tr className="font-bold bg-gray-100">
                 <td colSpan={5} className="p-2 border-t text-right">Totals:</td>
-                <td className="p-2 border-t text-right">{totalDebit.toFixed(2)}</td>
-                <td className="p-2 border-t text-right">{totalCredit.toFixed(2)}</td>
+                <td className="p-2 border-t text-right">{totalDebit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                <td className="p-2 border-t text-right">{totalCredit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                 <td colSpan={2} className="p-2 border-t"></td>
               </tr>
             </tfoot>
