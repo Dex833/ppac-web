@@ -14,9 +14,73 @@ const ACCOUNT_TYPES = [
   "Asset",
   "Liability",
   "Equity",
-  "Income",
+  "Income",   // keep as-is; IS now handles Income/Revenue together
   "Expense",
 ];
+
+// Lightweight custom combobox for "Main Account"
+function MainCombo({ value, onChange, options, placeholder = "Main Account", inputClass = "" }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState(value || "");
+
+  useEffect(() => setQ(value || ""), [value]);
+
+  const filtered = useMemo(() => {
+    const s = (q || "").toLowerCase();
+    return options
+      .filter((o) => o.toLowerCase().includes(s))
+      .slice(0, 12);
+  }, [options, q]);
+
+  return (
+    <div className="relative">
+      <input
+        className={`border rounded px-2 py-1 ${inputClass}`}
+        placeholder={placeholder}
+        value={q}
+        onChange={(e) => {
+          setQ(e.target.value);
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 120)} // allow click
+      />
+      <button
+        type="button"
+        className="absolute right-1 top-1/2 -translate-y-1/2 px-1 text-gray-500"
+        onMouseDown={(e) => {
+          e.preventDefault(); // don't blur input
+          setOpen((v) => !v);
+        }}
+        aria-label="Toggle options"
+        title="Show options"
+      >
+        ▾
+      </button>
+
+      {open && filtered.length > 0 && (
+        <div className="absolute z-50 mt-1 w-full max-h-48 overflow-auto rounded border bg-white shadow">
+          {filtered.map((opt) => (
+            <div
+              key={opt}
+              className="px-2 py-1 cursor-pointer hover:bg-gray-100"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onChange(opt);
+                setQ(opt);
+                setOpen(false);
+              }}
+              title={opt}
+            >
+              {opt}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ChartOfAccounts() {
   const [accounts, setAccounts] = useState([]);
@@ -39,10 +103,13 @@ export default function ChartOfAccounts() {
     return () => unsub();
   }, []);
 
-  // Unique main names (for the combo box suggestions)
+  // Unique main names for the combo suggestions
   const mainOptions = useMemo(() => {
     const set = new Set(
-      accounts.filter(a => !a.archived).map(a => (a.main || "").trim()).filter(Boolean)
+      accounts
+        .filter((a) => !a.archived)
+        .map((a) => (a.main || "").trim())
+        .filter(Boolean)
     );
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [accounts]);
@@ -52,7 +119,7 @@ export default function ChartOfAccounts() {
       case "Asset": return 1000;
       case "Liability": return 2000;
       case "Equity": return 3000;
-      case "Income": return 4000;
+      case "Income": return 4000;   // keep matching your current data
       case "Expense": return 5000;
       default: return 9000;
     }
@@ -70,10 +137,11 @@ export default function ChartOfAccounts() {
 
   function isDuplicate(main, individual, type) {
     return accounts.some(
-      a => (a.main || "").trim().toLowerCase() === main.trim().toLowerCase() &&
-           (a.individual || "").trim().toLowerCase() === individual.trim().toLowerCase() &&
-           a.type === type &&
-           a.archived !== true
+      a =>
+        (a.main || "").trim().toLowerCase() === main.trim().toLowerCase() &&
+        (a.individual || "").trim().toLowerCase() === individual.trim().toLowerCase() &&
+        a.type === type &&
+        a.archived !== true
     );
   }
 
@@ -108,7 +176,7 @@ export default function ChartOfAccounts() {
     await updateDoc(doc(db, "accounts", id), {
       archived: true,
       archivedAt: new Date(),
-      archivedBy: (window.firebaseAuth?.currentUser?.email || null)
+      archivedBy: (window.firebaseAuth?.currentUser?.email || null),
     });
   }
 
@@ -118,17 +186,17 @@ export default function ChartOfAccounts() {
       main: acc.main || "",
       individual: acc.individual || "",
       type: acc.type || "Asset",
-      description: acc.description || ""
+      description: acc.description || "",
     });
   }
 
   async function handleEditSave(id) {
     if (!editForm.main.trim() || !editForm.individual.trim()) return;
-    const orig = accounts.find(a => a.id === id);
+    const orig = accounts.find((a) => a.id === id);
     const changingIdentity =
-      (editForm.main !== (orig?.main || "")) ||
-      (editForm.individual !== (orig?.individual || "")) ||
-      (editForm.type !== (orig?.type || ""));
+      editForm.main !== (orig?.main || "") ||
+      editForm.individual !== (orig?.individual || "") ||
+      editForm.type !== (orig?.type || "");
     if (changingIdentity && isDuplicate(editForm.main, editForm.individual, editForm.type)) {
       alert("Duplicate account for this main/individual/type.");
       return;
@@ -171,10 +239,10 @@ export default function ChartOfAccounts() {
   function handleExport() {
     setExporting(true);
     const rows = accounts
-      .filter(a => !a.archived)
-      .map(a => [a.code, a.main, a.individual, a.type, a.description || ""]);
+      .filter((a) => !a.archived)
+      .map((a) => [a.code, a.main, a.individual, a.type, a.description || ""]);
     const csv = ["Code,Main Account,Individual Account,Type,Description"]
-      .concat(rows.map(r => r.map(x => `"${String(x).replace(/"/g, '""')}"`).join(",")))
+      .concat(rows.map((r) => r.map((x) => `"${String(x).replace(/"/g, '""')}"`).join(","))))
       .join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -189,7 +257,7 @@ export default function ChartOfAccounts() {
   }
 
   // Search and filter
-  const filtered = accounts.filter(a => {
+  const filtered = accounts.filter((a) => {
     if (a.archived) return false;
     const s = search.trim().toLowerCase();
     return (
@@ -215,39 +283,32 @@ export default function ChartOfAccounts() {
 
       {/* Add form */}
       <form className="flex flex-wrap gap-2 mb-6" onSubmit={handleAdd}>
-        {/* Main as combo box: free-type + suggestions */}
-        <input
-          list="main-list"
-          className="border rounded px-2 py-1 w-40"
-          placeholder="Main Account"
+        {/* Main Account as custom combo */}
+        <MainCombo
           value={form.main}
-          onChange={e => setForm(f => ({ ...f, main: e.target.value }))}
-          onBlur={e => setForm(f => ({ ...f, main: e.target.value.trim() }))}
-          required
+          onChange={(val) => setForm((f) => ({ ...f, main: val }))}
+          options={mainOptions}
+          inputClass="w-40"
         />
-        {/* One shared datalist for all main inputs */}
-        <datalist id="main-list">
-          {mainOptions.map(m => (
-            <option key={m} value={m} />
-          ))}
-        </datalist>
 
         <input
           className="border rounded px-2 py-1 w-48"
           placeholder="Individual Account"
           value={form.individual}
-          onChange={e => setForm(f => ({ ...f, individual: e.target.value }))}
-          onBlur={e => setForm(f => ({ ...f, individual: e.target.value.trim() }))}
+          onChange={(e) => setForm((f) => ({ ...f, individual: e.target.value }))}
+          onBlur={(e) => setForm((f) => ({ ...f, individual: e.target.value.trim() }))}
           required
         />
 
         <select
           className="border rounded px-2 py-1"
           value={form.type}
-          onChange={e => setForm(f => ({ ...f, type: e.target.value }))}
+          onChange={(e) => setForm((f) => ({ ...f, type: e.target.value }))}
         >
-          {ACCOUNT_TYPES.map(t => (
-            <option key={t} value={t}>{t}</option>
+          {ACCOUNT_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
           ))}
         </select>
 
@@ -255,8 +316,8 @@ export default function ChartOfAccounts() {
           className="border rounded px-2 py-1 w-56"
           placeholder="Description (optional)"
           value={form.description}
-          onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-          onBlur={e => setForm(f => ({ ...f, description: e.target.value.trim() }))}
+          onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+          onBlur={(e) => setForm((f) => ({ ...f, description: e.target.value.trim() }))}
         />
 
         <button type="submit" className="btn btn-primary" disabled={saving}>
@@ -277,7 +338,7 @@ export default function ChartOfAccounts() {
         className="border rounded px-2 py-1 mb-4 w-80"
         placeholder="Search accounts…"
         value={search}
-        onChange={e => setSearch(e.target.value)}
+        onChange={(e) => setSearch(e.target.value)}
       />
 
       {loading ? (
@@ -287,16 +348,29 @@ export default function ChartOfAccounts() {
           <table className="min-w-full border rounded">
             <thead className="bg-gray-50">
               <tr>
-                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("code")}>
+                <th
+                  className="text-left p-2 border-b cursor-pointer"
+                  onClick={() => handleSort("code")}
+                >
                   Code {sortBy === "code" ? (sortDir === "asc" ? "▲" : "▼") : ""}
                 </th>
-                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("main")}>
+                <th
+                  className="text-left p-2 border-b cursor-pointer"
+                  onClick={() => handleSort("main")}
+                >
                   Main Account {sortBy === "main" ? (sortDir === "asc" ? "▲" : "▼") : ""}
                 </th>
-                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("individual")}>
-                  Individual Account {sortBy === "individual" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                <th
+                  className="text-left p-2 border-b cursor-pointer"
+                  onClick={() => handleSort("individual")}
+                >
+                  Individual Account{" "}
+                  {sortBy === "individual" ? (sortDir === "asc" ? "▲" : "▼") : ""}
                 </th>
-                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("type")}>
+                <th
+                  className="text-left p-2 border-b cursor-pointer"
+                  onClick={() => handleSort("type")}
+                >
                   Type {sortBy === "type" ? (sortDir === "asc" ? "▲" : "▼") : ""}
                 </th>
                 <th className="text-left p-2 border-b">Description</th>
@@ -304,24 +378,25 @@ export default function ChartOfAccounts() {
               </tr>
             </thead>
             <tbody>
-              {Object.keys(grouped).map(main => (
+              {Object.keys(grouped).map((main) => (
                 <React.Fragment key={main || "(blank)"}>
                   <tr className="bg-blue-50">
-                    <td colSpan={6} className="font-bold p-2 border-b">{main || "(blank main)"}</td>
+                    <td colSpan={6} className="font-bold p-2 border-b">
+                      {main || "(blank main)"}
+                    </td>
                   </tr>
-                  {grouped[main].map(acc => (
+                  {grouped[main].map((acc) => (
                     <tr key={acc.id} className="odd:bg-white even:bg-gray-50">
                       <td className="p-2 border-b font-mono">{acc.code}</td>
 
-                      {/* EDITABLE Main uses the same datalist for suggestions */}
+                      {/* EDITABLE Main uses the same combo */}
                       <td className="p-2 border-b">
                         {editId === acc.id ? (
-                          <input
-                            list="main-list"
-                            className="border rounded px-2 py-1 w-32"
+                          <MainCombo
                             value={editForm.main}
-                            onChange={e => setEditForm(f => ({ ...f, main: e.target.value }))}
-                            onBlur={e => setEditForm(f => ({ ...f, main: e.target.value.trim() }))}
+                            onChange={(val) => setEditForm((f) => ({ ...f, main: val }))}
+                            options={mainOptions}
+                            inputClass="w-32"
                           />
                         ) : (
                           acc.main
@@ -333,8 +408,12 @@ export default function ChartOfAccounts() {
                           <input
                             className="border rounded px-2 py-1 w-40"
                             value={editForm.individual}
-                            onChange={e => setEditForm(f => ({ ...f, individual: e.target.value }))}
-                            onBlur={e => setEditForm(f => ({ ...f, individual: e.target.value.trim() }))}
+                            onChange={(e) =>
+                              setEditForm((f) => ({ ...f, individual: e.target.value }))
+                            }
+                            onBlur={(e) =>
+                              setEditForm((f) => ({ ...f, individual: e.target.value.trim() }))
+                            }
                           />
                         ) : (
                           acc.individual
@@ -346,9 +425,15 @@ export default function ChartOfAccounts() {
                           <select
                             className="border rounded px-2 py-1"
                             value={editForm.type}
-                            onChange={e => setEditForm(f => ({ ...f, type: e.target.value }))}
+                            onChange={(e) =>
+                              setEditForm((f) => ({ ...f, type: e.target.value }))
+                            }
                           >
-                            {ACCOUNT_TYPES.map(t => (<option key={t} value={t}>{t}</option>))}
+                            {ACCOUNT_TYPES.map((t) => (
+                              <option key={t} value={t}>
+                                {t}
+                              </option>
+                            ))}
                           </select>
                         ) : (
                           acc.type
@@ -360,8 +445,15 @@ export default function ChartOfAccounts() {
                           <input
                             className="border rounded px-2 py-1 w-40"
                             value={editForm.description}
-                            onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
-                            onBlur={e => setEditForm(f => ({ ...f, description: e.target.value.trim() }))}
+                            onChange={(e) =>
+                              setEditForm((f) => ({ ...f, description: e.target.value }))
+                            }
+                            onBlur={(e) =>
+                              setEditForm((f) => ({
+                                ...f,
+                                description: e.target.value.trim(),
+                              }))
+                            }
                           />
                         ) : (
                           acc.description
@@ -371,13 +463,33 @@ export default function ChartOfAccounts() {
                       <td className="p-2 border-b">
                         {editId === acc.id ? (
                           <>
-                            <button className="btn btn-sm btn-primary mr-1" onClick={() => handleEditSave(acc.id)}>Save</button>
-                            <button className="btn btn-sm btn-outline" onClick={handleEditCancel}>Cancel</button>
+                            <button
+                              className="btn btn-sm btn-primary mr-1"
+                              onClick={() => handleEditSave(acc.id)}
+                            >
+                              Save
+                            </button>
+                            <button
+                              className="btn btn-sm btn-outline"
+                              onClick={handleEditCancel}
+                            >
+                              Cancel
+                            </button>
                           </>
                         ) : (
                           <>
-                            <button className="btn btn-sm btn-outline mr-1" onClick={() => handleEdit(acc)}>Edit</button>
-                            <button className="btn btn-sm btn-outline" onClick={() => handleArchive(acc.id)}>Archive</button>
+                            <button
+                              className="btn btn-sm btn-outline mr-1"
+                              onClick={() => handleEdit(acc)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              className="btn btn-sm btn-outline"
+                              onClick={() => handleArchive(acc.id)}
+                            >
+                              Archive
+                            </button>
                           </>
                         )}
                       </td>
@@ -387,7 +499,9 @@ export default function ChartOfAccounts() {
               ))}
               {sorted.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="p-4 text-gray-500 text-center">No accounts yet.</td>
+                  <td colSpan={6} className="p-4 text-gray-500 text-center">
+                    No accounts yet.
+                  </td>
                 </tr>
               )}
             </tbody>
