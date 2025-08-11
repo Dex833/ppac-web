@@ -237,24 +237,31 @@ export default function ChartOfAccounts() {
   }
 
   function handleExport() {
-    setExporting(true);
-    const rows = accounts
-      .filter((a) => !a.archived)
-      .map((a) => [a.code, a.main, a.individual, a.type, a.description || ""]);
-    const csv = ["Code,Main Account,Individual Account,Type,Description"]
-      .concat(rows.map((r) => r.map((x) => `"${String(x).replace(/"/g, '""')}"`).join(","))))
+  setExporting(true);
+
+  const rows = accounts
+    .filter((a) => !a.archived)
+    .map((a) => [a.code, a.main, a.individual, a.type, a.description || ""]);
+
+  const header = ["Code", "Main Account", "Individual Account", "Type", "Description"];
+
+  const csv =
+    [header.map(csvEscape).join(",")]
+      .concat(rows.map((r) => r.map(csvEscape).join(",")))
       .join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "chart-of-accounts.csv";
-    a.click();
-    setTimeout(() => {
-      URL.revokeObjectURL(url);
-      setExporting(false);
-    }, 500);
-  }
+
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "chart-of-accounts.csv";
+  a.click();
+
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+    setExporting(false);
+  }, 500);
+}
 
   // Search and filter
   const filtered = accounts.filter((a) => {
@@ -510,4 +517,4 @@ export default function ChartOfAccounts() {
       )}
     </div>
   );
-}
+}handleExport
