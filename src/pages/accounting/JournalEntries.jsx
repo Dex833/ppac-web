@@ -7,12 +7,12 @@ import {
   query,
   orderBy,
   onSnapshot,
+  limit,
+  doc,
   updateDoc,
   deleteDoc,
-  doc,
   serverTimestamp,
 } from "firebase/firestore";
-import useUserProfile from "../../hooks/useUserProfile";
 
 // Helper to get accounts for dropdown
 function useAccounts() {
@@ -33,10 +33,6 @@ function useAccounts() {
 
 export default function JournalEntries() {
   const accounts = useAccounts();
-  const { profile } = useUserProfile();
-  const createdBy =
-    profile?.displayName || profile?.email || profile?.uid || "-";
-  const createdById = profile?.uid || null;
 
   const [form, setForm] = useState({
     refNumber: "",
@@ -50,25 +46,26 @@ export default function JournalEntries() {
   const [lastRef, setLastRef] = useState(0);
   const [notif, setNotif] = useState({ show: false, type: "", message: "" });
 
-  // Journal entry list state
+  // Journal entry list state (only last 10)
   const [entries, setEntries] = useState([]);
   const [entryLoading, setEntryLoading] = useState(true);
   const [filter, setFilter] = useState({ ref: "", date: "", account: "" });
 
-  // edit modal state (simple: edit only date/description/comments)
-  const [editing, setEditing] = useState(null); // whole entry object
-  const [editDate, setEditDate] = useState("");
-  const [editDesc, setEditDesc] = useState("");
-  const [editComments, setEditComments] = useState("");
-  const [busyEdit, setBusyEdit] = useState(false);
-  const [busyDeleteId, setBusyDeleteId] = useState(null);
+  // Edit modal
+  const [editEntryId, setEditEntryId] = useState(null);
+  const [editEntryForm, setEditEntryForm] = useState({
+    date: "",
+    description: "",
+    comments: "",
+  });
 
-  // Fetch all journal entries (simple, no pagination yet)
+  // Fetch latest 10 journal entries (live)
   useEffect(() => {
     setEntryLoading(true);
     const qJE = query(
       collection(db, "journalEntries"),
-      orderBy("createdAt", "desc")
+      orderBy("createdAt", "desc"),
+      limit(10)
     );
     const unsub = onSnapshot(qJE, (snap) => {
       setEntries(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
@@ -77,12 +74,13 @@ export default function JournalEntries() {
     return () => unsub();
   }, []);
 
-  // Get last reference number for auto-increment
+  // Get last reference number for auto-increment (only need top 1)
   useEffect(() => {
     async function fetchLastRef() {
       const qJE = query(
         collection(db, "journalEntries"),
-        orderBy("refNumber", "desc")
+        orderBy("refNumber", "desc"),
+        limit(1)
       );
       const snap = await getDocs(qJE);
       if (!snap.empty) {
@@ -128,7 +126,10 @@ export default function JournalEntries() {
   }
 
   function total(field) {
-    return form.lines.reduce((sum, l) => sum + (parseFloat(l[field]) || 0), 0);
+    return form.lines.reduce(
+      (sum, l) => sum + (parseFloat(l[field]) || 0),
+      0
+    );
   }
 
   async function handleSubmit(e) {
@@ -137,16 +138,18 @@ export default function JournalEntries() {
     // Validation
     if (!form.date || !form.refNumber)
       return setError("Date and Reference Number are required.");
-    if (form.lines.some((l) => !l.accountId || (!l.debit && !l.credit)))
+    if (
+      form.lines.some((l) => !l.accountId || (!l.debit && !l.credit))
+    )
       return setError(
         "All lines must have an account and either debit or credit."
       );
     if (total("debit") !== total("credit"))
       return setError("Debits and credits must balance.");
+
     setSaving(true);
     try {
       await addDoc(collection(db, "journalEntries"), {
-        ...form,
         refNumber: form.refNumber,
         date: form.date,
         description: form.description,
@@ -156,12 +159,11 @@ export default function JournalEntries() {
           debit: parseFloat(l.debit) || 0,
           credit: parseFloat(l.credit) || 0,
         })),
-        createdBy,
-        createdById,
         createdAt: serverTimestamp(),
+        createdBy: window.firebaseAuth?.currentUser?.email || null,
       });
       setForm({
-        refNumber: (parseInt(form.refNumber) + 1)
+        refNumber: (parseInt(form.refNumber, 10) + 1)
           .toString()
           .padStart(5, "0"),
         date: new Date().toISOString().slice(0, 10),
@@ -184,60 +186,90 @@ export default function JournalEntries() {
       });
     } finally {
       setSaving(false);
-      setTimeout(() => setNotif({ show: false, type: "", message: "" }), 2500);
+      setTimeout(
+        () => setNotif({ show: false, type: "", message: "" }),
+        2500
+      );
     }
   }
 
-  // ---- Actions: Edit/Delete (simple)
+  // ---- Edit/Delete actions ----
   function startEdit(entry) {
-    setEditing(entry);
-    setEditDate(entry?.date || "");
-    setEditDesc(entry?.description || "");
-    setEditComments(entry?.comments || "");
+    setEditEntryId(entry.id);
+    setEditEntryForm({
+      date: entry.date || "",
+      description: entry.description || "",
+      comments: entry.comments || "",
+    });
   }
-  function cancelEdit() {
-    setEditing(null);
-    setEditDate("");
-    setEditDesc("");
-    setEditComments("");
-  }
+
   async function saveEdit() {
-    if (!editing?.id) return;
-    setBusyEdit(true);
+    if (!editEntryId) return;
     try {
-      await updateDoc(doc(db, "journalEntries", editing.id), {
-        date: editDate || null,
-        description: editDesc || "",
-        comments: editComments || "",
+      await updateDoc(doc(db, "journalEntries", editEntryId), {
+        date: editEntryForm.date || "",
+        description: editEntryForm.description || "",
+        comments: editEntryForm.comments || "",
         updatedAt: serverTimestamp(),
+        updatedBy: window.firebaseAuth?.currentUser?.email || null,
       });
-      cancelEdit();
-      alert("Entry updated.");
-    } catch (err) {
-      console.error(err);
-      alert("Update failed: " + (err?.message || err));
+      setEditEntryId(null);
+      setNotif({ show: true, type: "success", message: "Entry updated." });
+    } catch (e) {
+      setNotif({
+        show: true,
+        type: "error",
+        message: "Failed to update: " + e.message,
+      });
     } finally {
-      setBusyEdit(false);
+      setTimeout(
+        () => setNotif({ show: false, type: "", message: "" }),
+        2000
+      );
     }
   }
-  async function handleDelete(id) {
+
+  async function deleteEntry(id) {
     if (!id) return;
     if (!window.confirm("Delete this journal entry?")) return;
-    setBusyDeleteId(id);
     try {
       await deleteDoc(doc(db, "journalEntries", id));
-      alert("Entry deleted.");
-    } catch (err) {
-      console.error(err);
-      alert("Delete failed: " + (err?.message || err));
+      setNotif({ show: true, type: "success", message: "Entry deleted." });
+    } catch (e) {
+      setNotif({
+        show: true,
+        type: "error",
+        message: "Failed to delete: " + e.message,
+      });
     } finally {
-      setBusyDeleteId(null);
+      setTimeout(
+        () => setNotif({ show: false, type: "", message: "" }),
+        2000
+      );
     }
   }
+
+  // Filter (applied on the 10 loaded items)
+  const visibleEntries = entries.filter((e) => {
+    if (filter.ref && !(e.refNumber || "").includes(filter.ref)) return false;
+    if (filter.date && e.date !== filter.date) return false;
+    if (
+      filter.account &&
+      !e.lines?.some((l) => {
+        const acc = accounts.find((a) => a.id === l.accountId);
+        const name =
+          (acc?.main || "") + (acc?.individual ? acc.individual : "");
+        return name.toLowerCase().includes(filter.account.toLowerCase());
+      })
+    )
+      return false;
+    return true;
+  });
 
   return (
     <div>
       <h3 className="text-xl font-semibold mb-4">New Journal Entry</h3>
+
       {notif.show && (
         <div
           className={`mb-4 px-4 py-2 rounded ${
@@ -249,11 +281,13 @@ export default function JournalEntries() {
           {notif.message}
         </div>
       )}
+
       <form
         className="space-y-4 bg-white p-4 rounded shadow max-w-3xl mb-8"
         onSubmit={handleSubmit}
       >
         {error && <div className="text-red-600 font-medium">{error}</div>}
+
         <div className="flex flex-wrap gap-4">
           <div className="flex-1 min-w-[120px]">
             <label className="block text-sm font-medium">Ref#</label>
@@ -276,6 +310,7 @@ export default function JournalEntries() {
             />
           </div>
         </div>
+
         <div>
           <label className="block text-sm font-medium">Description</label>
           <input
@@ -287,6 +322,7 @@ export default function JournalEntries() {
             required
           />
         </div>
+
         <div>
           <label className="block text-sm font-medium">Comments</label>
           <input
@@ -297,6 +333,7 @@ export default function JournalEntries() {
             }
           />
         </div>
+
         <div>
           <label className="block text-sm font-medium mb-2">Lines</label>
           <table className="min-w-full border rounded">
@@ -324,8 +361,8 @@ export default function JournalEntries() {
                       <option value="">Select Account</option>
                       {accounts.map((acc) => (
                         <option key={acc.id} value={acc.id}>
-                          {acc.code} - {acc.main}{" "}
-                          {acc.individual ? "/ " + acc.individual : ""}
+                          {acc.code} - {acc.main}
+                          {acc.individual ? " / " + acc.individual : ""}
                         </option>
                       ))}
                     </select>
@@ -385,6 +422,7 @@ export default function JournalEntries() {
             + Add Line
           </button>
         </div>
+
         <div className="flex gap-8 mt-2">
           <div>
             Total Debit:{" "}
@@ -405,6 +443,7 @@ export default function JournalEntries() {
             </span>
           </div>
         </div>
+
         <div>
           <button
             type="submit"
@@ -416,7 +455,9 @@ export default function JournalEntries() {
         </div>
       </form>
 
-      <h3 className="text-xl font-semibold mt-10 mb-4">Journal Entry History</h3>
+      <h3 className="text-xl font-semibold mt-10 mb-4">
+        Journal Entry History (latest 10)
+      </h3>
       <div className="mb-4 flex gap-2 flex-wrap">
         <input
           className="border rounded px-2 py-1"
@@ -440,6 +481,7 @@ export default function JournalEntries() {
           }
         />
       </div>
+
       {entryLoading ? (
         <div>Loading entries…</div>
       ) : (
@@ -457,82 +499,58 @@ export default function JournalEntries() {
               </tr>
             </thead>
             <tbody>
-              {entries
-                .filter((e) => {
-                  if (filter.ref && !(e.refNumber || "").includes(filter.ref))
-                    return false;
-                  if (filter.date && e.date !== filter.date) return false;
-                  if (
-                    filter.account &&
-                    !e.lines?.some((l) => {
-                      const acc = accounts.find((a) => a.id === l.accountId);
-                      const name =
-                        (acc?.main || "") +
-                        (acc?.individual ? " " + acc.individual : "");
-                      return name
-                        .toLowerCase()
-                        .includes(filter.account.toLowerCase());
-                    })
-                  )
-                    return false;
-                  return true;
-                })
-                .map((entry) => {
-                  const totalDebit = (entry.lines || []).reduce(
-                    (sum, l) => sum + (l.debit || 0),
-                    0
-                  );
-                  const totalCredit = (entry.lines || []).reduce(
-                    (sum, l) => sum + (l.credit || 0),
-                    0
-                  );
-                  return (
-                    <tr key={entry.id} className="odd:bg-white even:bg-gray-50">
-                      <td className="p-2 border-b font-mono">
-                        {entry.refNumber}
-                      </td>
-                      <td className="p-2 border-b">{entry.date}</td>
-                      <td className="p-2 border-b">{entry.description}</td>
-                      <td className="p-2 border-b">
-                        {totalDebit.toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
-                      </td>
-                      <td className="p-2 border-b">
-                        {totalCredit.toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
-                      </td>
-                      <td className="p-2 border-b">
-                        {entry.createdBy || "-"}
-                      </td>
-                      <td className="p-2 border-b">
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            className="px-3 py-1 rounded bg-blue-100 hover:bg-blue-200 text-blue-800 text-sm"
-                            onClick={() => startEdit(entry)}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            className="px-3 py-1 rounded bg-red-100 hover:bg-red-200 text-red-800 text-sm"
-                            onClick={() => handleDelete(entry.id)}
-                            disabled={busyDeleteId === entry.id}
-                          >
-                            {busyDeleteId === entry.id ? "Deleting…" : "Delete"}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              {entries.length === 0 && (
+              {visibleEntries.map((entry) => (
+                <tr key={entry.id} className="odd:bg-white even:bg-gray-50">
+                  <td className="p-2 border-b font-mono">
+                    {entry.refNumber}
+                  </td>
+                  <td className="p-2 border-b">{entry.date}</td>
+                  <td className="p-2 border-b">{entry.description}</td>
+                  <td className="p-2 border-b">
+                    {entry.lines
+                      ?.reduce(
+                        (sum, l) => sum + (parseFloat(l.debit) || 0),
+                        0
+                      )
+                      .toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                  </td>
+                  <td className="p-2 border-b">
+                    {entry.lines
+                      ?.reduce(
+                        (sum, l) => sum + (parseFloat(l.credit) || 0),
+                        0
+                      )
+                      .toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                  </td>
+                  <td className="p-2 border-b">{entry.createdBy || "-"}</td>
+                  <td className="p-2 border-b">
+                    <button
+                      className="btn btn-sm btn-outline mr-1"
+                      onClick={() => startEdit(entry)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      className="btn btn-sm btn-outline"
+                      onClick={() => deleteEntry(entry.id)}
+                    >
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {visibleEntries.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="p-4 text-gray-500 text-center">
+                  <td
+                    colSpan={7}
+                    className="p-4 text-gray-500 text-center"
+                  >
                     No journal entries found.
                   </td>
                 </tr>
@@ -543,54 +561,76 @@ export default function JournalEntries() {
       )}
 
       {/* Edit Modal */}
-      {editing && (
+      {editEntryId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-xl shadow-lg w-[480px] p-5">
-            <div className="text-lg font-semibold mb-3">Edit Journal Entry</div>
+          <div className="bg-white rounded-xl shadow-lg w-[420px] p-4">
+            <div className="text-lg font-semibold mb-3">
+              Edit Journal Entry
+            </div>
             <div className="space-y-3">
               <div>
                 <label className="block text-sm font-medium">Date</label>
                 <input
                   type="date"
                   className="border rounded px-2 py-1 w-full"
-                  value={editDate}
-                  onChange={(e) => setEditDate(e.target.value)}
+                  value={editEntryForm.date}
+                  onChange={(e) =>
+                    setEditEntryForm((f) => ({
+                      ...f,
+                      date: e.target.value,
+                    }))
+                  }
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium">Description</label>
+                <label className="block text-sm font-medium">
+                  Description
+                </label>
                 <input
                   type="text"
                   className="border rounded px-2 py-1 w-full"
-                  value={editDesc}
-                  onChange={(e) => setEditDesc(e.target.value)}
-                  maxLength={150}
+                  value={editEntryForm.description}
+                  onChange={(e) =>
+                    setEditEntryForm((f) => ({
+                      ...f,
+                      description: e.target.value,
+                    }))
+                  }
+                  placeholder="Short description"
+                  maxLength={120}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium">Comments</label>
+                <label className="block text-sm font-medium">
+                  Comments
+                </label>
                 <input
                   type="text"
                   className="border rounded px-2 py-1 w-full"
-                  value={editComments}
-                  onChange={(e) => setEditComments(e.target.value)}
+                  value={editEntryForm.comments}
+                  onChange={(e) =>
+                    setEditEntryForm((f) => ({
+                      ...f,
+                      comments: e.target.value,
+                    }))
+                  }
                   maxLength={200}
                 />
               </div>
-              <div className="text-xs text-gray-500">
-                Ref: {editing.refNumber}
-              </div>
             </div>
+
             <div className="mt-4 flex justify-end gap-2">
-              <button className="px-3 py-1 rounded bg-gray-200" onClick={cancelEdit}>
+              <button
+                className="px-3 py-1 rounded bg-gray-200"
+                onClick={() => setEditEntryId(null)}
+              >
                 Cancel
               </button>
               <button
                 className="px-3 py-1 rounded bg-green-600 text-white"
                 onClick={saveEdit}
-                disabled={busyEdit}
               >
-                {busyEdit ? "Saving…" : "Save"}
+                Save
               </button>
             </div>
           </div>
