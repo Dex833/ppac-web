@@ -16,7 +16,7 @@ import useUserProfile from "../../../hooks/useUserProfile";
 import IncomeStatementChart from "./IncomeStatementChart";
 import jsPDF from "jspdf";
 
-/* -------------------- helpers -------------------- */
+/* -------------------- date helpers -------------------- */
 function parseYMD(ymd) {
   if (!ymd) return null;
   const parts = ymd.split("-");
@@ -40,6 +40,7 @@ function formatRange(from, to) {
   return `${left} - ${right}`;
 }
 
+/* -------------------- accounts hook -------------------- */
 function useAccounts() {
   const [accounts, setAccounts] = useState([]);
   useEffect(() => {
@@ -57,8 +58,11 @@ function useAccounts() {
 }
 
 export default function IncomeStatement() {
+  const accounts = useAccounts();
+
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
+
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [notes, setNotes] = useState("");
@@ -67,19 +71,17 @@ export default function IncomeStatement() {
   const [generating, setGenerating] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
-  const accounts = useAccounts();
   const { profile } = useUserProfile();
   const isAdmin = profile?.roles?.includes("admin") || profile?.role === "admin";
   const isTreasurer =
     profile?.roles?.includes("treasurer") || profile?.role === "treasurer";
-  // Only admins/treasurers can delete saved reports
   const canDeleteReports = isAdmin || isTreasurer;
 
   const userName = profile?.displayName || profile?.email || "Unknown";
   const userId = profile?.uid || "";
   const notesRef = useRef();
 
-  // load journal entries (for computing IS)
+  /* ---- load journal entries (used for computing IS) ---- */
   useEffect(() => {
     setLoading(true);
     const q = query(collection(db, "journalEntries"), orderBy("createdAt", "asc"));
@@ -90,19 +92,19 @@ export default function IncomeStatement() {
     return () => unsub();
   }, []);
 
-  // load saved IS reports
+  /* ---- load saved IS reports ---- */
   useEffect(() => {
     getRecentIncomeStatementReports().then(setRecentReports);
   }, [generating]);
 
-  // group accounts
+  /* ---- group accounts ---- */
   const revenues = accounts.filter((a) => a.type === "Revenue");
   const expenses = accounts.filter((a) => a.type === "Expense");
 
   function filterEntriesByDate(list, fromDate, toDate) {
     if (!fromDate && !toDate) return list;
     return list.filter((e) => {
-      const d = e.date || ""; // "YYYY-MM-DD"
+      const d = e.date || ""; // expect "YYYY-MM-DD"
       if (fromDate && d < fromDate) return false;
       if (toDate && d > toDate) return false;
       return true;
@@ -124,13 +126,13 @@ export default function IncomeStatement() {
     }, 0);
   }
 
-  // compute current (unsaved) report numbers
+  /* ---- compute current (unsaved) report numbers ---- */
   const filteredEntries = filterEntriesByDate(entries, from, to);
   const totalRevenue = getTotal(revenues, filteredEntries);
   const totalExpense = getTotal(expenses, filteredEntries);
   const netIncome = totalRevenue - totalExpense;
 
-  // actions: generate/delete/download reports
+  /* -------------------- actions -------------------- */
   async function handleGenerate() {
     setGenerating(true);
     const now = new Date();
@@ -283,7 +285,7 @@ export default function IncomeStatement() {
 
     docPDF.save(
       "IncomeStatement_" +
-        (formatRange(reportObj.from, reportObj.to).replaceAll(" ", "")) +
+        formatRange(reportObj.from, reportObj.to).replaceAll(" ", "") +
         ".pdf"
     );
     setDownloading(false);
@@ -327,15 +329,12 @@ export default function IncomeStatement() {
     setShowReport(null);
   }
 
-  // renderer for report (current or saved)
+  /* -------------------- report renderer -------------------- */
   const renderReport = (reportObj) => (
     <div className="mb-6">
       <div className="flex flex-wrap items-center gap-4 mb-2">
         <div className="font-semibold text-base">
-          Period:{" "}
-          <span className="font-normal">
-            {formatRange(reportObj.from, reportObj.to)}
-          </span>
+          Period: <span className="font-normal">{formatRange(reportObj.from, reportObj.to)}</span>
         </div>
         <div className="font-semibold text-base">
           Net Income:{" "}
@@ -392,9 +391,7 @@ export default function IncomeStatement() {
         </thead>
         <tbody>
           <tr>
-            <td colSpan={2} className="font-bold p-2">
-              Revenues
-            </td>
+            <td colSpan={2} className="font-bold p-2">Revenues</td>
           </tr>
           {reportObj.report.revenues.map((acc, i) => (
             <tr key={acc.code + i}>
@@ -410,9 +407,7 @@ export default function IncomeStatement() {
             </tr>
           ))}
           <tr className="font-bold">
-            <td className="p-2 border-t border-r border-gray-200 text-right">
-              Total Revenue
-            </td>
+            <td className="p-2 border-t border-r border-gray-200 text-right">Total Revenue</td>
             <td className="p-2 border-t text-right">
               {reportObj.report.totalRevenue.toLocaleString(undefined, {
                 minimumFractionDigits: 2,
@@ -420,10 +415,9 @@ export default function IncomeStatement() {
               })}
             </td>
           </tr>
+
           <tr>
-            <td colSpan={2} className="font-bold p-2">
-              Expenses
-            </td>
+            <td colSpan={2} className="font-bold p-2">Expenses</td>
           </tr>
           {reportObj.report.expenses.map((acc, i) => (
             <tr key={acc.code + i}>
@@ -439,9 +433,7 @@ export default function IncomeStatement() {
             </tr>
           ))}
           <tr className="font-bold">
-            <td className="p-2 border-t border-r border-gray-200 text-right">
-              Total Expenses
-            </td>
+            <td className="p-2 border-t border-r border-gray-200 text-right">Total Expenses</td>
             <td className="p-2 border-t text-right">
               {reportObj.report.totalExpense.toLocaleString(undefined, {
                 minimumFractionDigits: 2,
@@ -449,10 +441,9 @@ export default function IncomeStatement() {
               })}
             </td>
           </tr>
+
           <tr className="font-bold bg-gray-100">
-            <td className="p-2 border-t border-r border-gray-200 text-right">
-              Net Income
-            </td>
+            <td className="p-2 border-t border-r border-gray-200 text-right">Net Income</td>
             <td className="p-2 border-t text-right">
               {reportObj.report.netIncome.toLocaleString(undefined, {
                 minimumFractionDigits: 2,
@@ -472,6 +463,7 @@ export default function IncomeStatement() {
     </div>
   );
 
+  /* -------------------- render -------------------- */
   return (
     <div className="flex gap-8">
       <div className="flex-1">
@@ -532,53 +524,51 @@ export default function IncomeStatement() {
         ) : showReport ? (
           renderReport(showReport)
         ) : (
-          renderReport(
-            {
-              from,
-              to,
-              report: {
-                revenues: revenues.map((acc) => {
-                  let credit = 0, debit = 0;
-                  filteredEntries.forEach((entry) => {
-                    (entry.lines || []).forEach((line) => {
-                      if (line.accountId === acc.id) {
-                        debit += parseFloat(line.debit) || 0;
-                        credit += parseFloat(line.credit) || 0;
-                      }
-                    });
+          renderReport({
+            from,
+            to,
+            report: {
+              revenues: revenues.map((acc) => {
+                let credit = 0, debit = 0;
+                filteredEntries.forEach((entry) => {
+                  (entry.lines || []).forEach((line) => {
+                    if (line.accountId === acc.id) {
+                      debit += parseFloat(line.debit) || 0;
+                      credit += parseFloat(line.credit) || 0;
+                    }
                   });
-                  return {
-                    code: acc.code,
-                    name: acc.main + (acc.individual ? " / " + acc.individual : ""),
-                    amount: credit - debit,
-                  };
-                }),
-                expenses: expenses.map((acc) => {
-                  let credit = 0, debit = 0;
-                  filteredEntries.forEach((entry) => {
-                    (entry.lines || []).forEach((line) => {
-                      if (line.accountId === acc.id) {
-                        debit += parseFloat(line.debit) || 0;
-                        credit += parseFloat(line.credit) || 0;
-                      }
-                    });
+                });
+                return {
+                  code: acc.code,
+                  name: acc.main + (acc.individual ? " / " + acc.individual : ""),
+                  amount: credit - debit,
+                };
+              }),
+              expenses: expenses.map((acc) => {
+                let credit = 0, debit = 0;
+                filteredEntries.forEach((entry) => {
+                  (entry.lines || []).forEach((line) => {
+                    if (line.accountId === acc.id) {
+                      debit += parseFloat(line.debit) || 0;
+                      credit += parseFloat(line.credit) || 0;
+                    }
                   });
-                  return {
-                    code: acc.code,
-                    name: acc.main + (acc.individual ? " / " + acc.individual : ""),
-                    amount: debit - credit,
-                  };
-                }),
-                totalRevenue,
-                totalExpense,
-                netIncome,
-                notes,
-                generatedBy: userName,
-                generatedById: userId,
-                generatedAt: new Date().toISOString(),
-              },
-            }
-          )
+                });
+                return {
+                  code: acc.code,
+                  name: acc.main + (acc.individual ? " / " + acc.individual : ""),
+                  amount: debit - credit,
+                };
+              }),
+              totalRevenue,
+              totalExpense,
+              netIncome,
+              notes,
+              generatedBy: userName,
+              generatedById: userId,
+              generatedAt: new Date().toISOString(),
+            },
+          })
         )}
       </div>
 
@@ -594,7 +584,7 @@ export default function IncomeStatement() {
               <button
                 className="text-left truncate"
                 onClick={() => handleShowReport(r)}
-                title={`${formatRange(r.from, r.to)}`}
+                title={formatRange(r.from, r.to)}
               >
                 {formatRange(r.from, r.to)}
               </button>
@@ -611,4 +601,12 @@ export default function IncomeStatement() {
                 </button>
               )}
             </li>
-          )
+          ))}
+          {recentReports.length === 0 && (
+            <li className="text-sm text-gray-500">No saved reports yet.</li>
+          )}
+        </ul>
+      </div>
+    </div>
+  );
+}
