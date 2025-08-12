@@ -61,26 +61,13 @@ export default function App() {
   const isManager = roles.includes("manager");
   const notSuspended = profile?.suspended !== true;
 
-  // Palawan farm/nature background image (Unsplash, free to use)
-  // Example: https://unsplash.com/photos/green-grass-field-near-mountain-under-white-clouds-during-daytime-1K6IQsQbizI
-  const bgUrl = 'https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80'; // Palawan rice field
-
   return (
-    <div
-      className="min-h-screen text-ink"
-      style={{
-        backgroundImage: `url(${bgUrl})`,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-        backgroundRepeat: 'no-repeat',
-        backgroundAttachment: 'fixed',
-      }}
-    >
+    <div className="min-h-screen text-ink">
       {/* Top info bar */}
       <div className="w-full bg-brand-50 border-b border-brand-100 text-xs text-ink/70 py-1 px-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <div className="flex flex-col sm:flex-row gap-2 sm:gap-6">
-          <span>📍 123 Rizal Ave, Puerto Princesa City, Palawan</span>
-          <span>☎️ (048) 433-1234</span>
+          <span>📍 Agri Trading Center, Brgy. Irawan, Puerto Princesa City, Palawan 5300</span>
+          <span>☎️ 0950-468-6668</span>
         </div>
         <div>
           <a href="https://facebook.com/ppac.coop" target="_blank" rel="noopener noreferrer" className="text-blue-700 hover:underline flex items-center gap-1">
@@ -157,7 +144,7 @@ export default function App() {
         }}
       />
 
-      <main className="mx-auto max-w-5xl px-4 py-10">
+  <main>
         <Routes>
           {/* Home (driven by Firestore via pages/Home.jsx) */}
           <Route path="/" element={<Home />} />

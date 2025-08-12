@@ -1,3 +1,4 @@
+// src/pages/accounting/JournalEntries.jsx
 import React, { useEffect, useState, useRef } from "react";
 import { db } from "../../lib/firebase";
 import {
@@ -12,9 +13,12 @@ import {
   updateDoc,
   deleteDoc,
   serverTimestamp,
+  writeBatch,
 } from "firebase/firestore";
+import { useAuth } from "../../AuthContext";
+import useUserProfile from "../../hooks/useUserProfile";
 
-// Helper to get accounts for dropdown
+// ----- Accounts for dropdown -----
 function useAccounts() {
   const [accounts, setAccounts] = useState([]);
   useEffect(() => {
@@ -33,7 +37,24 @@ function useAccounts() {
 
 export default function JournalEntries() {
   const accounts = useAccounts();
+  const { user } = useAuth();
+  const { profile } = useUserProfile();
 
+  const roles = Array.isArray(profile?.roles)
+    ? profile.roles
+    : profile?.role
+    ? [profile.role]
+    : [];
+  const isAdmin = roles.includes("admin");
+
+  const createdByName =
+    profile?.displayName ||
+    user?.displayName ||
+    profile?.email ||
+    user?.email ||
+    "Unknown";
+
+  // ----- New entry form -----
   const [form, setForm] = useState({
     refNumber: "",
     date: new Date().toISOString().slice(0, 10),
@@ -46,12 +67,12 @@ export default function JournalEntries() {
   const [lastRef, setLastRef] = useState(0);
   const [notif, setNotif] = useState({ show: false, type: "", message: "" });
 
-  // Journal entry list state (only last 10)
+  // list / filters
   const [entries, setEntries] = useState([]);
   const [entryLoading, setEntryLoading] = useState(true);
   const [filter, setFilter] = useState({ ref: "", date: "", account: "" });
 
-  // Edit modal
+  // edit modal
   const [editEntryId, setEditEntryId] = useState(null);
   const [editEntryForm, setEditEntryForm] = useState({
     date: "",
@@ -59,11 +80,16 @@ export default function JournalEntries() {
     comments: "",
   });
 
-  // Dirty form tracking
+  // admin: assign creator modal
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignEntry, setAssignEntry] = useState(null);
+  const [assignName, setAssignName] = useState("");
+
+  // dirty guard
   const [isDirty, setIsDirty] = useState(false);
   const initialForm = useRef(null);
 
-  // Fetch latest 10 journal entries (live)
+  // ----- Load latest entries (live) -----
   useEffect(() => {
     setEntryLoading(true);
     const qJE = query(
@@ -78,7 +104,7 @@ export default function JournalEntries() {
     return () => unsub();
   }, []);
 
-  // Get last reference number for auto-increment (only need top 1)
+  // ----- Last ref number (top 1) -----
   useEffect(() => {
     async function fetchLastRef() {
       const qJE = query(
@@ -94,7 +120,7 @@ export default function JournalEntries() {
     fetchLastRef();
   }, []);
 
-  // Set auto-incremented refNumber on mount or when lastRef changes
+  // auto-increment ref
   useEffect(() => {
     setForm((f) => ({
       ...f,
@@ -102,19 +128,17 @@ export default function JournalEntries() {
     }));
   }, [lastRef]);
 
-  // Track initial form state for dirty check
+  // dirty tracking
   useEffect(() => {
     initialForm.current = JSON.stringify(form);
-  }, []);
+  }, []); // init only
 
-  // Mark as dirty if form changes
   useEffect(() => {
     if (initialForm.current && JSON.stringify(form) !== initialForm.current) {
       setIsDirty(true);
     }
   }, [form]);
 
-  // Warn on navigation away if dirty
   useEffect(() => {
     const handleBeforeUnload = (e) => {
       if (isDirty) {
@@ -128,6 +152,7 @@ export default function JournalEntries() {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [isDirty]);
 
+  // ----- Form helpers -----
   function handleLineChange(idx, field, value) {
     setForm((f) => ({
       ...f,
@@ -136,17 +161,12 @@ export default function JournalEntries() {
       ),
     }));
   }
-
   function addLine() {
     setForm((f) => ({
       ...f,
-      lines: [
-        ...f.lines,
-        { accountId: "", debit: "", credit: "", memo: "" },
-      ],
+      lines: [...f.lines, { accountId: "", debit: "", credit: "", memo: "" }],
     }));
   }
-
   function removeLine(idx) {
     setForm((f) => ({
       ...f,
@@ -154,7 +174,6 @@ export default function JournalEntries() {
         f.lines.length > 1 ? f.lines.filter((_, i) => i !== idx) : f.lines,
     }));
   }
-
   function total(field) {
     return form.lines.reduce(
       (sum, l) => sum + (parseFloat(l[field]) || 0),
@@ -162,15 +181,14 @@ export default function JournalEntries() {
     );
   }
 
+  // ----- Create entry -----
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
-    // Validation
+
     if (!form.date || !form.refNumber)
       return setError("Date and Reference Number are required.");
-    if (
-      form.lines.some((l) => !l.accountId || (!l.debit && !l.credit))
-    )
+    if (form.lines.some((l) => !l.accountId || (!l.debit && !l.credit)))
       return setError(
         "All lines must have an account and either debit or credit."
       );
@@ -190,41 +208,30 @@ export default function JournalEntries() {
           credit: parseFloat(l.credit) || 0,
         })),
         createdAt: serverTimestamp(),
-        createdBy: window.firebaseAuth?.currentUser?.email || null,
+        createdById: user?.uid || "",
+        createdBy: createdByName, // human-friendly
       });
+
       setForm({
-        refNumber: (parseInt(form.refNumber, 10) + 1)
-          .toString()
-          .padStart(5, "0"),
+        refNumber: (parseInt(form.refNumber, 10) + 1).toString().padStart(5, "0"),
         date: new Date().toISOString().slice(0, 10),
         description: "",
         comments: "",
         lines: [{ accountId: "", debit: "", credit: "", memo: "" }],
       });
       setLastRef((r) => r + 1);
-      setIsDirty(false); // Reset dirty flag after save
-      setNotif({
-        show: true,
-        type: "success",
-        message: "Journal entry saved successfully!",
-      });
+      setIsDirty(false);
+      setNotif({ show: true, type: "success", message: "Journal entry saved successfully!" });
     } catch (e) {
       setError("Failed to save: " + e.message);
-      setNotif({
-        show: true,
-        type: "error",
-        message: "Failed to save: " + e.message,
-      });
+      setNotif({ show: true, type: "error", message: "Failed to save: " + e.message });
     } finally {
       setSaving(false);
-      setTimeout(
-        () => setNotif({ show: false, type: "", message: "" }),
-        2500
-      );
+      setTimeout(() => setNotif({ show: false, type: "", message: "" }), 2500);
     }
   }
 
-  // ---- Edit/Delete actions ----
+  // ----- Edit / Delete -----
   function startEdit(entry) {
     setEditEntryId(entry.id);
     setEditEntryForm({
@@ -242,21 +249,15 @@ export default function JournalEntries() {
         description: editEntryForm.description || "",
         comments: editEntryForm.comments || "",
         updatedAt: serverTimestamp(),
-        updatedBy: window.firebaseAuth?.currentUser?.email || null,
+        updatedById: user?.uid || "",
+        updatedBy: createdByName,
       });
       setEditEntryId(null);
       setNotif({ show: true, type: "success", message: "Entry updated." });
     } catch (e) {
-      setNotif({
-        show: true,
-        type: "error",
-        message: "Failed to update: " + e.message,
-      });
+      setNotif({ show: true, type: "error", message: "Failed to update: " + e.message });
     } finally {
-      setTimeout(
-        () => setNotif({ show: false, type: "", message: "" }),
-        2000
-      );
+      setTimeout(() => setNotif({ show: false, type: "", message: "" }), 2000);
     }
   }
 
@@ -267,20 +268,13 @@ export default function JournalEntries() {
       await deleteDoc(doc(db, "journalEntries", id));
       setNotif({ show: true, type: "success", message: "Entry deleted." });
     } catch (e) {
-      setNotif({
-        show: true,
-        type: "error",
-        message: "Failed to delete: " + e.message,
-      });
+      setNotif({ show: true, type: "error", message: "Failed to delete: " + e.message });
     } finally {
-      setTimeout(
-        () => setNotif({ show: false, type: "", message: "" }),
-        2000
-      );
+      setTimeout(() => setNotif({ show: false, type: "", message: "" }), 2000);
     }
   }
 
-  // Filter (applied on the 10 loaded items)
+  // ----- Filters (client-side on last 10) -----
   const visibleEntries = entries.filter((e) => {
     if (filter.ref && !(e.refNumber || "").includes(filter.ref)) return false;
     if (filter.date && e.date !== filter.date) return false;
@@ -288,14 +282,112 @@ export default function JournalEntries() {
       filter.account &&
       !e.lines?.some((l) => {
         const acc = accounts.find((a) => a.id === l.accountId);
-        const name =
-          (acc?.main || "") + (acc?.individual ? acc.individual : "");
+        const name = (acc?.main || "") + (acc?.individual ? ` ${acc.individual}` : "");
         return name.toLowerCase().includes(filter.account.toLowerCase());
       })
     )
       return false;
     return true;
   });
+
+  // ----- Admin: backfill creators -----
+  async function backfillCreatedBy() {
+    if (!isAdmin) return;
+    if (!window.confirm("Backfill 'Created By' on entries that are missing it?")) return;
+
+    try {
+      // cache users + profiles for id->name lookup
+      const usersSnap = await getDocs(collection(db, "users"));
+      const profilesSnap = await getDocs(collection(db, "profiles"));
+      const byUid = new Map();
+      usersSnap.forEach((d) => byUid.set(d.id, d.data()));
+      profilesSnap.forEach((d) =>
+        byUid.set(d.id, { ...(byUid.get(d.id) || {}), ...d.data() })
+      );
+      const nameFromUid = (uid) => {
+        const u = byUid.get(uid);
+        if (!u) return null;
+        return u.displayName || u.name || u.email || null;
+      };
+
+      const all = await getDocs(collection(db, "journalEntries"));
+      let batch = writeBatch(db);
+      let ops = 0;
+      let changed = 0;
+
+      all.forEach((docSnap) => {
+        const e = docSnap.data();
+        if (e.createdBy || e.createdById || e.createdByName) return; // already has something
+
+        let candidate =
+          e.createdByEmail ||
+          (e.createdById && nameFromUid(e.createdById)) ||
+          e.updatedBy ||
+          (e.updatedById && nameFromUid(e.updatedById)) ||
+          null;
+
+        if (!candidate) candidate = "Unknown";
+
+        batch.update(docSnap.ref, {
+          createdBy: candidate,
+          createdById: e.createdById || e.updatedById || "",
+        });
+        ops++;
+        changed++;
+
+        if (ops >= 450) {
+          batch.commit();
+          batch = writeBatch(db);
+          ops = 0;
+        }
+      });
+
+      if (ops > 0) await batch.commit();
+      setNotif({
+        show: true,
+        type: "success",
+        message: `Backfilled ${changed} entries.`,
+      });
+    } catch (e) {
+      setNotif({
+        show: true,
+        type: "error",
+        message: "Backfill failed: " + e.message,
+      });
+    } finally {
+      setTimeout(() => setNotif({ show: false, type: "", message: "" }), 2500);
+    }
+  }
+
+  // ----- Admin: assign creator per row -----
+  function openAssignCreator(entry) {
+    setAssignEntry(entry);
+    setAssignName(entry.createdBy || entry.updatedBy || "");
+    setAssignOpen(true);
+  }
+  async function saveAssignedCreator() {
+    if (!assignEntry?.id) return;
+    try {
+      await updateDoc(doc(db, "journalEntries", assignEntry.id), {
+        createdBy: assignName.trim() || "Unknown",
+        // leave createdById empty unless you add a UID picker:
+        createdById: assignEntry.createdById || "",
+        updatedAt: serverTimestamp(),
+        updatedById: user?.uid || "",
+        updatedBy: createdByName,
+      });
+      setAssignOpen(false);
+      setNotif({ show: true, type: "success", message: "Creator updated." });
+    } catch (e) {
+      setNotif({
+        show: true,
+        type: "error",
+        message: "Failed to update creator: " + e.message,
+      });
+    } finally {
+      setTimeout(() => setNotif({ show: false, type: "", message: "" }), 2000);
+    }
+  }
 
   return (
     <div>
@@ -313,20 +405,13 @@ export default function JournalEntries() {
         </div>
       )}
 
-      <form
-        className="space-y-4 bg-white p-4 rounded shadow max-w-3xl mb-8"
-        onSubmit={handleSubmit}
-      >
+      <form className="space-y-4 bg-white p-4 rounded shadow max-w-3xl mb-8" onSubmit={handleSubmit}>
         {error && <div className="text-red-600 font-medium">{error}</div>}
 
         <div className="flex flex-wrap gap-4">
           <div className="flex-1 min-w-[120px]">
             <label className="block text-sm font-medium">Ref#</label>
-            <input
-              className="border rounded px-2 py-1 w-full font-mono bg-gray-100"
-              value={form.refNumber}
-              readOnly
-            />
+            <input className="border rounded px-2 py-1 w-full font-mono bg-gray-100" value={form.refNumber} readOnly />
           </div>
           <div className="flex-1 min-w-[120px]">
             <label className="block text-sm font-medium">Date</label>
@@ -334,9 +419,7 @@ export default function JournalEntries() {
               className="border rounded px-2 py-1 w-full"
               type="date"
               value={form.date}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, date: e.target.value }))
-              }
+              onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
               required
             />
           </div>
@@ -347,9 +430,7 @@ export default function JournalEntries() {
           <input
             className="border rounded px-2 py-1 w-full"
             value={form.description}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, description: e.target.value }))
-            }
+            onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
             required
           />
         </div>
@@ -359,9 +440,7 @@ export default function JournalEntries() {
           <input
             className="border rounded px-2 py-1 w-full"
             value={form.comments}
-            onChange={(e) =>
-              setForm((f) => ({ ...f, comments: e.target.value }))
-            }
+            onChange={(e) => setForm((f) => ({ ...f, comments: e.target.value }))}
           />
         </div>
 
@@ -384,9 +463,7 @@ export default function JournalEntries() {
                     <select
                       className="border rounded px-2 py-1 w-full"
                       value={line.accountId}
-                      onChange={(e) =>
-                        handleLineChange(idx, "accountId", e.target.value)
-                      }
+                      onChange={(e) => handleLineChange(idx, "accountId", e.target.value)}
                       required
                     >
                       <option value="">Select Account</option>
@@ -405,9 +482,7 @@ export default function JournalEntries() {
                       min="0"
                       step="0.01"
                       value={line.debit}
-                      onChange={(e) =>
-                        handleLineChange(idx, "debit", e.target.value)
-                      }
+                      onChange={(e) => handleLineChange(idx, "debit", e.target.value)}
                     />
                   </td>
                   <td className="p-2 border-b">
@@ -417,18 +492,14 @@ export default function JournalEntries() {
                       min="0"
                       step="0.01"
                       value={line.credit}
-                      onChange={(e) =>
-                        handleLineChange(idx, "credit", e.target.value)
-                      }
+                      onChange={(e) => handleLineChange(idx, "credit", e.target.value)}
                     />
                   </td>
                   <td className="p-2 border-b">
                     <input
                       className="border rounded px-2 py-1 w-full"
                       value={line.memo}
-                      onChange={(e) =>
-                        handleLineChange(idx, "memo", e.target.value)
-                      }
+                      onChange={(e) => handleLineChange(idx, "memo", e.target.value)}
                     />
                   </td>
                   <td className="p-2 border-b">
@@ -445,11 +516,7 @@ export default function JournalEntries() {
               ))}
             </tbody>
           </table>
-          <button
-            type="button"
-            className="mt-2 px-3 py-1 bg-gray-200 rounded"
-            onClick={addLine}
-          >
+          <button type="button" className="mt-2 px-3 py-1 bg-gray-200 rounded" onClick={addLine}>
             + Add Line
           </button>
         </div>
@@ -458,37 +525,33 @@ export default function JournalEntries() {
           <div>
             Total Debit:{" "}
             <span className="font-mono">
-              {total("debit").toLocaleString(undefined, {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              })}
+              {total("debit").toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
           <div>
             Total Credit:{" "}
             <span className="font-mono">
-              {total("credit").toLocaleString(undefined, {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              })}
+              {total("credit").toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
         </div>
 
         <div>
-          <button
-            type="submit"
-            className="bg-green-600 text-white px-6 py-2 rounded font-semibold"
-            disabled={saving}
-          >
+          <button type="submit" className="bg-green-600 text-white px-6 py-2 rounded font-semibold" disabled={saving}>
             {saving ? "Saving..." : "Save Entry"}
           </button>
         </div>
       </form>
 
-      <h3 className="text-xl font-semibold mt-10 mb-4">
-        Journal Entry History (latest 10)
-      </h3>
+      <div className="flex items-center justify-between mt-10 mb-4">
+        <h3 className="text-xl font-semibold">Journal Entry History (latest 10)</h3>
+        {isAdmin && (
+          <button className="btn btn-sm btn-outline" onClick={backfillCreatedBy} title="Admin only">
+            Backfill creators
+          </button>
+        )}
+      </div>
+
       <div className="mb-4 flex gap-2 flex-wrap">
         <input
           className="border rounded px-2 py-1"
@@ -507,9 +570,7 @@ export default function JournalEntries() {
           className="border rounded px-2 py-1"
           placeholder="Filter by Account"
           value={filter.account}
-          onChange={(e) =>
-            setFilter((f) => ({ ...f, account: e.target.value }))
-          }
+          onChange={(e) => setFilter((f) => ({ ...f, account: e.target.value }))}
         />
       </div>
 
@@ -530,58 +591,50 @@ export default function JournalEntries() {
               </tr>
             </thead>
             <tbody>
-              {visibleEntries.map((entry) => (
-                <tr key={entry.id} className="odd:bg-white even:bg-gray-50">
-                  <td className="p-2 border-b font-mono">
-                    {entry.refNumber}
-                  </td>
-                  <td className="p-2 border-b">{entry.date}</td>
-                  <td className="p-2 border-b">{entry.description}</td>
-                  <td className="p-2 border-b">
-                    {entry.lines
-                      ?.reduce(
-                        (sum, l) => sum + (parseFloat(l.debit) || 0),
-                        0
-                      )
-                      .toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                  </td>
-                  <td className="p-2 border-b">
-                    {entry.lines
-                      ?.reduce(
-                        (sum, l) => sum + (parseFloat(l.credit) || 0),
-                        0
-                      )
-                      .toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                  </td>
-                  <td className="p-2 border-b">{entry.createdBy || "-"}</td>
-                  <td className="p-2 border-b">
-                    <button
-                      className="btn btn-sm btn-outline mr-1"
-                      onClick={() => startEdit(entry)}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      className="btn btn-sm btn-outline"
-                      onClick={() => deleteEntry(entry.id)}
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {visibleEntries.map((entry) => {
+                const friendlyCreator =
+                  entry.createdBy ??
+                  entry.createdByName ??
+                  entry.updatedBy ??
+                  "Unknown";
+                const totalD = (entry.lines || []).reduce((s, l) => s + (parseFloat(l.debit) || 0), 0);
+                const totalC = (entry.lines || []).reduce((s, l) => s + (parseFloat(l.credit) || 0), 0);
+
+                return (
+                  <tr key={entry.id} className="odd:bg-white even:bg-gray-50">
+                    <td className="p-2 border-b font-mono">{entry.refNumber}</td>
+                    <td className="p-2 border-b">{entry.date}</td>
+                    <td className="p-2 border-b">{entry.description}</td>
+                    <td className="p-2 border-b">
+                      {totalD.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                    <td className="p-2 border-b">
+                      {totalC.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                    <td className="p-2 border-b">{friendlyCreator}</td>
+                    <td className="p-2 border-b">
+                      <button className="btn btn-sm btn-outline mr-1" onClick={() => startEdit(entry)}>
+                        Edit
+                      </button>
+                      <button className="btn btn-sm btn-outline" onClick={() => deleteEntry(entry.id)}>
+                        Delete
+                      </button>
+                      {isAdmin && (
+                        <button
+                          className="btn btn-sm btn-outline ml-1"
+                          onClick={() => openAssignCreator(entry)}
+                          title="Admin: set/override creator"
+                        >
+                          Set Creator
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
               {visibleEntries.length === 0 && (
                 <tr>
-                  <td
-                    colSpan={7}
-                    className="p-4 text-gray-500 text-center"
-                  >
+                  <td colSpan={7} className="p-4 text-gray-500 text-center">
                     No journal entries found.
                   </td>
                 </tr>
@@ -595,9 +648,7 @@ export default function JournalEntries() {
       {editEntryId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-xl shadow-lg w-[420px] p-4">
-            <div className="text-lg font-semibold mb-3">
-              Edit Journal Entry
-            </div>
+            <div className="text-lg font-semibold mb-3">Edit Journal Entry</div>
             <div className="space-y-3">
               <div>
                 <label className="block text-sm font-medium">Date</label>
@@ -605,62 +656,61 @@ export default function JournalEntries() {
                   type="date"
                   className="border rounded px-2 py-1 w-full"
                   value={editEntryForm.date}
-                  onChange={(e) =>
-                    setEditEntryForm((f) => ({
-                      ...f,
-                      date: e.target.value,
-                    }))
-                  }
+                  onChange={(e) => setEditEntryForm((f) => ({ ...f, date: e.target.value }))}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium">
-                  Description
-                </label>
+                <label className="block text-sm font-medium">Description</label>
                 <input
                   type="text"
                   className="border rounded px-2 py-1 w-full"
                   value={editEntryForm.description}
-                  onChange={(e) =>
-                    setEditEntryForm((f) => ({
-                      ...f,
-                      description: e.target.value,
-                    }))
-                  }
+                  onChange={(e) => setEditEntryForm((f) => ({ ...f, description: e.target.value }))}
                   placeholder="Short description"
                   maxLength={120}
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium">
-                  Comments
-                </label>
+                <label className="block text-sm font-medium">Comments</label>
                 <input
                   type="text"
                   className="border rounded px-2 py-1 w-full"
                   value={editEntryForm.comments}
-                  onChange={(e) =>
-                    setEditEntryForm((f) => ({
-                      ...f,
-                      comments: e.target.value,
-                    }))
-                  }
+                  onChange={(e) => setEditEntryForm((f) => ({ ...f, comments: e.target.value }))}
                   maxLength={200}
                 />
               </div>
             </div>
 
             <div className="mt-4 flex justify-end gap-2">
-              <button
-                className="px-3 py-1 rounded bg-gray-200"
-                onClick={() => setEditEntryId(null)}
-              >
+              <button className="px-3 py-1 rounded bg-gray-200" onClick={() => setEditEntryId(null)}>
                 Cancel
               </button>
-              <button
-                className="px-3 py-1 rounded bg-green-600 text-white"
-                onClick={saveEdit}
-              >
+              <button className="px-3 py-1 rounded bg-green-600 text-white" onClick={saveEdit}>
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Assign Creator Modal (admin) */}
+      {assignOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-lg w-[420px] p-4">
+            <div className="text-lg font-semibold mb-3">Set Creator</div>
+            <label className="block text-sm mb-2">Name or email</label>
+            <input
+              className="border rounded px-2 py-1 w-full"
+              value={assignName}
+              onChange={(e) => setAssignName(e.target.value)}
+              placeholder="e.g. Dexter Acantilado"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button className="px-3 py-1 rounded bg-gray-200" onClick={() => setAssignOpen(false)}>
+                Cancel
+              </button>
+              <button className="px-3 py-1 rounded bg-green-600 text-white" onClick={saveAssignedCreator}>
                 Save
               </button>
             </div>

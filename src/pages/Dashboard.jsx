@@ -15,6 +15,10 @@ import {
   orderBy,
   getDocs,
 } from "firebase/firestore";
+import PageBackground from "../components/PageBackground";
+
+const dashboardBg =
+  "https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80";
 
 /* ---------------- Helpers ---------------- */
 
@@ -206,7 +210,6 @@ export default function Dashboard() {
           (a) => (a.individual || "").trim().toLowerCase() === constructedName.toLowerCase()
         );
         const loanIds = myLoans.map((a) => a.id);
-        // Same summing logic (debit - credit) as share capital helper above
         const loanBal = await sumBalanceForAccountIds(loanIds);
         setLoanInfo({ balance: loanBal, accounts: myLoans });
       } catch (e) {
@@ -221,13 +224,11 @@ export default function Dashboard() {
 
   if (loadingUserDoc || loadingMemberDoc) {
     return (
-      <div className="min-h-screen bg-surface text-ink">
-        <main className="max-w-3xl mx-auto p-6">
-          <div className="card p-8">
-            <p className="text-ink/70">Loading…</p>
-          </div>
-        </main>
-      </div>
+      <PageBackground image={dashboardBg} boxed boxedWidth="max-w-5xl" overlayClass="bg-white/85 backdrop-blur">
+        <div className="card p-8">
+          <p className="text-ink/70">Loading…</p>
+        </div>
+      </PageBackground>
     );
   }
 
@@ -258,199 +259,171 @@ export default function Dashboard() {
 
   /* ---------------- layout ---------------- */
   return (
-    <div className="min-h-screen bg-surface text-ink">
-      <main className="max-w-6xl mx-auto p-6">
-        <div className="flex flex-col md:flex-row gap-8">
-          {/* ---------- Center: Share Capital / Loan / Balik Tangkilik ---------- */}
-          <div className="flex-1">
-            <div className="card p-8 mb-6">
-              <h2 className="text-2xl font-bold tracking-tight mb-4">
-                Member Dashboard
-              </h2>
+    <PageBackground
+      image={dashboardBg}
+      boxed
+      boxedWidth="max-w-7xl"            // feel free to tweak (max-w-5xl, -6xl, -7xl)
+      overlayClass="bg-white/85 backdrop-blur"
+    >
+      <div className="flex flex-col md:flex-row gap-8">
+        {/* ---------- Center: Share Capital / Loan / Balik Tangkilik ---------- */}
+        <div className="flex-1">
+          <div className="card p-8 mb-6">
+            <h2 className="text-2xl font-bold tracking-tight mb-4">Member Dashboard</h2>
 
-              {!isVerified && (
-                <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                  Your account is not verified yet. Please verify your email or
-                  wait for admin verification.{" "}
-                  <Link
-                    to="/verify"
-                    className="underline decoration-amber-600 hover:text-amber-700"
-                  >
-                    Go to verification
-                  </Link>
-                </div>
-              )}
+            {!isVerified && (
+              <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                Your account is not verified yet. Please verify your email or wait for admin verification.{" "}
+                <Link to="/verify" className="underline decoration-amber-600 hover:text-amber-700">
+                  Go to verification
+                </Link>
+              </div>
+            )}
 
-              {!memberComplete && (
-                <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-                  Help us know you better. Please complete your member profile.{" "}
-                  {isVerified && (
-                    <Link
-                      to="/profile"
-                      className="underline decoration-blue-600 hover:text-blue-700"
-                    >
-                      Go to Profile
-                    </Link>
-                  )}
-                </div>
-              )}
-
-              {/* Reserved content area: only show if verified */}
-              {isVerified && (
-                <div className="grid grid-cols-1 gap-6">
-                  {/* Share Capital */}
-                  <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-6">
-                    <h3 className="font-semibold text-lg mb-2">Share Capital</h3>
-                    <div className="text-ink/70">
-                      {loadingShareCap ? (
-                        <span>Loading…</span>
-                      ) : shareCapital && shareCapital.accounts.length ? (
-                        <>
-                          <div className="mb-2">
-                            <span className="font-semibold">Balance:</span>{" "}
-                            <span className="font-mono">
-                              ₱
-                              {Math.abs(shareCapital.balance).toLocaleString(
-                                undefined,
-                                { minimumFractionDigits: 2, maximumFractionDigits: 2 }
-                              )}
-                            </span>
-                          </div>
-                          <div className="text-xs text-ink/50">
-                            Account(s):{" "}
-                            {shareCapital.accounts
-                              .map((a) => a.individual || a.id)
-                              .join(", ")}
-                          </div>
-                        </>
-                      ) : (
-                        <span>No Share Capital account found for your name.</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Loan (same logic pattern) */}
-                  <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-6">
-                    <h3 className="font-semibold text-lg mb-2">Loan</h3>
-                    <div className="text-ink/70">
-                      {loadingLoan ? (
-                        <span>Loading…</span>
-                      ) : loanInfo && loanInfo.accounts.length ? (
-                        <>
-                          <div className="mb-2">
-                            <span className="font-semibold">Outstanding:</span>{" "}
-                            <span className="font-mono">
-                              ₱
-                              {Math.abs(loanInfo.balance).toLocaleString(
-                                undefined,
-                                { minimumFractionDigits: 2, maximumFractionDigits: 2 }
-                              )}
-                            </span>
-                          </div>
-                          <div className="text-xs text-ink/50">
-                            Account(s):{" "}
-                            {loanInfo.accounts
-                              .map((a) => a.individual || a.id)
-                              .join(", ")}
-                          </div>
-                        </>
-                      ) : (
-                        <span>No Loan Receivable account found for your name.</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Balik Tangkilik (placeholder) */}
-                  <div className="rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-6">
-                    <h3 className="font-semibold text-lg mb-2">Balik Tangkilik</h3>
-                    <div className="text-ink/70">[Coming soon]</div>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* ---------- Right: Profile summary (single column) ---------- */}
-          <aside className="w-full md:w-80">
-            <div className="card p-6">
-              <h3 className="font-semibold mb-4">Profile</h3>
-
-              <dl className="grid grid-cols-1 gap-y-3">
-                <div>
-                  <dt className="text-xs uppercase tracking-wide text-ink/50">
-                    Email
-                  </dt>
-                  <dd className="text-sm">{emailToShow}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs uppercase tracking-wide text-ink/50">
-                    Role
-                  </dt>
-                  <dd className="text-sm">{profile?.role || "member"}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs uppercase tracking-wide text-ink/50">
-                    Phone
-                  </dt>
-                  <dd className="text-sm">{profile?.phone || "—"}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs uppercase tracking-wide text-ink/50">
-                    Member ID
-                  </dt>
-                  <dd className="text-sm">{memberIdField || "—"}</dd>
-                </div>
-              </dl>
-
-              {member && (
-                <div className="mt-6">
-                  <h4 className="font-semibold mb-2">Member Profile</h4>
-                  <dl className="grid grid-cols-1 gap-y-3">
-                    <div>
-                      <dt className="text-xs uppercase tracking-wide text-ink/50">
-                        Name
-                      </dt>
-                      <dd className="text-sm">{fullName || "—"}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-xs uppercase tracking-wide text-ink/50">
-                        Birth
-                      </dt>
-                      <dd className="text-sm">
-                        {member.birthdate || "—"}
-                        {member.birthplace ? ` • ${member.birthplace}` : ""}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-xs uppercase tracking-wide text-ink/50">
-                        Sex / Status
-                      </dt>
-                      <dd className="text-sm">
-                        {member.sex || "—"}
-                        {member.civilStatus ? ` • ${member.civilStatus}` : ""}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-xs uppercase tracking-wide text-ink/50">
-                        Current Address
-                      </dt>
-                      <dd className="text-sm">{member.address || "—"}</dd>
-                    </div>
-                  </dl>
-                </div>
-              )}
-
-              <div className="mt-8 flex items-center gap-3">
+            {!memberComplete && (
+              <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                Help us know you better. Please complete your member profile.{" "}
                 {isVerified && (
-                  <Link to="/profile" className="btn btn-primary">
-                    {memberComplete ? "Edit Profile" : "Complete Member Profile"}
+                  <Link to="/profile" className="underline decoration-blue-600 hover:text-blue-700">
+                    Go to Profile
                   </Link>
                 )}
               </div>
-            </div>
-          </aside>
+            )}
+
+            {/* Reserved content area: only show if verified */}
+            {isVerified && (
+              <div className="grid grid-cols-1 gap-6">
+                {/* Share Capital */}
+                <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-6">
+                  <h3 className="font-semibold text-lg mb-2">Share Capital</h3>
+                  <div className="text-ink/70">
+                    {loadingShareCap ? (
+                      <span>Loading…</span>
+                    ) : shareCapital && shareCapital.accounts.length ? (
+                      <>
+                        <div className="mb-2">
+                          <span className="font-semibold">Balance:</span>{" "}
+                          <span className="font-mono">
+                            ₱
+                            {Math.abs(shareCapital.balance).toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </span>
+                        </div>
+                        <div className="text-xs text-ink/50">
+                          Account(s): {shareCapital.accounts.map((a) => a.individual || a.id).join(", ")}
+                        </div>
+                      </>
+                    ) : (
+                      <span>No Share Capital account found for your name.</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Loan */}
+                <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-6">
+                  <h3 className="font-semibold text-lg mb-2">Loan</h3>
+                  <div className="text-ink/70">
+                    {loadingLoan ? (
+                      <span>Loading…</span>
+                    ) : loanInfo && loanInfo.accounts.length ? (
+                      <>
+                        <div className="mb-2">
+                          <span className="font-semibold">Outstanding:</span>{" "}
+                          <span className="font-mono">
+                            ₱
+                            {Math.abs(loanInfo.balance).toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </span>
+                        </div>
+                        <div className="text-xs text-ink/50">
+                          Account(s): {loanInfo.accounts.map((a) => a.individual || a.id).join(", ")}
+                        </div>
+                      </>
+                    ) : (
+                      <span>No Loan Receivable account found for your name.</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Balik Tangkilik (placeholder) */}
+                <div className="rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-6">
+                  <h3 className="font-semibold text-lg mb-2">Balik Tangkilik</h3>
+                  <div className="text-ink/70">[Coming soon]</div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-      </main>
-    </div>
+
+        {/* ---------- Right: Profile summary ---------- */}
+        <aside className="w-full md:w-80">
+          <div className="card p-6">
+            <h3 className="font-semibold mb-4">Profile</h3>
+
+            <dl className="grid grid-cols-1 gap-y-3">
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-ink/50">Email</dt>
+                <dd className="text-sm">{emailToShow}</dd>
+              </div>
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-ink/50">Role</dt>
+                <dd className="text-sm">{profile?.role || "member"}</dd>
+              </div>
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-ink/50">Phone</dt>
+                <dd className="text-sm">{profile?.phone || "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-ink/50">Member ID</dt>
+                <dd className="text-sm">{memberIdField || "—"}</dd>
+              </div>
+            </dl>
+
+            {member && (
+              <div className="mt-6">
+                <h4 className="font-semibold mb-2">Member Profile</h4>
+                <dl className="grid grid-cols-1 gap-y-3">
+                  <div>
+                    <dt className="text-xs uppercase tracking-wide text-ink/50">Name</dt>
+                    <dd className="text-sm">{fullName || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wide text-ink/50">Birth</dt>
+                    <dd className="text-sm">
+                      {member.birthdate || "—"}
+                      {member.birthplace ? ` • ${member.birthplace}` : ""}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wide text-ink/50">Sex / Status</dt>
+                    <dd className="text-sm">
+                      {member.sex || "—"}
+                      {member.civilStatus ? ` • ${member.civilStatus}` : ""}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs uppercase tracking-wide text-ink/50">Current Address</dt>
+                    <dd className="text-sm">{member.address || "—"}</dd>
+                  </div>
+                </dl>
+              </div>
+            )}
+
+            <div className="mt-8 flex items-center gap-3">
+              {isVerified && (
+                <Link to="/profile" className="btn btn-primary">
+                  {memberComplete ? "Edit Profile" : "Complete Member Profile"}
+                </Link>
+              )}
+            </div>
+          </div>
+        </aside>
+      </div>
+    </PageBackground>
   );
 }
