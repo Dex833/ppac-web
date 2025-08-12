@@ -5,16 +5,44 @@ import {
   query,
   orderBy,
   onSnapshot,
-  getDocs,
   addDoc,
   deleteDoc,
   doc,
-  where,
-  limit,
   serverTimestamp,
 } from "firebase/firestore";
+import useUserProfile from "../../../hooks/useUserProfile";
+import {
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Tooltip,
+  Legend,
+  BarChart,
+  XAxis,
+  YAxis,
+  Bar,
+} from "recharts";
+import jsPDF from "jspdf";
 
-/* -------------------- hooks -------------------- */
+// --------------------------- helpers ---------------------------
+const CHART_COLORS = [
+  "#3b82f6",
+  "#10b981",
+  "#f59e0b",
+  "#ef4444",
+  "#8b5cf6",
+  "#06b6d4",
+  "#84cc16",
+  "#f97316",
+];
+
+function formatRange(from, to) {
+  if (!from && !to) return "—";
+  if (from && to) return `${from} → ${to}`;
+  return from ? `${from} → —` : `— → ${to}`;
+}
+
 function useAccounts() {
   const [accounts, setAccounts] = useState([]);
   useEffect(() => {
@@ -31,164 +59,118 @@ function useAccounts() {
   return accounts;
 }
 
-function useJournalEntries() {
+function sumLinesForAccountAsOf(acc, entriesUpTo) {
+  let debit = 0,
+    credit = 0;
+  entriesUpTo.forEach((e) => {
+    (e.lines || []).forEach((l) => {
+      if (l.accountId === acc.id) {
+        debit += Number(l.debit || 0);
+        credit += Number(l.credit || 0);
+      }
+    });
+  });
+  if (acc.type === "Asset") return debit - credit;
+  if (acc.type === "Liability" || acc.type === "Equity") return credit - debit;
+  return 0;
+}
+
+// --------------------------- component ---------------------------
+export default function BalanceSheet() {
+  const { profile } = useUserProfile();
+  const isAdmin =
+    profile?.role === "admin" || (profile?.roles || []).includes("admin");
+  const isTreasurer =
+    profile?.role === "treasurer" ||
+    (profile?.roles || []).includes("treasurer");
+
+  const accounts = useAccounts();
+
+  // journal entries (oldest first)
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     setLoading(true);
-    const q = query(collection(db, "journalEntries"), orderBy("createdAt", "asc"));
-    const unsub = onSnapshot(q, (snap) => {
+    const qJE = query(
+      collection(db, "journalEntries"),
+      orderBy("createdAt", "asc")
+    );
+    const unsub = onSnapshot(qJE, (snap) => {
       setEntries(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setLoading(false);
     });
     return () => unsub();
   }, []);
-  return { entries, loading };
-}
 
-function useIncomeStatementReports() {
+  // saved income statements
   const [isReports, setIsReports] = useState([]);
+  const [selectedISId, setSelectedISId] = useState("");
   useEffect(() => {
     const qIS = query(
       collection(db, "incomeStatementReports"),
-      orderBy("to", "desc")
+      orderBy("from", "desc")
     );
     const unsub = onSnapshot(qIS, (snap) => {
       setIsReports(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
     return () => unsub();
   }, []);
-  return isReports;
-}
+  const selectedIS = useMemo(
+    () => isReports.find((r) => r.id === selectedISId),
+    [isReports, selectedISId]
+  );
+  const asOf = selectedIS?.to || "";
 
-function useBalanceSheetReports() {
+  // saved balance sheets
   const [bsReports, setBsReports] = useState([]);
   useEffect(() => {
     const qBS = query(
       collection(db, "balanceSheetReports"),
-      orderBy("asOf", "desc"),
-      limit(10)
+      orderBy("asOf", "desc")
     );
     const unsub = onSnapshot(qBS, (snap) => {
       setBsReports(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
     return () => unsub();
   }, []);
-  return bsReports;
-}
 
-/* -------------------- utils -------------------- */
-function formatRange(from, to) {
-  if (!from && !to) return "-";
-  if (from && !to) return from;
-  if (!from && to) return to;
-  return `${from} → ${to}`;
-}
-const typeOf = (acc) => (acc.type || "").toLowerCase();
+  // previous BS before current asOf
+  const previousBS = useMemo(() => {
+    if (!asOf) return null;
+    return (
+      bsReports
+        .filter((r) => r.asOf && r.asOf < asOf)
+        .sort((a, b) => a.asOf.localeCompare(b.asOf))
+        .pop() || null
+    );
+  }, [bsReports, asOf]);
 
-function filterEntriesUpTo(entries, asOf) {
-  if (!asOf) return [];
-  return entries.filter((e) => {
-    const d = e.date || "";
-    return d && d <= asOf; // YYYY-MM-DD compare
-  });
-}
+  // entries up to asOf
+  const entriesUpTo = useMemo(() => {
+    if (!asOf) return [];
+    return entries.filter((e) => e.date && e.date <= asOf);
+  }, [entries, asOf]);
 
-function getAccountBalanceAsOf(acc, entriesUpTo) {
-  let debit = 0,
-    credit = 0;
-  entriesUpTo.forEach((entry) => {
-    (entry.lines || []).forEach((line) => {
-      if (line.accountId === acc.id) {
-        debit += parseFloat(line.debit) || 0;
-        credit += parseFloat(line.credit) || 0;
-      }
-    });
-  });
-  // Asset: debit - credit; Liability/Equity: credit - debit
-  const t = typeOf(acc);
-  if (t === "asset") return debit - credit;
-  return credit - debit;
-}
-
-/* -------------------- main -------------------- */
-export default function BalanceSheet() {
-  const accounts = useAccounts();
-  const { entries, loading } = useJournalEntries();
-  const isReports = useIncomeStatementReports();
-  const bsReports = useBalanceSheetReports();
-
-  const [selectedISId, setSelectedISId] = useState("");
-  const [selectedIS, setSelectedIS] = useState(null); // { id, from, to, report:{ netIncome, ... } }
-  const [asOf, setAsOf] = useState("");               // YYYY-MM-DD (IS 'to')
-  const [prevNotice, setPrevNotice] = useState("");
-  const [previousBS, setPreviousBS] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [showReport, setShowReport] = useState(null); // when viewing a saved BS
-
-  // set selected IS
-  useEffect(() => {
-    const found = isReports.find((r) => r.id === selectedISId) || null;
-    setSelectedIS(found || null);
-    setAsOf(found?.to || "");
-    setShowReport(null); // leave view mode when choosing a new IS
-  }, [selectedISId, isReports]);
-
-  // pull previous BS (asOf < selected asOf)
-  useEffect(() => {
-    async function fetchPrev() {
-      setPrevNotice("");
-      setPreviousBS(null);
-      if (!asOf) return;
-      try {
-        const qPrev = query(
-          collection(db, "balanceSheetReports"),
-          where("asOf", "<", asOf),
-          orderBy("asOf", "desc"),
-          limit(1)
-        );
-        const snap = await getDocs(qPrev);
-        if (!snap.empty) {
-          const d = snap.docs[0];
-          setPreviousBS({ id: d.id, ...d.data() });
-        } else {
-          setPrevNotice(
-            'No prior Balance Sheet, this will be your first period. Beginning balances are 0. Ending balances are as of the selected IS end date.'
-          );
-        }
-      } catch (e) {
-        setPrevNotice(
-          'No prior Balance Sheet, this will be your first period. Beginning balances are 0. Ending balances are as of the selected IS end date.'
-        );
-      }
-    }
-    fetchPrev();
-  }, [asOf]);
-
-  // compute balances only when IS chosen or when showing a saved report
-  const entriesUpTo = useMemo(
-    () => filterEntriesUpTo(entries, asOf),
-    [entries, asOf]
-  );
-
+  // slices
   const assets = useMemo(
-    () => accounts.filter((a) => typeOf(a) === "asset"),
+    () => accounts.filter((a) => a.type === "Asset"),
     [accounts]
   );
   const liabilities = useMemo(
-    () => accounts.filter((a) => typeOf(a) === "liability"),
+    () => accounts.filter((a) => a.type === "Liability"),
     [accounts]
   );
   const equityAccounts = useMemo(
-    () => accounts.filter((a) => typeOf(a) === "equity"),
+    () => accounts.filter((a) => a.type === "Equity"),
     [accounts]
   );
 
+  // rows
   const assetRows = useMemo(
     () =>
       assets.map((acc) => ({
         acc,
-        amount: selectedIS ? getAccountBalanceAsOf(acc, entriesUpTo) : 0,
+        amount: selectedIS ? sumLinesForAccountAsOf(acc, entriesUpTo) : 0,
       })),
     [assets, entriesUpTo, selectedIS]
   );
@@ -196,7 +178,7 @@ export default function BalanceSheet() {
     () =>
       liabilities.map((acc) => ({
         acc,
-        amount: selectedIS ? getAccountBalanceAsOf(acc, entriesUpTo) : 0,
+        amount: selectedIS ? sumLinesForAccountAsOf(acc, entriesUpTo) : 0,
       })),
     [liabilities, entriesUpTo, selectedIS]
   );
@@ -204,11 +186,12 @@ export default function BalanceSheet() {
     () =>
       equityAccounts.map((acc) => ({
         acc,
-        amount: selectedIS ? getAccountBalanceAsOf(acc, entriesUpTo) : 0,
+        amount: selectedIS ? sumLinesForAccountAsOf(acc, entriesUpTo) : 0,
       })),
     [equityAccounts, entriesUpTo, selectedIS]
   );
 
+  // totals
   const totalAssets = useMemo(
     () => assetRows.reduce((s, r) => s + r.amount, 0),
     [assetRows]
@@ -217,7 +200,12 @@ export default function BalanceSheet() {
     () => liabilityRows.reduce((s, r) => s + r.amount, 0),
     [liabilityRows]
   );
+  const totalEquityExRetained = useMemo(
+    () => equityRows.reduce((s, r) => s + r.amount, 0),
+    [equityRows]
+  );
 
+  // retained = prior retained + current IS net income
   const prevRetained =
     previousBS?.report?.retainedIncomeEnding != null
       ? Number(previousBS.report.retainedIncomeEnding) || 0
@@ -225,15 +213,64 @@ export default function BalanceSheet() {
   const isNetIncome = selectedIS?.report?.netIncome ?? 0;
   const retainedIncomeEnding = prevRetained + isNetIncome;
 
-  const totalEquityExRetained = useMemo(
-    () => equityRows.reduce((s, r) => s + r.amount, 0),
-    [equityRows]
-  );
-  const totalEquity = totalEquityExRetained + (selectedIS ? retainedIncomeEnding : 0);
+  const totalEquity =
+    totalEquityExRetained + (selectedIS ? retainedIncomeEnding : 0);
   const totalLiabEquity = totalLiabilities + totalEquity;
 
+  const isBalanced =
+    Math.abs(Number(totalAssets) - Number(totalLiabEquity)) < 0.005;
+
+  // charts / notes / print
+  const [notes, setNotes] = useState("");
+  const [downloading, setDownloading] = useState(false);
+  const [printing, setPrinting] = useState(false);
+
+  const barChartData = useMemo(
+    () => [
+      { name: "Liabilities", value: Math.max(0, totalLiabilities) },
+      { name: "Equity", value: Math.max(0, totalEquity) },
+    ],
+    [totalLiabilities, totalEquity]
+  );
+  const assetChartData = useMemo(
+    () =>
+      assetRows
+        .filter((r) => r.amount !== 0)
+        .map(({ acc, amount }) => ({
+          name: `${acc.code} - ${acc.main}${
+            acc.individual ? " / " + acc.individual : ""
+          }`,
+          value: Math.abs(amount),
+        })),
+    [assetRows]
+  );
+
+  function handlePrint() {
+    setPrinting(true);
+    setTimeout(() => {
+      window.print();
+      setPrinting(false);
+    }, 50);
+  }
+
+  function viewRowMap(rows) {
+    return rows.map(({ acc, amount }) => ({
+      id: acc.id,
+      code: acc.code,
+      name: acc.main + (acc.individual ? " / " + acc.individual : ""),
+      amount,
+    }));
+  }
+
+  // save / delete / view
+  const [saving, setSaving] = useState(false);
+  const [showReport, setShowReport] = useState(null);
+  const showSaved = Boolean(showReport?.report);
+  const view = showSaved ? showReport.report : null;
+  const viewAsOf = showSaved ? showReport.asOf : null;
+
   async function handleGenerateAndSave() {
-    if (!selectedIS) return;
+    if (!selectedIS || !(isAdmin || isTreasurer)) return;
     setSaving(true);
     try {
       const report = {
@@ -244,6 +281,7 @@ export default function BalanceSheet() {
           to: selectedIS.to || "",
           netIncome: isNetIncome,
         },
+        notes,
         prevRetained,
         retainedIncomeEnding,
         totals: {
@@ -253,22 +291,9 @@ export default function BalanceSheet() {
           equity: totalEquity,
           liabPlusEquity: totalLiabEquity,
         },
-        // optional detail lines (handy if you want to review later)
-        assets: assetRows.map(({ acc, amount }) => ({
-          code: acc.code,
-          name: acc.main + (acc.individual ? " / " + acc.individual : ""),
-          amount,
-        })),
-        liabilities: liabilityRows.map(({ acc, amount }) => ({
-          code: acc.code,
-          name: acc.main + (acc.individual ? " / " + acc.individual : ""),
-          amount,
-        })),
-        equity: equityRows.map(({ acc, amount }) => ({
-          code: acc.code,
-          name: acc.main + (acc.individual ? " / " + acc.individual : ""),
-          amount,
-        })),
+        assets: viewRowMap(assetRows),
+        liabilities: viewRowMap(liabilityRows),
+        equity: viewRowMap(equityRows),
         createdAt: serverTimestamp(),
       };
 
@@ -277,8 +302,8 @@ export default function BalanceSheet() {
         report,
       });
 
-      // after save: clear prior notice state (list will refresh via onSnapshot)
       alert("Balance Sheet saved.");
+      setNotes("");
     } catch (e) {
       console.error(e);
       alert("Failed to save Balance Sheet.");
@@ -288,23 +313,17 @@ export default function BalanceSheet() {
   }
 
   async function handleDeleteBS(id) {
-    if (!id) return;
+    if (!id || !(isAdmin || isTreasurer)) return;
     if (!window.confirm("Delete this saved Balance Sheet?")) return;
     await deleteDoc(doc(db, "balanceSheetReports", id));
   }
 
   function handleShowSavedBS(r) {
-    setShowReport(r);          // show saved report
-    setSelectedISId("");       // clear IS picker to emphasize we're viewing a saved one
+    setShowReport(r);
+    setSelectedISId("");
   }
 
-  /* -------------------- render -------------------- */
-  // If viewing a saved report, take values from it
-  const view = showReport?.report;
-  const viewAsOf = showReport?.asOf;
-
-  const showSaved = Boolean(view);
-
+  // view model (current vs saved)
   const viewTotals = showSaved
     ? view.totals
     : {
@@ -314,30 +333,261 @@ export default function BalanceSheet() {
         equity: totalEquity,
         liabPlusEquity: totalLiabEquity,
       };
-
   const viewRetained = showSaved ? view.retainedIncomeEnding : retainedIncomeEnding;
-  const viewAssets = showSaved ? view.assets : assetRows.map(({ acc, amount }) => ({
-    code: acc.code,
-    name: acc.main + (acc.individual ? " / " + acc.individual : ""),
-    amount,
-  }));
-  const viewLiabs = showSaved ? view.liabilities : liabilityRows.map(({ acc, amount }) => ({
-    code: acc.code,
-    name: acc.main + (acc.individual ? " / " + acc.individual : ""),
-    amount,
-  }));
-  const viewEquity = showSaved ? view.equity : equityRows.map(({ acc, amount }) => ({
-    code: acc.code,
-    name: acc.main + (acc.individual ? " / " + acc.individual : ""),
-    amount,
-  }));
+  const viewAssets = showSaved ? view.assets : viewRowMap(assetRows);
+  const viewLiabs = showSaved ? view.liabilities : viewRowMap(liabilityRows);
+  const viewEquity = showSaved ? view.equity : viewRowMap(equityRows);
 
+  // ---------------- drilldown (fixed) ----------------
+  const [drill, setDrill] = useState(null);
+
+  function openDrilldown(row) {
+    setDrill({
+      code: row.code,
+      name: row.name,
+    });
+  }
+
+  function renderDrilldown() {
+    if (!drill) return null;
+
+    // resolve the real accountId from accounts by code
+    const target =
+      accounts.find((a) => a.code === drill.code) ||
+      accounts.find((a) => a.id === drill.id);
+
+    const limitDate = showSaved ? viewAsOf || asOf : asOf;
+    const list = limitDate
+      ? entries.filter((e) => e.date && e.date <= limitDate)
+      : entries;
+
+    // build rows for that accountId
+    const rows = [];
+    (list || []).forEach((e) => {
+      (e.lines || []).forEach((l) => {
+        if (target && l.accountId === target.id) {
+          rows.push({
+            date: e.date,
+            ref: e.refNumber,
+            desc: e.description,
+            debit: Number(l.debit || 0),
+            credit: Number(l.credit || 0),
+          });
+        }
+      });
+    });
+
+    rows.sort(
+      (a, b) =>
+        (a.date || "").localeCompare(b.date || "") ||
+        String(a.ref || "").localeCompare(String(b.ref || ""))
+    );
+
+    return (
+      <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center">
+        <div className="bg-white rounded-xl w-[720px] max-h-[80vh] overflow-auto shadow-lg p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="font-semibold">
+              {drill.code} - {drill.name}
+            </h4>
+            <button
+              className="px-3 py-1 rounded bg-gray-200"
+              onClick={() => setDrill(null)}
+            >
+              Close
+            </button>
+          </div>
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="p-2 text-left">Date</th>
+                <th className="p-2 text-left">Ref#</th>
+                <th className="p-2 text-left">Desc</th>
+                <th className="p-2 text-right">Debit</th>
+                <th className="p-2 text-right">Credit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr>
+                  <td className="p-3 text-gray-500 text-center" colSpan={5}>
+                    No entries for this account in the selected period.
+                  </td>
+                </tr>
+              ) : (
+                rows.map((r, i) => (
+                  <tr key={i} className="odd:bg-white even:bg-gray-50">
+                    <td className="p-2">{r.date}</td>
+                    <td className="p-2 font-mono">{r.ref}</td>
+                    <td className="p-2">{r.desc}</td>
+                    <td className="p-2 text-right">
+                      {r.debit.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </td>
+                    <td className="p-2 text-right">
+                      {r.credit.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
+  // exports
+  function handleExportCSV() {
+    setDownloading(true);
+    const header = `Balance Sheet\nAs of,${showSaved ? viewAsOf : asOf}\n\n`;
+    let csv = header + "Assets\nAccount,Amount\n";
+    viewAssets.forEach((r) => {
+      csv += `"${r.code} - ${r.name}",${r.amount}\n`;
+    });
+    csv += `Total Assets,${viewTotals.assets}\n\nLiabilities\nAccount,Amount\n`;
+    viewLiabs.forEach((r) => {
+      csv += `"${r.code} - ${r.name}",${r.amount}\n`;
+    });
+    csv += `Total Liabilities,${viewTotals.liabilities}\n\nEquity\nAccount,Amount\n`;
+    viewEquity.forEach((r) => {
+      csv += `"${r.code} - ${r.name}",${r.amount}\n`;
+    });
+    csv += `Retained Income/Loss,${viewRetained}\nTotal Equity,${viewTotals.equity}\n\nTotal Liabilities & Equity,${viewTotals.liabPlusEquity}\n`;
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `BalanceSheet_${showSaved ? viewAsOf : asOf}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setDownloading(false);
+  }
+
+  function handleExportPDF() {
+    setDownloading(true);
+    const d = new jsPDF();
+    const title = `Balance Sheet (As of ${showSaved ? viewAsOf : asOf})`;
+    d.setFontSize(14);
+    d.text(title, 14, 16);
+    let y = 26;
+
+    function section(name, rows, total) {
+      d.setFontSize(11);
+      d.text(name, 14, y);
+      y += 6;
+      d.setFontSize(10);
+      rows.forEach((r) => {
+        d.text(`${r.code} - ${r.name}`, 16, y);
+        d.text(
+          Number(r.amount).toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          }),
+          190 - 14,
+          y,
+          { align: "right" }
+        );
+        y += 6;
+      });
+      d.setFont(undefined, "bold");
+      d.text(`Total ${name}`, 16, y);
+      d.text(
+        Number(total).toLocaleString(undefined, {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }),
+        190 - 14,
+        y,
+        { align: "right" }
+      );
+      d.setFont(undefined, "normal");
+      y += 8;
+    }
+
+    section("Assets", viewAssets, viewTotals.assets);
+    section("Liabilities", viewLiabs, viewTotals.liabilities);
+    section("Equity", viewEquity, viewTotals.equity);
+
+    d.setFont(undefined, "bold");
+    d.text("Total Liabilities & Equity", 16, y);
+    d.text(
+      Number(viewTotals.liabPlusEquity).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }),
+      190 - 14,
+      y,
+      { align: "right" }
+    );
+
+    d.save(`BalanceSheet_${showSaved ? viewAsOf : asOf}.pdf`);
+    setDownloading(false);
+  }
+
+  // small notice
+  const prevNotice = useMemo(() => {
+    if (!selectedIS) return "";
+    if (!previousBS)
+      return "No prior Balance Sheet, this will be your first period. Beginning balances are 0. Ending balances are as of the selected IS end date.";
+    if (previousBS?.asOf && previousBS.asOf === asOf) return "";
+    return `Prior saved Balance Sheet is as of ${previousBS?.asOf || "—"}.`;
+  }, [selectedIS, previousBS, asOf]);
+
+  const showAsOf = showSaved ? viewAsOf : asOf;
+
+  // --------------------------- render ---------------------------
   return (
-    <div className="flex gap-8">
+    <div className={`flex gap-8${printing ? " print:block" : ""}`}>
+      {renderDrilldown()}
+
       <div className="flex-1">
         <h3 className="text-xl font-semibold mb-3">Balance Sheet</h3>
 
-        {/* Selector + actions */}
+        {(selectedIS || showSaved) && (
+          <div className="mb-3 flex flex-wrap gap-2 items-center">
+            <button
+              className="bg-blue-600 text-white px-3 py-2 rounded font-semibold"
+              onClick={handleExportCSV}
+              disabled={downloading}
+            >
+              Export CSV
+            </button>
+            <button
+              className="bg-blue-600 text-white px-3 py-2 rounded font-semibold"
+              onClick={handleExportPDF}
+              disabled={downloading}
+            >
+              Export PDF
+            </button>
+            <button
+              className="bg-gray-600 text-white px-3 py-2 rounded font-semibold"
+              onClick={handlePrint}
+            >
+              Print
+            </button>
+            <textarea
+              className="ml-2 border rounded px-2 py-1 min-w-[200px]"
+              placeholder="Add notes (saved with report)"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              maxLength={500}
+            />
+            {!isBalanced && (
+              <span className="ml-2 text-red-600 font-semibold">
+                ⚠️ Out of balance!
+              </span>
+            )}
+          </div>
+        )}
+
         <div className="mb-4 p-3 border rounded bg-gray-50">
           <label className="block text-sm font-medium mb-1">
             Select Income Statement (sets Balance Sheet period)
@@ -365,32 +615,33 @@ export default function BalanceSheet() {
                 <span className="text-sm text-gray-700">
                   As of: <strong>{asOf}</strong>
                 </span>
-                <button
-                  onClick={handleGenerateAndSave}
-                  disabled={saving || loading}
-                  className="ml-2 bg-green-600 text-white px-3 py-2 rounded font-semibold"
-                >
-                  {saving ? "Saving…" : "Generate & Save"}
-                </button>
+                {(isAdmin || isTreasurer) && (
+                  <button
+                    onClick={handleGenerateAndSave}
+                    disabled={saving || loading}
+                    className="ml-2 bg-green-600 text-white px-3 py-2 rounded font-semibold"
+                  >
+                    {saving ? "Saving…" : "Generate & Save"}
+                  </button>
+                )}
               </>
             )}
 
             {showSaved && (
               <span className="text-sm text-gray-700">
-                Viewing saved BS • as of <strong>{viewAsOf}</strong>
+                Viewing saved BS • as of <strong>{showAsOf}</strong>
               </span>
             )}
           </div>
 
           {!selectedIS && !showSaved && (
             <p className="mt-2 text-xs text-gray-600">
-              Pick an Income Statement to generate a Balance Sheet as of that end date,
-              then click <em>Generate &amp; Save</em>.
+              Pick an Income Statement to generate a Balance Sheet as of that
+              end date, then click <em>Generate &amp; Save</em>.
             </p>
           )}
         </div>
 
-        {/* Show BS only after IS is picked OR when viewing a saved one */}
         {!selectedIS && !showSaved ? (
           <div className="text-gray-500 text-sm">No report selected.</div>
         ) : loading ? (
@@ -404,10 +655,6 @@ export default function BalanceSheet() {
             )}
 
             <div className="mb-3 text-sm text-gray-700">
-              <div>
-                <span className="font-semibold">Period (as of):</span>{" "}
-                {showSaved ? viewAsOf : asOf}
-              </div>
               <div>
                 <span className="font-semibold">Retained Income/Loss:</span>{" "}
                 {viewRetained.toLocaleString(undefined, {
@@ -433,10 +680,69 @@ export default function BalanceSheet() {
               </div>
             </div>
 
+            {/* charts */}
+            <div className="w-full flex flex-wrap gap-8 mb-4">
+              <div className="min-w-[250px] flex-1">
+                <h4 className="font-semibold mb-1">Asset Allocation</h4>
+                <ResponsiveContainer width="100%" height={180}>
+                  <PieChart>
+                    <Pie
+                      data={assetChartData}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={60}
+                      label
+                    >
+                      {assetChartData.map((entry, idx) => (
+                        <Cell
+                          key={`cell-${idx}`}
+                          fill={CHART_COLORS[idx % CHART_COLORS.length]}
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      formatter={(v) =>
+                        Number(v).toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })
+                      }
+                    />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="min-w-[250px] flex-1">
+                <h4 className="font-semibold mb-1">Liabilities vs Equity</h4>
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart
+                    data={barChartData}
+                    margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+                  >
+                    <XAxis dataKey="name" />
+                    <YAxis />
+                    <Tooltip
+                      formatter={(v) =>
+                        Number(v).toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })
+                      }
+                    />
+                    <Legend />
+                    <Bar dataKey="value" fill="#60a5fa" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* tables */}
             <div className="flex flex-wrap gap-8">
               {/* Assets */}
               <div className="flex-1 min-w-[300px]">
-                <table className="min-w-full border border-gray-300 rounded text-sm mb-6">
+                <table className="min-w-full border border-gray-300 rounded text-sm mb-6 sticky top-0 bg-white z-10">
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="text-left p-2 border-b">Assets</th>
@@ -445,7 +751,11 @@ export default function BalanceSheet() {
                   </thead>
                   <tbody>
                     {viewAssets.map((row, i) => (
-                      <tr key={row.code + i}>
+                      <tr
+                        key={row.code + i}
+                        className="hover:bg-blue-50 cursor-pointer"
+                        onClick={() => openDrilldown(row)}
+                      >
                         <td className="p-2 border-b border-r border-gray-200">
                           {row.code} - {row.name}
                         </td>
@@ -460,10 +770,10 @@ export default function BalanceSheet() {
                     <tr className="font-bold bg-gray-100">
                       <td className="p-2 border-t text-right">Total Assets</td>
                       <td className="p-2 border-t text-right">
-                        {Number(viewTotals.assets || 0).toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
+                        {Number(viewTotals.assets || 0).toLocaleString(
+                          undefined,
+                          { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+                        )}
                       </td>
                     </tr>
                   </tbody>
@@ -475,7 +785,9 @@ export default function BalanceSheet() {
                 <table className="min-w-full border border-gray-300 rounded text-sm mb-6">
                   <thead className="bg-gray-50">
                     <tr>
-                      <th className="text-left p-2 border-b">Liabilities & Equity</th>
+                      <th className="text-left p-2 border-b">
+                        Liabilities &amp; Equity
+                      </th>
                       <th className="text-right p-2 border-b">Amount</th>
                     </tr>
                   </thead>
@@ -487,7 +799,11 @@ export default function BalanceSheet() {
                       </td>
                     </tr>
                     {viewLiabs.map((row, i) => (
-                      <tr key={row.code + i}>
+                      <tr
+                        key={row.code + i}
+                        className="hover:bg-blue-50 cursor-pointer"
+                        onClick={() => openDrilldown(row)}
+                      >
                         <td className="p-2 border-b border-r border-gray-200">
                           {row.code} - {row.name}
                         </td>
@@ -504,10 +820,10 @@ export default function BalanceSheet() {
                         Total Liabilities
                       </td>
                       <td className="p-2 border-t text-right">
-                        {Number(viewTotals.liabilities || 0).toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
+                        {Number(viewTotals.liabilities || 0).toLocaleString(
+                          undefined,
+                          { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+                        )}
                       </td>
                     </tr>
 
@@ -518,7 +834,11 @@ export default function BalanceSheet() {
                       </td>
                     </tr>
                     {viewEquity.map((row, i) => (
-                      <tr key={row.code + i}>
+                      <tr
+                        key={row.code + i}
+                        className="hover:bg-blue-50 cursor-pointer"
+                        onClick={() => openDrilldown(row)}
+                      >
                         <td className="p-2 border-b border-r border-gray-200">
                           {row.code} - {row.name}
                         </td>
@@ -531,7 +851,6 @@ export default function BalanceSheet() {
                       </tr>
                     ))}
 
-                    {/* Retained Income/Loss */}
                     <tr className="bg-gray-50">
                       <td className="p-2 border-b border-r border-gray-200">
                         Retained Income/Loss
@@ -549,10 +868,10 @@ export default function BalanceSheet() {
                         Total Equity
                       </td>
                       <td className="p-2 border-t text-right">
-                        {Number(viewTotals.equity || 0).toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
+                        {Number(viewTotals.equity || 0).toLocaleString(
+                          undefined,
+                          { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+                        )}
                       </td>
                     </tr>
 
@@ -575,7 +894,7 @@ export default function BalanceSheet() {
         )}
       </div>
 
-      {/* Right sidebar: Recent BS Reports */}
+      {/* Right sidebar */}
       <div className="w-80">
         <h4 className="text-lg font-semibold mb-2">Recent Reports</h4>
         <ul className="space-y-2">
@@ -591,16 +910,17 @@ export default function BalanceSheet() {
               >
                 as of {r.asOf}
               </button>
-
-              <button
-                className="ml-2 px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-800 text-xs font-semibold"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDeleteBS(r.id);
-                }}
-              >
-                Delete
-              </button>
+              {(isAdmin || isTreasurer) && (
+                <button
+                  className="ml-2 px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-800 text-xs font-semibold"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteBS(r.id);
+                  }}
+                >
+                  Delete
+                </button>
+              )}
             </li>
           ))}
           {bsReports.length === 0 && (

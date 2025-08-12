@@ -19,25 +19,25 @@ import jsPDF from "jspdf";
 /* -------------------- date helpers -------------------- */
 function parseYMD(ymd) {
   if (!ymd) return null;
-  const parts = ymd.split("-");
-  if (parts.length !== 3) return null;
-  const [y, m, d] = parts.map((n) => parseInt(n, 10));
+  const [y, m, d] = ymd.split("-").map((n) => parseInt(n, 10));
   if (!y || !m || !d) return null;
   return new Date(y, m - 1, d);
 }
 function formatDateSimple(ymd) {
   const dt = parseYMD(ymd);
   if (!dt) return "-";
-  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const months = [
+    "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"
+  ];
   return `${months[dt.getMonth()]} ${dt.getDate()} ${dt.getFullYear()}`;
 }
 function formatRange(from, to) {
-  const left = formatDateSimple(from);
-  const right = formatDateSimple(to);
-  if (left === "-" && right === "-") return "-";
-  if (left === "-") return right;
-  if (right === "-") return left;
-  return `${left} - ${right}`;
+  const L = formatDateSimple(from);
+  const R = formatDateSimple(to);
+  if (L === "-" && R === "-") return "-";
+  if (L === "-") return R;
+  if (R === "-") return L;
+  return `${L} - ${R}`;
 }
 
 /* -------------------- type helpers -------------------- */
@@ -52,7 +52,7 @@ function isCOGSAccount(acc) {
   return ((acc.main || "").trim().toLowerCase() === "cogs");
 }
 
-/* Extract main from the rendered "Main / Individual" name */
+/* Extract MAIN from "Main / Individual" */
 function mainFromRenderedName(name = "") {
   return name.split(" / ")[0].trim().toLowerCase();
 }
@@ -85,7 +85,7 @@ function sumForAccount(acc, filteredEntries) {
       }
     });
   });
-  // revenues: credit - debit; expenses (incl. COGS): debit - credit
+  // revenues: credit - debit; expenses/COGS: debit - credit
   const isRevenue = isRevenueType(acc.type);
   const amount = isRevenue ? (credit - debit) : (debit - credit);
   return { amount };
@@ -104,6 +104,7 @@ export default function IncomeStatement() {
   const [showReport, setShowReport] = useState(null); // {id?, from, to, report}
   const [generating, setGenerating] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [printing, setPrinting] = useState(false);
 
   const { profile } = useUserProfile();
   const isAdmin = profile?.roles?.includes("admin") || profile?.role === "admin";
@@ -135,7 +136,7 @@ export default function IncomeStatement() {
   const revenueAccounts = accounts.filter((a) => isRevenueType(a.type));
   const expenseAccounts = accounts.filter((a) => isExpenseType(a.type));
 
-  // Split expenses into COGS vs Operating, strictly by main "COGS"
+  // Split expenses into COGS vs Operating (by MAIN === "COGS")
   const cogsAccountsRaw = expenseAccounts.filter(isCOGSAccount);
   const opExAccountsRaw = expenseAccounts.filter((a) => !isCOGSAccount(a));
 
@@ -192,11 +193,11 @@ export default function IncomeStatement() {
 
     const report = {
       revenues,
-      cogs,                 // new field
+      cogs,                 // saved separately
       expenses,
       totalRevenue,
-      totalCOGS,            // new field
-      grossProfit,          // new field
+      totalCOGS,
+      grossProfit,
       totalExpense,
       netIncome,
       notes,
@@ -221,6 +222,15 @@ export default function IncomeStatement() {
     setShowReport(null);
   }
 
+  function handlePrint() {
+    setPrinting(true);
+    setTimeout(() => {
+      window.print();
+      setPrinting(false);
+    }, 50);
+  }
+
+  /* -------------------- exports -------------------- */
   function handleDownloadPDF(reportObj) {
     setDownloading(true);
     const docPDF = new jsPDF();
@@ -245,14 +255,14 @@ export default function IncomeStatement() {
     (reportObj.report.revenues || []).forEach((acc) => {
       docPDF.text(acc.code + " - " + acc.name, 16, y);
       docPDF.text(
-        acc.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-        120, y, { align: "right" }
+        Number(acc.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        190 - 70, y, { align: "right" }
       );
       y += 6;
     });
     docPDF.text(
       "Total Revenue: " +
-        (reportObj.report.totalRevenue ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        Number(reportObj.report.totalRevenue ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
       16, y
     ); y += 8;
 
@@ -263,14 +273,14 @@ export default function IncomeStatement() {
       cogsList.forEach((acc) => {
         docPDF.text(acc.code + " - " + acc.name, 16, y);
         docPDF.text(
-          acc.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-          120, y, { align: "right" }
+          Number(acc.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+          190 - 70, y, { align: "right" }
         );
         y += 6;
       });
       docPDF.text(
         "Total COGS: " +
-          (reportObj.report.totalCOGS ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+          Number(reportObj.report.totalCOGS ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
         16, y
       ); y += 8;
     }
@@ -279,7 +289,7 @@ export default function IncomeStatement() {
     docPDF.setFont(undefined, "bold");
     docPDF.text(
       "Gross Profit: " +
-        (reportObj.report.grossProfit ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        Number(reportObj.report.grossProfit ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
       16, y
     );
     docPDF.setFont(undefined, "normal");
@@ -290,14 +300,14 @@ export default function IncomeStatement() {
     (reportObj.report.expenses || []).forEach((acc) => {
       docPDF.text(acc.code + " - " + acc.name, 16, y);
       docPDF.text(
-        acc.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-        120, y, { align: "right" }
+        Number(acc.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        190 - 70, y, { align: "right" }
       );
       y += 6;
     });
     docPDF.text(
       "Total Expenses: " +
-        (reportObj.report.totalExpense ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        Number(reportObj.report.totalExpense ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
       16, y
     ); y += 8;
 
@@ -305,7 +315,7 @@ export default function IncomeStatement() {
     docPDF.setFont(undefined, "bold");
     docPDF.text(
       "Net Income: " +
-        (reportObj.report.netIncome ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        Number(reportObj.report.netIncome ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
       16, y
     );
     docPDF.setFont(undefined, "normal");
@@ -313,25 +323,23 @@ export default function IncomeStatement() {
 
     if (reportObj.report.notes) {
       docPDF.text("Notes:", 14, y); y += 6;
-      docPDF.text(reportObj.report.notes, 16, y);
+      docPDF.text(String(reportObj.report.notes), 16, y);
     }
 
-    docPDF.save(
-      "IncomeStatement_" +
-        formatRange(reportObj.from, reportObj.to).replaceAll(" ", "") +
-        ".pdf"
-    );
+    const fileName = `IncomeStatement_${formatRange(reportObj.from, reportObj.to).replaceAll(" ", "")}.pdf`;
+    docPDF.save(fileName);
     setDownloading(false);
   }
 
   function handleDownloadCSV(reportObj) {
     const period = formatRange(reportObj.from, reportObj.to);
     let csv = `Income Statement\nPeriod:,${period}\n`;
-    csv += `Generated by:,${reportObj.report.generatedBy || "-"}\nGenerated at:${
-      reportObj.report.generatedAt
-        ? new Date(reportObj.report.generatedAt).toLocaleString()
-        : "-"
-    }\n`;
+    csv += `Generated by:,${reportObj.report.generatedBy || "-"}\nGenerated at:,` +
+      `${
+        reportObj.report.generatedAt
+          ? new Date(reportObj.report.generatedAt).toLocaleString()
+          : "-"
+      }\n`;
 
     csv += `\nRevenues\nAccount,Amount\n`;
     (reportObj.report.revenues || []).forEach((acc) => {
@@ -340,12 +348,14 @@ export default function IncomeStatement() {
     csv += `Total Revenue,${reportObj.report.totalRevenue ?? 0}\n`;
 
     const cogsList = reportObj.report.cogs || [];
-    csv += `\nLess: Cost of Goods Sold (COGS)\nAccount,Amount\n`;
-    cogsList.forEach((acc) => {
-      csv += `"${acc.code} - ${acc.name}",${acc.amount}\n`;
-    });
-    csv += `Total COGS,${reportObj.report.totalCOGS ?? 0}\n`;
-    csv += `Gross Profit,${reportObj.report.grossProfit ?? 0}\n`;
+    if (cogsList.length) {
+      csv += `\nLess: Cost of Goods Sold (COGS)\nAccount,Amount\n`;
+      cogsList.forEach((acc) => {
+        csv += `"${acc.code} - ${acc.name}",${acc.amount}\n`;
+      });
+      csv += `Total COGS,${reportObj.report.totalCOGS ?? 0}\n`;
+      csv += `Gross Profit,${reportObj.report.grossProfit ?? 0}\n`;
+    }
 
     csv += `\nExpenses\nAccount,Amount\n`;
     (reportObj.report.expenses || []).forEach((acc) => {
@@ -354,7 +364,7 @@ export default function IncomeStatement() {
     csv += `Total Expenses,${reportObj.report.totalExpense ?? 0}\n\nNet Income,${reportObj.report.netIncome ?? 0}\n`;
 
     if (reportObj.report.notes) {
-      csv += `\nNotes:,"${reportObj.report.notes.replace(/"/g, '""')}"\n`;
+      csv += `\nNotes:,"${String(reportObj.report.notes).replace(/"/g, '""')}"\n`;
     }
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -367,12 +377,17 @@ export default function IncomeStatement() {
     URL.revokeObjectURL(url);
   }
 
+  /* -------------------- saved report open (compat) -------------------- */
   function handleShowReport(r) {
-    // Backward-compat: if an older saved report lacks cogs, split by MAIN === "COGS"
+    // Back-compat: if old report lacks cogs/grossProfit, split by MAIN === "COGS"
     if (!r.report.cogs) {
       const expenses = r.report.expenses || [];
-      const guessedCogs = expenses.filter((e) => mainFromRenderedName(e.name) === "cogs");
-      const rest = expenses.filter((e) => mainFromRenderedName(e.name) !== "cogs");
+      const guessedCogs = expenses.filter(
+        (e) => mainFromRenderedName(e.name) === "cogs"
+      );
+      const rest = expenses.filter(
+        (e) => mainFromRenderedName(e.name) !== "cogs"
+      );
 
       const totalCOGS = guessedCogs.reduce((s, a) => s + (a.amount || 0), 0);
       const totalRevenue = r.report.totalRevenue ?? (r.report.revenues || []).reduce((s, a) => s + (a.amount || 0), 0);
@@ -399,6 +414,109 @@ export default function IncomeStatement() {
     setShowReport(null);
   }
 
+  /* -------------------- drilldown modal (by account) -------------------- */
+  const [drill, setDrill] = useState(null); // { code, name, from, to }
+
+  function openDrilldown(row, range) {
+    setDrill({
+      code: row.code,
+      name: row.name,
+      from: range.from || "",
+      to: range.to || "",
+    });
+  }
+
+  function renderDrilldown() {
+    if (!drill) return null;
+
+    // resolve Firestore account id from code
+    const acct =
+      accounts.find((a) => a.code === drill.code) ||
+      accounts.find((a) => a.id === drill.id);
+
+    // filter entries within period
+    const list = filterEntriesByDate(entries, drill.from, drill.to);
+
+    const rows = [];
+    (list || []).forEach((e) => {
+      (e.lines || []).forEach((l) => {
+        if (acct && l.accountId === acct.id) {
+          rows.push({
+            date: e.date,
+            ref: e.refNumber,
+            desc: e.description,
+            debit: Number(l.debit || 0),
+            credit: Number(l.credit || 0),
+          });
+        }
+      });
+    });
+
+    rows.sort(
+      (a, b) =>
+        (a.date || "").localeCompare(b.date || "") ||
+        String(a.ref || "").localeCompare(String(b.ref || ""))
+    );
+
+    return (
+      <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center">
+        <div className="bg-white rounded-xl w-[720px] max-h-[80vh] overflow-auto shadow-lg p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="font-semibold">
+              {drill.code} - {drill.name}
+            </h4>
+            <button
+              className="px-3 py-1 rounded bg-gray-200"
+              onClick={() => setDrill(null)}
+            >
+              Close
+            </button>
+          </div>
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="p-2 text-left">Date</th>
+                <th className="p-2 text-left">Ref#</th>
+                <th className="p-2 text-left">Desc</th>
+                <th className="p-2 text-right">Debit</th>
+                <th className="p-2 text-right">Credit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr>
+                  <td className="p-3 text-gray-500 text-center" colSpan={5}>
+                    No entries for this account in the selected period.
+                  </td>
+                </tr>
+              ) : (
+                rows.map((r, i) => (
+                  <tr key={i} className="odd:bg-white even:bg-gray-50">
+                    <td className="p-2">{r.date}</td>
+                    <td className="p-2 font-mono">{r.ref}</td>
+                    <td className="p-2">{r.desc}</td>
+                    <td className="p-2 text-right">
+                      {r.debit.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </td>
+                    <td className="p-2 text-right">
+                      {r.credit.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
   /* -------------------- report renderer -------------------- */
   const renderReport = (reportObj) => {
     const revs = reportObj.report.revenues || [];
@@ -413,6 +531,29 @@ export default function IncomeStatement() {
 
     return (
       <>
+        <div className="mb-3 flex flex-wrap gap-2 items-center">
+          <button
+            className="bg-blue-600 text-white px-3 py-2 rounded font-semibold"
+            onClick={() => handleDownloadCSV(reportObj)}
+            disabled={downloading}
+          >
+            Export CSV
+          </button>
+          <button
+            className="bg-blue-600 text-white px-3 py-2 rounded font-semibold"
+            onClick={() => handleDownloadPDF(reportObj)}
+            disabled={downloading}
+          >
+            Export PDF
+          </button>
+          <button
+            className="bg-gray-600 text-white px-3 py-2 rounded font-semibold"
+            onClick={handlePrint}
+          >
+            Print
+          </button>
+        </div>
+
         <table className="min-w-full border border-gray-300 rounded text-sm mb-6">
           <thead className="bg-gray-50">
             <tr>
@@ -424,27 +565,33 @@ export default function IncomeStatement() {
             {/* Revenues */}
             <tr><td colSpan={2} className="font-bold p-2">Revenues</td></tr>
             {revs.map((acc, i) => (
-              <tr key={acc.code + i}>
+              <tr key={acc.code + i}
+                  className="hover:bg-blue-50 cursor-pointer"
+                  onClick={() => openDrilldown(acc, { from: reportObj.from, to: reportObj.to })}
+              >
                 <td className="p-2 border-b border-r border-gray-200">{acc.code} - {acc.name}</td>
                 <td className="p-2 border-b text-right">
-                  {acc.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {Number(acc.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </td>
               </tr>
             ))}
             <tr className="font-semibold">
               <td className="p-2 border-t border-r border-gray-200 text-right">Total Revenue</td>
               <td className="p-2 border-t text-right">
-                {totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {Number(totalRevenue).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </td>
             </tr>
 
             {/* COGS */}
             {cogs.length > 0 && <tr><td colSpan={2} className="font-bold p-2">Less: Cost of Goods Sold (COGS)</td></tr>}
             {cogs.map((acc, i) => (
-              <tr key={acc.code + i}>
+              <tr key={acc.code + i}
+                  className="hover:bg-blue-50 cursor-pointer"
+                  onClick={() => openDrilldown(acc, { from: reportObj.from, to: reportObj.to })}
+              >
                 <td className="p-2 border-b border-r border-gray-200">{acc.code} - {acc.name}</td>
                 <td className="p-2 border-b text-right">
-                  {acc.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {Number(acc.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </td>
               </tr>
             ))}
@@ -452,7 +599,7 @@ export default function IncomeStatement() {
               <tr className="font-semibold">
                 <td className="p-2 border-t border-r border-gray-200 text-right">Total COGS</td>
                 <td className="p-2 border-t text-right">
-                  {totalCOGS.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {Number(totalCOGS).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </td>
               </tr>
             )}
@@ -461,24 +608,27 @@ export default function IncomeStatement() {
             <tr className="font-bold bg-gray-50">
               <td className="p-2 border-t border-r border-gray-200 text-right">Gross Profit</td>
               <td className="p-2 border-t text-right">
-                {grossProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {Number(grossProfit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </td>
             </tr>
 
             {/* Expenses */}
             <tr><td colSpan={2} className="font-bold p-2">Expenses</td></tr>
             {exps.map((acc, i) => (
-              <tr key={acc.code + i}>
+              <tr key={acc.code + i}
+                  className="hover:bg-blue-50 cursor-pointer"
+                  onClick={() => openDrilldown(acc, { from: reportObj.from, to: reportObj.to })}
+              >
                 <td className="p-2 border-b border-r border-gray-200">{acc.code} - {acc.name}</td>
                 <td className="p-2 border-b text-right">
-                  {acc.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {Number(acc.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </td>
               </tr>
             ))}
             <tr className="font-semibold">
               <td className="p-2 border-t border-r border-gray-200 text-right">Total Expenses</td>
               <td className="p-2 border-t text-right">
-                {totalExpense.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {Number(totalExpense).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </td>
             </tr>
 
@@ -486,7 +636,7 @@ export default function IncomeStatement() {
             <tr className="font-bold bg-gray-100">
               <td className="p-2 border-t border-r border-gray-200 text-right">Net Income</td>
               <td className="p-2 border-t text-right">
-                {netIncome.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {Number(netIncome).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </td>
             </tr>
           </tbody>
@@ -498,17 +648,37 @@ export default function IncomeStatement() {
             <div>{reportObj.report.notes}</div>
           </div>
         )}
-        <IncomeStatementChart
-          revenues={revs}
-          expenses={exps}
-        />
+
+        <IncomeStatementChart revenues={revs} expenses={exps} />
       </>
     );
   };
 
   /* -------------------- render -------------------- */
+  const activeReportObj = showReport
+    ? showReport
+    : {
+        from,
+        to,
+        report: {
+          revenues,
+          cogs,
+          expenses,
+          totalRevenue,
+          totalCOGS,
+          grossProfit,
+          totalExpense,
+          netIncome,
+          notes,
+          generatedBy: userName,
+          generatedById: userId,
+          generatedAt: new Date().toISOString(),
+        },
+      };
+
   return (
-    <div className="flex gap-8">
+    <div className={`flex gap-8${printing ? " print:block" : ""}`}>
+      {renderDrilldown()}
       <div className="flex-1">
         <h3 className="text-xl font-semibold mb-4">Income Statement</h3>
 
@@ -562,30 +732,7 @@ export default function IncomeStatement() {
           </div>
         )}
 
-        {loading ? (
-          <div>Loading…</div>
-        ) : showReport ? (
-          renderReport(showReport)
-        ) : (
-          renderReport({
-            from,
-            to,
-            report: {
-              revenues,
-              cogs,
-              expenses,
-              totalRevenue,
-              totalCOGS,
-              grossProfit,
-              totalExpense,
-              netIncome,
-              notes,
-              generatedBy: userName,
-              generatedById: userId,
-              generatedAt: new Date().toISOString(),
-            },
-          })
-        )}
+        {loading ? <div>Loading…</div> : renderReport(activeReportObj)}
       </div>
 
       {/* Right sidebar: Recent Reports ONLY */}

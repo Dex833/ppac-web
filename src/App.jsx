@@ -176,7 +176,7 @@ export default function App() {
               </ProtectedRoute>
             }
           >
-            <Route index element={<Navigate to="chart-of-accounts" replace />} />
+            <Route index element={<Navigate to="journal-entries" replace />} />
             <Route path="chart-of-accounts" element={<Suspense fallback={<div className="p-6">Loading…</div>}><ChartOfAccounts /></Suspense>} />
             <Route path="journal-entries" element={<Suspense fallback={<div className="p-6">Loading…</div>}><JournalEntries /></Suspense>} />
             <Route path="general-journal" element={<Suspense fallback={<div className="p-6">Loading…</div>}><GeneralJournal /></Suspense>} />
