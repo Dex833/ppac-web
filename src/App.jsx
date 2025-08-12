@@ -30,6 +30,7 @@ const GeneralJournal = lazy(() => import("./pages/accounting/GeneralJournal.jsx"
 const Ledger = lazy(() => import("./pages/accounting/Ledger.jsx"));
 const TrialBalance = lazy(() => import("./pages/accounting/TrialBalance.jsx"));
 const FinancialStatements = lazy(() => import("./pages/accounting/FinancialStatements.jsx"));
+const SalesInvoice = lazy(() => import("./pages/accounting/SalesInvoice.jsx"));
 
 import ppacLogo from "./assets/ppac-logo.png";
 
@@ -271,6 +272,14 @@ export default function App() {
               element={
                 <Suspense fallback={<div className="p-6">Loading…</div>}>
                   <FinancialStatements />
+                </Suspense>
+              }
+            />
+            <Route
+              path="sales-invoice"
+              element={
+                <Suspense fallback={<div className="p-6">Loading…</div>}>
+                  <SalesInvoice />
                 </Suspense>
               }
             />
