@@ -3,9 +3,14 @@ import { Link } from "react-router-dom";
 import { db } from "../lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
 import PageBackground from "../components/PageBackground";
+import { useAuth } from "../AuthContext";
+import WhatYouHaveModal from "../components/WhatYouHaveModal";
+import useUserShareCapitalAndLoan from "../hooks/useUserShareCapitalAndLoan";
 const homeBg = "https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80";
 
+
 export default function Home() {
+  const { user } = useAuth();
   const [content, setContent] = useState({
     announcement: "",
     body: "",
@@ -14,6 +19,8 @@ export default function Home() {
     news: ["", "", "", ""],
   });
   const [loading, setLoading] = useState(true);
+  const [showWhatYouHave, setShowWhatYouHave] = useState(false);
+  const { shareCapital, loan, loading: loadingFinancial } = useUserShareCapitalAndLoan();
 
   useEffect(() => {
     (async () => {
@@ -80,8 +87,17 @@ export default function Home() {
               <h2 className="text-2xl font-bold mb-3">Welcome 👋</h2>
               <div className="prose max-w-none mb-4" dangerouslySetInnerHTML={{ __html: content.body || "" }} />
               <div className="mb-4 flex items-center gap-3">
-                <Link to="/become-member" className="btn btn-primary">Become a Member</Link>
-                <button className="btn btn-outline">Learn More</button>
+                {!user ? (
+                  <Link to="/become-member" className="btn btn-primary">Become a Member</Link>
+                ) : (
+                  <>
+                    <span className="text-ink/80 text-lg font-semibold">Welcome, {user.displayName || user.email || "Member"}!</span>
+                    <button className="btn btn-outline" onClick={() => setShowWhatYouHave(true)}>
+                      What You Have
+                    </button>
+                  </>
+                )}
+                {!user && <button className="btn btn-outline">Learn More</button>}
               </div>
 
               <div className="bg-blue-50 border border-blue-200 rounded p-3 mb-3">
@@ -108,6 +124,17 @@ export default function Home() {
             </div>
           </div>
         </div>
+      )}
+      {/* What You Have Modal for logged-in users */}
+      {user && (
+        <WhatYouHaveModal
+          open={showWhatYouHave}
+          onClose={() => setShowWhatYouHave(false)}
+          user={user}
+          shareCapital={loadingFinancial ? "Loading…" : (typeof shareCapital === "number" ? `₱${Math.abs(shareCapital).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "₱0.00")}
+          loan={loadingFinancial ? "Loading…" : (typeof loan === "number" ? `₱${Math.abs(loan).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "₱0.00")}
+          balikTangkilik={"[Coming soon]"}
+        />
       )}
     </PageBackground>
   );
