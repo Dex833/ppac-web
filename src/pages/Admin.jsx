@@ -8,7 +8,7 @@ export default function AdminLayout() {
       <h1 className="text-3xl font-bold mb-4">Admin</h1>
 
       {/* simple tabs */}
-      <div className="mb-6 flex gap-3">
+      <div className="mb-6 flex flex-wrap gap-3">
         <NavLink
           to="/admin/users"
           className={({ isActive }) =>

@@ -167,48 +167,47 @@ export default function App() {
           </div>
         </div>
         {/* Nav bar below title */}
-        <nav className="w-full border-t border-border bg-white flex items-center py-2 relative">
-          <div className="flex gap-1 items-center justify-center flex-1">
-            <NavItem to="/">Home</NavItem>
-            {profile && <NavItem to="/dashboard">Dashboard</NavItem>}
-            {isAdmin && notSuspended && <NavItem to="/admin/users">Admin</NavItem>}
-            {notSuspended && (isAdmin || isTreasurer || isManager) && <NavItem to="/accounting">Accounting</NavItem>}
-            {!profile && (
-              <>
+        <nav className="w-full border-t border-border bg-white">
+          <div className="mx-auto max-w-5xl px-4 py-2 flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex gap-1 flex-wrap items-center">
+              <NavItem to="/">Home</NavItem>
+              {profile && <NavItem to="/dashboard">Dashboard</NavItem>}
+              {isAdmin && notSuspended && <NavItem to="/admin/users">Admin</NavItem>}
+              {notSuspended && (isAdmin || isTreasurer || isManager) && <NavItem to="/accounting">Accounting</NavItem>}
+              {!profile && (
+                <>
+                  <button
+                    className="px-3 py-2 rounded-lg text-sm font-medium transition text-ink/70 hover:bg-brand-50 hover:text-ink"
+                    style={{ background: loginOpen ? "#e0f2fe" : undefined }}
+                    onClick={() => setLoginOpen(true)}
+                  >
+                    Login
+                  </button>
+                  <NavItem to="/signup">Signup</NavItem>
+                </>
+              )}
+            </div>
+            {!profile ? (
+              <Link to="/become-member" className="btn btn-primary whitespace-nowrap ml-auto">Become Member</Link>
+            ) : (
+              <div className="flex items-center gap-2 whitespace-nowrap ml-auto">
+                <span className="text-sm text-ink/80 font-medium">
+                  Welcome, {profile.displayName || profile.email || "User"}
+                </span>
                 <button
-                  className="px-3 py-2 rounded-lg text-sm font-medium transition text-ink/70 hover:bg-brand-50 hover:text-ink"
-                  style={{ background: loginOpen ? "#e0f2fe" : undefined }}
-                  onClick={() => setLoginOpen(true)}
+                  className="px-3 py-2 rounded-lg text-sm font-medium transition text-rose-700 hover:bg-rose-50 hover:text-rose-900"
+                  onClick={async () => {
+                    if (window.confirm("Are you sure you want to sign out?")) {
+                      await signout();
+                      nav("/", { replace: true });
+                    }
+                  }}
                 >
-                  Login
+                  Sign out
                 </button>
-                <NavItem to="/signup">Signup</NavItem>
-              </>
+              </div>
             )}
           </div>
-          {/* Right-aligned Become Member or Welcome/Sign out */}
-          {!profile ? (
-            <div className="absolute right-4">
-              <Link to="/become-member" className="btn btn-primary">Become Member</Link>
-            </div>
-          ) : (
-            <div className="absolute right-4 flex items-center">
-              <span className="px-2 text-sm text-ink/80 font-medium whitespace-nowrap">
-                Welcome, {profile.displayName || profile.email || "User"}
-              </span>
-              <button
-                className="ml-2 px-3 py-2 rounded-lg text-sm font-medium transition text-rose-700 hover:bg-rose-50 hover:text-rose-900"
-                onClick={async () => {
-                  if (window.confirm("Are you sure you want to sign out?")) {
-                    await signout();
-                    nav("/", { replace: true });
-                  }
-                }}
-              >
-                Sign out
-              </button>
-            </div>
-          )}
         </nav>
         </header>
         </>
