@@ -11,14 +11,51 @@ export default function Signup({ openLoginModal }) {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [fullName, setFullName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [middleName, setMiddleName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [agreed, setAgreed] = useState(false);
+  const [passwordStrength, setPasswordStrength] = useState(0);
+
+  // Simple password strength estimator
+  function getPasswordStrength(pw) {
+    let score = 0;
+    if (pw.length >= 8) score++;
+    if (/[A-Z]/.test(pw)) score++;
+    if (/[a-z]/.test(pw)) score++;
+    if (/[0-9]/.test(pw)) score++;
+    if (/[^A-Za-z0-9]/.test(pw)) score++;
+    return score;
+  }
+
+  function handlePasswordChange(e) {
+    setPassword(e.target.value);
+    setPasswordStrength(getPasswordStrength(e.target.value));
+  }
 
   async function onSubmit(e) {
     e.preventDefault();
     setErr("");
     setBusy(true);
+
+    // Validate required fields
+    if (!firstName.trim() || !middleName.trim() || !lastName.trim()) {
+      setErr("First name, middle name, and last name are required.");
+      setBusy(false);
+      return;
+    }
+    if (!agreed) {
+      setErr("You must agree to the Terms of Service and Privacy Policy.");
+      setBusy(false);
+      return;
+    }
+    if (passwordStrength < 3) {
+      setErr("Password is too weak. Use at least 8 characters, with upper/lowercase, numbers, and symbols.");
+      setBusy(false);
+      return;
+    }
     try {
       // 1) Create Auth user
       const cred = await createUserWithEmailAndPassword(
@@ -27,10 +64,10 @@ export default function Signup({ openLoginModal }) {
         password
       );
 
-      // 2) Optionally set display name in Auth
-      if (fullName.trim()) {
-        await updateProfile(cred.user, { displayName: fullName.trim() });
-      }
+      // 2) Set display name in Auth as "First M. Last"
+      const middleInitial = middleName.trim()[0]?.toUpperCase() || "";
+      const displayName = `${firstName.trim()}${middleInitial ? " " + middleInitial + "." : ""} ${lastName.trim()}`.replace(/ +/g, " ");
+      await updateProfile(cred.user, { displayName });
 
       // 3) Generate next memberId (YYYY000XXX) via transaction
       const memberId = await generateMemberId(db); // keep as STRING
@@ -41,7 +78,10 @@ export default function Signup({ openLoginModal }) {
         {
           uid: cred.user.uid,
           email: cred.user.email || email.trim(),
-          displayName: fullName.trim() || "",
+          displayName,
+          firstName: firstName.trim(),
+          middleName: middleName.trim(),
+          lastName: lastName.trim(),
           // roles
           role: "member",          // legacy compatibility
           roles: ["member"],       // authoritative
@@ -52,6 +92,19 @@ export default function Signup({ openLoginModal }) {
           memberId,                // keep as STRING to preserve leading zeros
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      // 4b) Create/update members/{uid} with name and email fields
+      await setDoc(
+        doc(db, "members", cred.user.uid),
+        {
+          firstName: firstName.trim(),
+          middleName: middleName.trim(),
+          lastName: lastName.trim(),
+          email: cred.user.email || email.trim(),
+          createdAt: serverTimestamp(),
         },
         { merge: true }
       );
@@ -95,14 +148,36 @@ export default function Signup({ openLoginModal }) {
           </div>
         )}
 
+
         <form onSubmit={onSubmit} className="grid gap-3">
           <label className="block">
-            <span className="text-sm">Full name (optional)</span>
+            <span className="text-sm">First Name</span>
             <input
               className="border rounded px-3 py-2 w-full"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              autoComplete="name"
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+              autoComplete="given-name"
+              required
+            />
+          </label>
+          <label className="block">
+            <span className="text-sm">Middle Name</span>
+            <input
+              className="border rounded px-3 py-2 w-full"
+              value={middleName}
+              onChange={(e) => setMiddleName(e.target.value)}
+              autoComplete="additional-name"
+              required
+            />
+          </label>
+          <label className="block">
+            <span className="text-sm">Last Name</span>
+            <input
+              className="border rounded px-3 py-2 w-full"
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
+              autoComplete="family-name"
+              required
             />
           </label>
 
@@ -124,10 +199,22 @@ export default function Signup({ openLoginModal }) {
               className="border rounded px-3 py-2 w-full"
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={handlePasswordChange}
               autoComplete="new-password"
               required
             />
+            <div className="mt-1 text-xs">
+              <span>Password strength: </span>
+              <span style={{ color: passwordStrength >= 4 ? 'green' : passwordStrength === 3 ? 'orange' : 'red' }}>
+                {passwordStrength >= 4 ? 'Strong' : passwordStrength === 3 ? 'Medium' : 'Weak'}
+              </span>
+            </div>
+          </label>
+          <label className="flex items-center gap-2 mt-2">
+            <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)} required />
+            <span className="text-xs">
+              I agree to the <a href="/terms" target="_blank" rel="noopener noreferrer" className="underline">Terms of Service</a> and <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline">Privacy Policy</a>.
+            </span>
           </label>
 
           <button

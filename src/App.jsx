@@ -145,7 +145,7 @@ export default function App() {
           {/* Auth-only */}
           <Route path="/verify" element={<ProtectedRoute><Verify /></ProtectedRoute>} />
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-          <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+          <Route path="/profile" element={<ProtectedRoute requireVerified={true}><Profile /></ProtectedRoute>} />
 
           {/* Admin-only (nested) */}
           <Route

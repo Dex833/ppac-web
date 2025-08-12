@@ -244,52 +244,56 @@ export default function Dashboard() {
               {!memberComplete && (
                 <div className="mb-6 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
                   Help us know you better. Please complete your member profile.{" "}
-                  <Link
-                    to="/profile"
-                    className="underline decoration-blue-600 hover:text-blue-700"
-                  >
-                    Go to Profile
-                  </Link>
+                  {isVerified && (
+                    <Link
+                      to="/profile"
+                      className="underline decoration-blue-600 hover:text-blue-700"
+                    >
+                      Go to Profile
+                    </Link>
+                  )}
                 </div>
               )}
 
-              {/* Reserved content area */}
-              <div className="grid grid-cols-1 gap-6">
-                <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-6">
-                  <h3 className="font-semibold text-lg mb-2">Share Capital</h3>
-                  <div className="text-ink/70">
-                    {loadingShareCap ? (
-                      <span>Loading…</span>
-                    ) : shareCapital && shareCapital.accounts.length ? (
-                      <>
-                        <div className="mb-2">
-                          <span className="font-semibold">Balance:</span>{" "}
-                          <span className="font-mono">₱{Math.abs(shareCapital.balance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                        </div>
-                        <div className="text-xs text-ink/50">Account(s): {shareCapital.accounts.map(a => a.individual || a.id).join(", ")}</div>
-                      </>
-                    ) : (
-                      <span>No Share Capital account found for your name.</span>
-                    )}
+              {/* Reserved content area: only show if verified */}
+              {isVerified && (
+                <div className="grid grid-cols-1 gap-6">
+                  <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-6">
+                    <h3 className="font-semibold text-lg mb-2">Share Capital</h3>
+                    <div className="text-ink/70">
+                      {loadingShareCap ? (
+                        <span>Loading…</span>
+                      ) : shareCapital && shareCapital.accounts.length ? (
+                        <>
+                          <div className="mb-2">
+                            <span className="font-semibold">Balance:</span>{" "}
+                            <span className="font-mono">₱{Math.abs(shareCapital.balance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </div>
+                          <div className="text-xs text-ink/50">Account(s): {shareCapital.accounts.map(a => a.individual || a.id).join(", ")}</div>
+                        </>
+                      ) : (
+                        <span>No Share Capital account found for your name.</span>
+                      )}
+                    </div>
                   </div>
-                </div>
 
-                <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-6">
-                  <h3 className="font-semibold text-lg mb-2">Loan</h3>
-                  <div className="text-ink/70">
-                    {/* TODO: inject Loan summary & actions */}
-                    [Loan summary and actions here]
+                  <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-6">
+                    <h3 className="font-semibold text-lg mb-2">Loan</h3>
+                    <div className="text-ink/70">
+                      {/* TODO: inject Loan summary & actions */}
+                      [Loan summary and actions here]
+                    </div>
                   </div>
-                </div>
 
-                <div className="rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-6">
-                  <h3 className="font-semibold text-lg mb-2">Balik Tangkilik</h3>
-                  <div className="text-ink/70">
-                    {/* TODO: inject Balik Tangkilik summary & actions */}
-                    [Balik Tangkilik summary and actions here]
+                  <div className="rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-6">
+                    <h3 className="font-semibold text-lg mb-2">Balik Tangkilik</h3>
+                    <div className="text-ink/70">
+                      {/* TODO: inject Balik Tangkilik summary & actions */}
+                      [Balik Tangkilik summary and actions here]
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
           </div>
 
@@ -364,9 +368,11 @@ export default function Dashboard() {
               )}
 
               <div className="mt-8 flex items-center gap-3">
-                <Link to="/profile" className="btn btn-primary">
-                  {memberComplete ? "Edit Profile" : "Complete Member Profile"}
-                </Link>
+                {isVerified && (
+                  <Link to="/profile" className="btn btn-primary">
+                    {memberComplete ? "Edit Profile" : "Complete Member Profile"}
+                  </Link>
+                )}
               </div>
             </div>
           </aside>
