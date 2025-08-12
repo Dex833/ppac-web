@@ -13,24 +13,24 @@ import {
   query,
   where,
   orderBy,
-  getDocs
+  getDocs,
 } from "firebase/firestore";
-// Helper: fetch all share capital accounts
-async function fetchAllShareCapitalAccounts() {
-  const q = query(
-    collection(db, "accounts"),
-    where("main", "==", "Share Capital")
-  );
+
+/* ---------------- Helpers ---------------- */
+
+// Generic: fetch all accounts with a specific "main" name
+async function fetchAccountsByMain(mainName) {
+  const q = query(collection(db, "accounts"), where("main", "==", mainName));
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
-// Helper: sum share capital for accountIds
-async function fetchShareCapitalBalance(accountIds) {
+// Generic: sum (debit - credit) for any set of accountIds across all journal entries
+async function sumBalanceForAccountIds(accountIds) {
   if (!accountIds.length) return 0;
-  // Get all journal entries with lines for these accountIds
   const q = query(collection(db, "journalEntries"), orderBy("createdAt", "desc"));
   const snap = await getDocs(q);
+
   let total = 0;
   snap.forEach((doc) => {
     const entry = doc.data();
@@ -45,6 +45,15 @@ async function fetchShareCapitalBalance(accountIds) {
   return total;
 }
 
+// For convenience (kept for share capital)
+async function fetchAllShareCapitalAccounts() {
+  return fetchAccountsByMain("Share Capital");
+}
+async function fetchShareCapitalBalance(accountIds) {
+  return sumBalanceForAccountIds(accountIds);
+}
+
+/* ---------------------------------------------------- */
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -70,7 +79,6 @@ export default function Dashboard() {
     setLoadingUserDoc(true);
     const ref = doc(db, "users", user.uid);
 
-    // Ensure the doc exists with safe default fields
     (async () => {
       try {
         const snap = await getDoc(ref);
@@ -92,14 +100,13 @@ export default function Dashboard() {
       }
     })();
 
-    // Live listener
     const unsub = onSnapshot(
       ref,
       (s) => {
         const data = s.exists() ? s.data() : null;
         setProfile(data);
         setMemberIdField(
-          typeof data?.memberId === "string" ? data.memberId : (data?.memberId ?? "")
+          typeof data?.memberId === "string" ? data.memberId : data?.memberId ?? ""
         );
         setLoadingUserDoc(false);
       },
@@ -143,40 +150,75 @@ export default function Dashboard() {
     };
   }, [user?.uid]);
 
-  // Share Capital state
+  /* ---------------- Share Capital ---------------- */
   const [shareCapital, setShareCapital] = useState(null);
   const [loadingShareCap, setLoadingShareCap] = useState(true);
 
-  // Fetch share capital when member is loaded
+  /* ---------------- Loan (NEW) ---------------- */
+  const [loanInfo, setLoanInfo] = useState(null);
+  const [loadingLoan, setLoadingLoan] = useState(true);
+
+  // Load both Share Capital and Loan once member is available
   useEffect(() => {
-    async function loadShareCapital() {
+    async function loadBalances() {
+      // Reset
       setLoadingShareCap(true);
+      setLoadingLoan(true);
       setShareCapital(null);
+      setLoanInfo(null);
+
       if (!member) {
         setLoadingShareCap(false);
+        setLoadingLoan(false);
         return;
       }
-      // Construct "Dexter M. Acantilado" style name
+
+      // Construct standardized display name: "First M. Last"
       const firstName = member.firstName?.trim() || "";
       const middleName = member.middleName?.trim() || "";
       const lastName = member.lastName?.trim() || "";
       const middleInitial = middleName ? middleName[0].toUpperCase() + "." : "";
-      const constructedName = [firstName, middleInitial, lastName].filter(Boolean).join(" ").replace(/ +/g, " ");
+      const constructedName = [firstName, middleInitial, lastName]
+        .filter(Boolean)
+        .join(" ")
+        .replace(/ +/g, " ")
+        .trim();
+
       try {
-        const allAccounts = await fetchAllShareCapitalAccounts();
-        // Match by constructed name (case-insensitive, trimmed)
-        const accounts = allAccounts.filter(a => (a.individual || "").trim().toLowerCase() === constructedName.trim().toLowerCase());
-        const accountIds = accounts.map((a) => a.id);
-        const balance = await fetchShareCapitalBalance(accountIds);
-        setShareCapital({ balance, accounts });
+        // --- Share Capital ---
+        const allSC = await fetchAllShareCapitalAccounts();
+        const mySC = allSC.filter(
+          (a) => (a.individual || "").trim().toLowerCase() === constructedName.toLowerCase()
+        );
+        const scIds = mySC.map((a) => a.id);
+        const scBal = await fetchShareCapitalBalance(scIds);
+        setShareCapital({ balance: scBal, accounts: mySC });
       } catch (e) {
         setShareCapital(null);
       } finally {
         setLoadingShareCap(false);
       }
+
+      try {
+        // --- Loans (Loan Receivable) ---
+        const allLoans = await fetchAccountsByMain("Loan Receivable");
+        const myLoans = allLoans.filter(
+          (a) => (a.individual || "").trim().toLowerCase() === constructedName.toLowerCase()
+        );
+        const loanIds = myLoans.map((a) => a.id);
+        // Same summing logic (debit - credit) as share capital helper above
+        const loanBal = await sumBalanceForAccountIds(loanIds);
+        setLoanInfo({ balance: loanBal, accounts: myLoans });
+      } catch (e) {
+        setLoanInfo(null);
+      } finally {
+        setLoadingLoan(false);
+      }
     }
-    loadShareCapital();
+
+    loadBalances();
   }, [member]);
+
   if (loadingUserDoc || loadingMemberDoc) {
     return (
       <div className="min-h-screen bg-surface text-ink">
@@ -211,9 +253,7 @@ export default function Dashboard() {
     );
 
   const fullName = member
-    ? [member.firstName, member.middleName, member.lastName]
-        .filter(Boolean)
-        .join(" ")
+    ? [member.firstName, member.middleName, member.lastName].filter(Boolean).join(" ")
     : "";
 
   /* ---------------- layout ---------------- */
@@ -258,6 +298,7 @@ export default function Dashboard() {
               {/* Reserved content area: only show if verified */}
               {isVerified && (
                 <div className="grid grid-cols-1 gap-6">
+                  {/* Share Capital */}
                   <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-6">
                     <h3 className="font-semibold text-lg mb-2">Share Capital</h3>
                     <div className="text-ink/70">
@@ -267,9 +308,20 @@ export default function Dashboard() {
                         <>
                           <div className="mb-2">
                             <span className="font-semibold">Balance:</span>{" "}
-                            <span className="font-mono">₱{Math.abs(shareCapital.balance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            <span className="font-mono">
+                              ₱
+                              {Math.abs(shareCapital.balance).toLocaleString(
+                                undefined,
+                                { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+                              )}
+                            </span>
                           </div>
-                          <div className="text-xs text-ink/50">Account(s): {shareCapital.accounts.map(a => a.individual || a.id).join(", ")}</div>
+                          <div className="text-xs text-ink/50">
+                            Account(s):{" "}
+                            {shareCapital.accounts
+                              .map((a) => a.individual || a.id)
+                              .join(", ")}
+                          </div>
                         </>
                       ) : (
                         <span>No Share Capital account found for your name.</span>
@@ -277,20 +329,41 @@ export default function Dashboard() {
                     </div>
                   </div>
 
+                  {/* Loan (same logic pattern) */}
                   <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-6">
                     <h3 className="font-semibold text-lg mb-2">Loan</h3>
                     <div className="text-ink/70">
-                      {/* TODO: inject Loan summary & actions */}
-                      [Loan summary and actions here]
+                      {loadingLoan ? (
+                        <span>Loading…</span>
+                      ) : loanInfo && loanInfo.accounts.length ? (
+                        <>
+                          <div className="mb-2">
+                            <span className="font-semibold">Outstanding:</span>{" "}
+                            <span className="font-mono">
+                              ₱
+                              {Math.abs(loanInfo.balance).toLocaleString(
+                                undefined,
+                                { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+                              )}
+                            </span>
+                          </div>
+                          <div className="text-xs text-ink/50">
+                            Account(s):{" "}
+                            {loanInfo.accounts
+                              .map((a) => a.individual || a.id)
+                              .join(", ")}
+                          </div>
+                        </>
+                      ) : (
+                        <span>No Loan Receivable account found for your name.</span>
+                      )}
                     </div>
                   </div>
 
+                  {/* Balik Tangkilik (placeholder) */}
                   <div className="rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-6">
                     <h3 className="font-semibold text-lg mb-2">Balik Tangkilik</h3>
-                    <div className="text-ink/70">
-                      {/* TODO: inject Balik Tangkilik summary & actions */}
-                      [Balik Tangkilik summary and actions here]
-                    </div>
+                    <div className="text-ink/70">[Coming soon]</div>
                   </div>
                 </div>
               )}
