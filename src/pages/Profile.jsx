@@ -68,7 +68,7 @@ export default function Profile() {
   }, [authLoading, user?.uid]);
 
   if (authLoading) return null;
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user) return <Navigate to="/" replace />;
 
   // ✅ Upload helper that MATCHES storage.rules and sets contentType
   //    Path: members/{uid}/{folder}/{timestamped-filename}

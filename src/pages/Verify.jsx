@@ -22,7 +22,7 @@ export default function Verify() {
   }, [user?.emailVerified, nav]);
 
   if (authLoading) return null;
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user) return <Navigate to="/" replace />;
 
   async function resend() {
     try {

@@ -6,7 +6,7 @@ export default function RequireAuth({ children, emailVerifiedOnly = false }) {
   const { user } = useAuth();
   const loc = useLocation();
 
-  if (!user) return <Navigate to="/login" replace state={{ from: loc }} />;
+  if (!user) return <Navigate to="/" replace state={{ from: loc }} />;
   if (emailVerifiedOnly && !user.emailVerified) {
     return <Navigate to="/verify" replace />;
   }

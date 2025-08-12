@@ -47,7 +47,7 @@ export default function AdminRoute({ children }) {
   }, [user?.uid]);
 
   if (!user) {
-    return <Navigate to="/login" replace state={{ from: loc }} />;
+  return <Navigate to="/" replace state={{ from: loc }} />;
   }
 
   if (checking) {

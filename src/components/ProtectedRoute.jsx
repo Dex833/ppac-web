@@ -11,7 +11,7 @@ export default function ProtectedRoute({ children, requireVerified = false }) {
 
   if (loading || profileLoading) return null;
 
-  if (!user) return <Navigate to="/login" replace state={{ from: loc }} />;
+  if (!user) return <Navigate to="/" replace state={{ from: loc }} />;
 
   if (requireVerified) {
     const ok = user.emailVerified === true || profile?.verifiedByAdmin === true;
