@@ -22,7 +22,19 @@ export default function AdminLayout() {
         >
           Users
         </NavLink>
-        {/* add more tabs later */}
+        <NavLink
+          to="/admin/edit-home"
+          className={({ isActive }) =>
+            [
+              "px-3 py-2 rounded-lg text-sm font-medium transition",
+              isActive
+                ? "bg-brand-600 text-white shadow-sm"
+                : "text-ink/70 hover:bg-brand-50 hover:text-ink",
+            ].join(" ")
+          }
+        >
+          Edit Home
+        </NavLink>
       </div>
 
       {/* child route renders here */}
