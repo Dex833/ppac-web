@@ -4,6 +4,7 @@ import { Routes, Route, Link, NavLink, Navigate, useNavigate } from "react-route
 
 import { useAuth } from "./AuthContext";
 import useUserProfile from "./hooks/useUserProfile";
+import useIsMobile from "./hooks/useIsMobile.js";
 
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
 import GuestRoute from "./components/GuestRoute.jsx";
@@ -33,10 +34,11 @@ const FinancialStatements = lazy(() => import("./pages/accounting/FinancialState
 
 import ppacLogo from "./assets/ppac-logo.png";
 
-function NavItem({ to, children }) {
+function NavItem({ to, children, onClick }) {
   return (
     <NavLink
       to={to}
+      onClick={onClick}
       className={({ isActive }) =>
         [
           "px-3 py-2 rounded-lg text-sm font-medium transition",
@@ -52,8 +54,10 @@ function NavItem({ to, children }) {
 export default function App() {
   const { profile } = useUserProfile();
   const [loginOpen, setLoginOpen] = React.useState(false);
+  const [menuOpen, setMenuOpen] = React.useState(false);
   const nav = useNavigate();
   const { signout } = useAuth();
+  const isMobile = useIsMobile();
 
   const roles = Array.isArray(profile?.roles) ? profile.roles : profile?.role ? [profile.role] : [];
   const isAdmin = roles.includes("admin");
@@ -76,6 +80,66 @@ export default function App() {
         backgroundAttachment: 'fixed',
       }}
     >
+      {isMobile && (
+        <>
+          <div className="w-full bg-brand-50 border-b border-brand-100 text-xs text-ink/70 py-1 px-2 flex flex-col gap-1">
+            <span>📍 123 Rizal Ave, Puerto Princesa City, Palawan</span>
+            <span>☎️ (048) 433-1234</span>
+          </div>
+          <header className="bg-white/80 backdrop-blur border-b border-border p-4 flex items-center justify-between">
+            <Link to="/" className="flex items-center gap-2">
+              <img src={ppacLogo} alt="Puerto Princesa Agriculture Cooperative" className="h-8 w-auto rounded-full" />
+            </Link>
+            <button
+              className="p-2 rounded-md text-ink hover:bg-brand-50"
+              onClick={() => setMenuOpen((o) => !o)}
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+          </header>
+          {menuOpen && (
+            <nav className="bg-white border-b border-border flex flex-col p-2 gap-1">
+              <NavItem to="/" onClick={() => setMenuOpen(false)}>Home</NavItem>
+              {profile && <NavItem to="/dashboard" onClick={() => setMenuOpen(false)}>Dashboard</NavItem>}
+              {isAdmin && notSuspended && <NavItem to="/admin/users" onClick={() => setMenuOpen(false)}>Admin</NavItem>}
+              {notSuspended && (isAdmin || isTreasurer || isManager) && (
+                <NavItem to="/accounting" onClick={() => setMenuOpen(false)}>Accounting</NavItem>
+              )}
+              {!profile && (
+                <>
+                  <button
+                    className="px-3 py-2 text-left rounded-lg text-sm font-medium transition text-ink/70 hover:bg-brand-50 hover:text-ink"
+                    style={{ background: loginOpen ? "#e0f2fe" : undefined }}
+                    onClick={() => { setLoginOpen(true); setMenuOpen(false); }}
+                  >
+                    Login
+                  </button>
+                  <NavItem to="/signup" onClick={() => setMenuOpen(false)}>Signup</NavItem>
+                  <Link to="/become-member" className="btn btn-primary mt-2" onClick={() => setMenuOpen(false)}>Become Member</Link>
+                </>
+              )}
+              {profile && (
+                <button
+                  className="px-3 py-2 text-left rounded-lg text-sm font-medium transition text-rose-700 hover:bg-rose-50 hover:text-rose-900 mt-2"
+                  onClick={async () => {
+                    if (window.confirm('Are you sure you want to sign out?')) {
+                      await signout();
+                      nav('/', { replace: true });
+                    }
+                    setMenuOpen(false);
+                  }}
+                >
+                  Sign out
+                </button>
+              )}
+            </nav>
+          )}
+        </>
+      )}
+      {!isMobile && (
+        <>
       {/* Top info bar */}
       <div className="w-full bg-brand-50 border-b border-brand-100 text-xs text-ink/70 py-1 px-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <div className="flex flex-col sm:flex-row gap-2 sm:gap-6">
@@ -146,9 +210,11 @@ export default function App() {
             </div>
           )}
         </nav>
-      </header>
+        </header>
+        </>
+      )}
 
-      <LoginModal
+        <LoginModal
         open={loginOpen}
         onClose={() => setLoginOpen(false)}
         onSuccess={() => {
