@@ -4,6 +4,7 @@ import {
   collection,
   addDoc,
   updateDoc,
+  deleteDoc,
   doc,
   onSnapshot,
   query,
@@ -22,6 +23,7 @@ function MainCombo({
   options,
   placeholder = "Main Account",
   inputClass = "",
+  required = false,
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState(value || "");
@@ -46,7 +48,19 @@ function MainCombo({
         }}
         onFocus={() => setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 120)} // allow click
+        aria-required={required}
       />
+      {/* Hidden input to let the browser enforce "required" */}
+      {required && (
+        <input
+          tabIndex={-1}
+          className="hidden"
+          value={value || ""}
+          onChange={() => {}}
+          required
+        />
+      )}
+
       <button
         type="button"
         className="absolute right-1 top-1/2 -translate-y-1/2 px-1 text-gray-500"
@@ -107,10 +121,18 @@ export default function ChartOfAccounts() {
 
   useEffect(() => {
     const q = query(collection(db, "accounts"), orderBy("code"));
-    const unsub = onSnapshot(q, (snap) => {
-      setAccounts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setLoading(false);
-    });
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        setAccounts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setLoading(false);
+      },
+      (err) => {
+        console.error("accounts/onSnapshot error:", err);
+        alert("Failed to load accounts: " + err.message);
+        setLoading(false);
+      }
+    );
     return () => unsub();
   }, []);
 
@@ -134,7 +156,7 @@ export default function ChartOfAccounts() {
       case "Equity":
         return 3000;
       case "Income":
-        return 4000; // keeping your existing data
+        return 4000;
       case "Expense":
         return 5000;
       default:
@@ -163,9 +185,18 @@ export default function ChartOfAccounts() {
     );
   }
 
+  const addDisabled =
+    saving ||
+    !form.main.trim() ||
+    !form.individual.trim() ||
+    isDuplicate(form.main, form.individual, form.type);
+
   async function handleAdd(e) {
     e.preventDefault();
-    if (!form.main.trim() || !form.individual.trim()) return;
+    if (!form.main.trim() || !form.individual.trim()) {
+      alert("Please fill in Main and Individual account.");
+      return;
+    }
     if (isDuplicate(form.main, form.individual, form.type)) {
       alert("Duplicate account for this main/individual/type.");
       return;
@@ -184,6 +215,9 @@ export default function ChartOfAccounts() {
         createdBy: window.firebaseAuth?.currentUser?.email || null,
       });
       setForm({ main: "", individual: "", type: "Asset", description: "" });
+    } catch (err) {
+      console.error("add account error:", err);
+      alert("Failed to add account: " + err.message);
     } finally {
       setSaving(false);
     }
@@ -191,11 +225,31 @@ export default function ChartOfAccounts() {
 
   async function handleArchive(id) {
     if (!window.confirm("Archive (deactivate) this account?")) return;
-    await updateDoc(doc(db, "accounts", id), {
-      archived: true,
-      archivedAt: new Date(),
-      archivedBy: window.firebaseAuth?.currentUser?.email || null,
-    });
+    try {
+      await updateDoc(doc(db, "accounts", id), {
+        archived: true,
+        archivedAt: new Date(),
+        archivedBy: window.firebaseAuth?.currentUser?.email || null,
+      });
+    } catch (err) {
+      console.error("archive account error:", err);
+      alert("Failed to archive: " + err.message);
+    }
+  }
+
+  async function handleHardDelete(id) {
+    if (
+      !window.confirm("Permanently DELETE this account? This cannot be undone.") ||
+      !window.confirm("Last check — are you absolutely sure?")
+    ) {
+      return;
+    }
+    try {
+      await deleteDoc(doc(db, "accounts", id));
+    } catch (err) {
+      console.error("delete account error:", err);
+      alert("Failed to delete: " + err.message);
+    }
   }
 
   function handleEdit(acc) {
@@ -209,7 +263,10 @@ export default function ChartOfAccounts() {
   }
 
   async function handleEditSave(id) {
-    if (!editForm.main.trim() || !editForm.individual.trim()) return;
+    if (!editForm.main.trim() || !editForm.individual.trim()) {
+      alert("Please fill in Main and Individual account.");
+      return;
+    }
     const orig = accounts.find((a) => a.id === id);
     const changingIdentity =
       editForm.main !== (orig?.main || "") ||
@@ -222,15 +279,20 @@ export default function ChartOfAccounts() {
       alert("Duplicate account for this main/individual/type.");
       return;
     }
-    await updateDoc(doc(db, "accounts", id), {
-      main: editForm.main.trim(),
-      individual: editForm.individual.trim(),
-      type: editForm.type,
-      description: (editForm.description || "").trim(),
-      updatedAt: new Date(),
-      updatedBy: window.firebaseAuth?.currentUser?.email || null,
-    });
-    setEditId(null);
+    try {
+      await updateDoc(doc(db, "accounts", id), {
+        main: editForm.main.trim(),
+        individual: editForm.individual.trim(),
+        type: editForm.type,
+        description: (editForm.description || "").trim(),
+        updatedAt: new Date(),
+        updatedBy: window.firebaseAuth?.currentUser?.email || null,
+      });
+      setEditId(null);
+    } catch (err) {
+      console.error("edit account error:", err);
+      alert("Failed to save changes: " + err.message);
+    }
   }
 
   function handleEditCancel() {
@@ -311,6 +373,8 @@ export default function ChartOfAccounts() {
     grouped[m].push(acc);
   }
 
+  const addBtnLabel = saving ? "Adding…" : isDuplicate(form.main, form.individual, form.type) ? "Duplicate" : "Add Account";
+
   return (
     <div>
       <h3 className="text-xl font-semibold mb-4">Chart of Accounts</h3>
@@ -323,6 +387,7 @@ export default function ChartOfAccounts() {
           onChange={(val) => setForm((f) => ({ ...f, main: val }))}
           options={mainOptions}
           inputClass="w-40"
+          required
         />
 
         <input
@@ -362,8 +427,8 @@ export default function ChartOfAccounts() {
           }
         />
 
-        <button type="submit" className="btn btn-primary" disabled={saving}>
-          {saving ? "Adding…" : "Add Account"}
+        <button type="submit" className="btn btn-primary" disabled={addDisabled}>
+          {addBtnLabel}
         </button>
         <button
           type="button"
@@ -518,12 +583,14 @@ export default function ChartOfAccounts() {
                         {editId === acc.id ? (
                           <>
                             <button
+                              type="button"
                               className="btn btn-sm btn-primary mr-1"
                               onClick={() => handleEditSave(acc.id)}
                             >
                               Save
                             </button>
                             <button
+                              type="button"
                               className="btn btn-sm btn-outline"
                               onClick={handleEditCancel}
                             >
@@ -533,16 +600,26 @@ export default function ChartOfAccounts() {
                         ) : (
                           <>
                             <button
+                              type="button"
                               className="btn btn-sm btn-outline mr-1"
                               onClick={() => handleEdit(acc)}
                             >
                               Edit
                             </button>
                             <button
-                              className="btn btn-sm btn-outline"
+                              type="button"
+                              className="btn btn-sm btn-outline mr-1"
                               onClick={() => handleArchive(acc.id)}
                             >
                               Archive
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline"
+                              title="Hard delete (admin only)"
+                              onClick={() => handleHardDelete(acc.id)}
+                            >
+                              Delete
                             </button>
                           </>
                         )}
