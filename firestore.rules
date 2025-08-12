@@ -1,0 +1,40 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAdmin() {
+      return request.auth != null &&
+        request.auth.token.roles != null &&
+        request.auth.token.roles.hasAny(['admin']);
+    }
+
+    match /accounts/{accountId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if isAdmin() &&
+        request.resource.data.code is string &&
+        request.resource.data.name is string &&
+        request.resource.data.type in ['asset', 'liability', 'equity', 'income', 'expense'] &&
+        (!('isActive' in request.resource.data) || request.resource.data.isActive is bool);
+    }
+
+    match /journals/{journalId} {
+      allow read: if request.auth != null;
+      allow create, update, delete: if isAdmin() &&
+        request.resource.data.date is timestamp &&
+        request.resource.data.lines is list &&
+        request.resource.data.lines.size() > 0 &&
+        request.resource.data.totalDr is number &&
+        request.resource.data.totalCr is number &&
+        request.resource.data.totalDr == request.resource.data.totalCr &&
+        request.resource.data.lines.all(l =>
+          l.accountId is string &&
+          l.accountCode is string &&
+          l.accountName is string &&
+          l.dr is number &&
+          l.cr is number);
+    }
+
+    match /sequences/{seqId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}
