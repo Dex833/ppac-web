@@ -9,6 +9,7 @@ export default function AccountingNav() {
   <NavLink to="/accounting/ledger" className="btn btn-sm btn-outline">Ledger</NavLink>
   <NavLink to="/accounting/trial-balance" className="btn btn-sm btn-outline">Trial Balance</NavLink>
   <NavLink to="/accounting/financial-statements" className="btn btn-sm btn-outline">Financial Statements</NavLink>
+  <NavLink to="/accounting/sales-invoice" className="btn btn-sm btn-outline">Sales &amp; Invoice</NavLink>
   <NavLink to="/accounting/chart-of-accounts" className="btn btn-sm btn-outline">Chart of Accounts</NavLink>
     </nav>
   );

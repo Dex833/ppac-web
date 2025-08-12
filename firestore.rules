@@ -126,6 +126,10 @@ match /journalEntries/{jid} {
   allow get, list: if isAdmin();
   allow create, update, delete: if isAdmin() && request.auth.uid == userDoc().id;
 }
+match /salesInvoices/{sid} {
+  allow get, list: if isAdmin();
+  allow create, update, delete: if isAdmin() && request.auth.uid == userDoc().id;
+}
     match /accounts/{id} {
       allow get, list: if isAdmin();
       allow create, update, delete: if isAdmin();
