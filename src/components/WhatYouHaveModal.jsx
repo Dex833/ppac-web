@@ -5,7 +5,16 @@ export default function WhatYouHaveModal({ open, onClose, user, shareCapital, lo
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white rounded-xl shadow-lg max-w-md w-full p-6 relative">
+      <div
+        className="bg-white rounded-xl shadow-lg max-w-md w-full p-6 relative"
+        style={{
+          maxHeight: '90vh',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          overflowY: 'auto',
+        }}
+      >
         <button
           className="absolute top-2 right-2 text-2xl text-ink/50 hover:text-ink"
           onClick={onClose}
@@ -13,7 +22,7 @@ export default function WhatYouHaveModal({ open, onClose, user, shareCapital, lo
         >
           ×
         </button>
-        <h2 className="text-xl font-bold mb-4">What You Have</h2>
+  <h2 className="text-xl font-bold mb-4">What You Have</h2>
         <div className="mb-3">
           <div className="font-semibold">Name:</div>
           <div className="mb-2">{user?.displayName || user?.email || "Member"}</div>
