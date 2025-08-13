@@ -6,7 +6,7 @@ const accountingBg = "https://images.unsplash.com/photo-1502086223501-7ea6ecd793
 
 export default function Accounting() {
   return (
-    <PageBackground image={accountingBg} boxed boxedWidth="max-w-7xl" overlayClass="bg-white/85 backdrop-blur">
+    <PageBackground image={accountingBg} boxed boxedWidth="max-w-7xl" overlayClass="bg-white/85 backdrop-blur" className="page-gutter">
       <h2 className="text-2xl font-bold mb-4">Accounting</h2>
       <AccountingNav />
       <Outlet />

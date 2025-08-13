@@ -32,6 +32,7 @@ export default function AdminLayout() {
       boxed
       boxedWidth="max-w-7xl"         // show more background on the sides
       overlayClass="bg-white/85 backdrop-blur"
+      className="page-gutter"
     >
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Admin</h1>

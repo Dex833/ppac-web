@@ -264,6 +264,7 @@ export default function Dashboard() {
       boxed
       boxedWidth="max-w-7xl"            // feel free to tweak (max-w-5xl, -6xl, -7xl)
       overlayClass="bg-white/85 backdrop-blur"
+      className="page-gutter"
     >
       <div className="flex flex-col md:flex-row gap-8">
         {/* ---------- Center: Share Capital / Loan / Balik Tangkilik ---------- */}

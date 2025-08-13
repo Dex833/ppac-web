@@ -43,7 +43,7 @@ export default function Home() {
   }, []);
 
   return (
-    <PageBackground image={homeBg} boxed overlayClass="bg-white/85 backdrop-blur">
+    <PageBackground image={homeBg} boxed overlayClass="bg-white/85 backdrop-blur" className="page-gutter">
       {/* DO NOT wrap with another max-w container here; PageBackground already boxes it */}
       {loading ? (
         <div className="p-6">Loading…</div>
