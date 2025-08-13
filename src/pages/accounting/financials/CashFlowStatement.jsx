@@ -9,6 +9,50 @@ import {
   deleteCashFlowStatementReport,
 } from "./cfsReports";
 import jsPDF from "jspdf";
+// at top of CashFlowStatement.jsx
+import useUserProfile from "../../../hooks/useUserProfile";
+import { saveFinancialSnapshot } from "../../reports/saveSnapshot";
+
+// inside component:
+const { profile } = useUserProfile();
+const createdBy = profile?.displayName || profile?.email || "Unknown";
+const createdById = profile?.uid || "";
+const [saving, setSaving] = React.useState(false);
+
+// You already compute these in the page:
+/// const operating = [...];   // { label, amount }
+/// const investing = [...];
+/// const financing = [...];
+/// const totalOperating, totalInvesting, totalFinancing;
+/// const netChange, beginningCash, endingCash;
+/// const from, to;
+
+async function handleSaveCashFlow() {
+  try {
+    setSaving(true);
+    await saveFinancialSnapshot({
+      type: "cashFlow",
+      label: "Cash Flow",
+      from,
+      to,
+      report: {
+        operating, investing, financing,
+        totalOperating, totalInvesting, totalFinancing,
+        netChange, beginningCash, endingCash,
+      },
+      createdBy, createdById,
+    });
+    alert("Cash Flow saved to Reports.");
+  } catch (e) {
+    alert("Save failed: " + (e?.message || e));
+  } finally {
+    setSaving(false);
+  }
+}
+
+<button className="btn btn-primary" onClick={handleSaveCashFlow} disabled={saving}>
+  {saving ? "Saving…" : "Save to Reports"}
+</button>
 
 /* ======================= small utils ======================= */
 const fmt = (n) =>

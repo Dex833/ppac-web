@@ -25,6 +25,48 @@ import {
   Bar,
 } from "recharts";
 import jsPDF from "jspdf";
+// at top of BalanceSheet.jsx
+import useUserProfile from "../../../hooks/useUserProfile";
+import { saveFinancialSnapshot } from "../../reports/saveSnapshot";
+
+// inside component:
+const { profile } = useUserProfile();
+const createdBy = profile?.displayName || profile?.email || "Unknown";
+const createdById = profile?.uid || "";
+const [saving, setSaving] = React.useState(false);
+
+async function handleSaveBalanceSheet() {
+  try {
+    setSaving(true);
+
+    const totalAssets      = (assets || []).reduce((s,a)=> s + (+a.amount || +a.value || 0), 0);
+    const totalLiabilities = (liabilities || []).reduce((s,a)=> s + (+a.amount || +a.value || 0), 0);
+    const totalEquity      = (equity || []).reduce((s,a)=> s + (+a.amount || +a.value || 0), 0);
+
+    await saveFinancialSnapshot({
+      type: "balanceSheet",
+      label: "Balance Sheet",
+      from,                   // if you use "asOf", set both from/to = asOf
+      to,
+      report: {
+        assets, liabilities, equity,
+        totalAssets, totalLiabilities, totalEquity,
+      },
+      createdBy, createdById,
+    });
+
+    alert("Balance Sheet saved to Reports.");
+  } catch (e) {
+    alert("Save failed: " + (e?.message || e));
+  } finally {
+    setSaving(false);
+  }
+}
+
+// Add a button in your actions toolbar:
+<button className="btn btn-primary" onClick={handleSaveBalanceSheet} disabled={saving}>
+  {saving ? "Saving…" : "Save to Reports"}
+</button>
 
 /* --------------------------- helpers --------------------------- */
 const CHART_COLORS = [
