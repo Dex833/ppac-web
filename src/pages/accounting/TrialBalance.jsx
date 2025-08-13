@@ -264,14 +264,14 @@ export default function TrialBalance() {
     }
   }
 
-  /* ---------- Save to Reports ---------- */
+  /* ---------- Save to Reports (single action) ---------- */
   function suggestedLabel() {
     return from || to
       ? `Trial Balance (${from || "—"} – ${to || "—"})`
       : "Trial Balance";
   }
 
-  async function doSave(labelText) {
+  async function handleSaveToReports() {
     if (!viewRef.current) return;
     setSaving(true);
     try {
@@ -291,7 +291,7 @@ export default function TrialBalance() {
         html,
         periodStart: from || null,
         periodEnd: to || null,
-        label: labelText || suggestedLabel(),
+        label: suggestedLabel(),
         createdByName: profile?.displayName || profile?.email || "Unknown",
         createdById: profile?.uid || "",
       });
@@ -304,16 +304,6 @@ export default function TrialBalance() {
     } finally {
       setSaving(false);
     }
-  }
-
-  async function handleSaveToReports() {
-    await doSave(suggestedLabel());
-  }
-
-  async function handleSaveAs() {
-    const name = window.prompt("Name this report:", suggestedLabel());
-    if (name === null) return; // user cancelled
-    await doSave(name.trim() || suggestedLabel());
   }
 
   return (
@@ -378,7 +368,7 @@ export default function TrialBalance() {
             Print
           </button>
 
-          {/* NEW: Save buttons */}
+          {/* Save (single action) */}
           <button
             className="bg-emerald-600 text-white px-3 py-2 rounded font-semibold disabled:opacity-60"
             onClick={handleSaveToReports}
@@ -386,14 +376,6 @@ export default function TrialBalance() {
             title="Save a read-only snapshot to Reports"
           >
             {saving ? "Saving…" : "Save to Reports"}
-          </button>
-          <button
-            className="bg-emerald-700 text-white px-3 py-2 rounded font-semibold disabled:opacity-60"
-            onClick={handleSaveAs}
-            disabled={loading || saving}
-            title="Save with a custom name"
-          >
-            Save As…
           </button>
         </div>
       </div>
@@ -432,28 +414,28 @@ export default function TrialBalance() {
                 <tr>
                   <th
                     className="text-left p-2 border-b border-r border-gray-200 cursor-pointer select-none"
-                    onClick={() => setSortKey("code")}
+                    onClick={() => handleSort("code")}
                     title="Sort by code"
                   >
                     Code {sortKey === "code" ? (sortDir === "asc" ? "▲" : "▼") : ""}
                   </th>
                   <th
                     className="text-left p-2 border-b border-r border-gray-200 cursor-pointer select-none"
-                    onClick={() => setSortKey("name")}
+                    onClick={() => handleSort("name")}
                     title="Sort by account"
                   >
                     Account {sortKey === "name" ? (sortDir === "asc" ? "▲" : "▼") : ""}
                   </th>
                   <th
                     className="text-right p-2 border-b border-r border-gray-200 cursor-pointer select-none"
-                    onClick={() => setSortKey("debit")}
+                    onClick={() => handleSort("debit")}
                     title="Sort by debit"
                   >
                     Debit {sortKey === "debit" ? (sortDir === "asc" ? "▲" : "▼") : ""}
                   </th>
                   <th
                     className="text-right p-2 border-b cursor-pointer select-none"
-                    onClick={() => setSortKey("credit")}
+                    onClick={() => handleSort("credit")}
                     title="Sort by credit"
                   >
                     Credit {sortKey === "credit" ? (sortDir === "asc" ? "▲" : "▼") : ""}
