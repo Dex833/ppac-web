@@ -1,3 +1,4 @@
+// src/pages/Home.jsx
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { db } from "../lib/firebase";
@@ -6,8 +7,10 @@ import PageBackground from "../components/PageBackground";
 import { useAuth } from "../AuthContext";
 import WhatYouHaveModal from "../components/WhatYouHaveModal";
 import useUserShareCapitalAndLoan from "../hooks/useUserShareCapitalAndLoan";
-const homeBg = "https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80";
+import Html from "../components/Html"; // ⟵ NEW
 
+const homeBg =
+  "https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80";
 
 export default function Home() {
   const { user } = useAuth();
@@ -21,7 +24,11 @@ export default function Home() {
   });
   const [loading, setLoading] = useState(true);
   const [showWhatYouHave, setShowWhatYouHave] = useState(false);
-  const { shareCapital, loan, loading: loadingFinancial } = useUserShareCapitalAndLoan();
+  const {
+    shareCapital,
+    loan,
+    loading: loadingFinancial,
+  } = useUserShareCapitalAndLoan();
 
   useEffect(() => {
     (async () => {
@@ -45,7 +52,12 @@ export default function Home() {
   }, []);
 
   return (
-    <PageBackground image={homeBg} boxed overlayClass="bg-white/85 backdrop-blur" className="page-gutter">
+    <PageBackground
+      image={homeBg}
+      boxed
+      overlayClass="bg-white/85 backdrop-blur"
+      className="page-gutter"
+    >
       <div className="flex flex-col items-center gap-6 py-8">
         {/* Image Banner / Photo Slider - always on top, full width */}
         <div className="w-full h-48 sm:h-64 bg-gray-200 rounded-xl flex items-center justify-center mb-2 overflow-hidden">
@@ -54,14 +66,42 @@ export default function Home() {
               {content.sliderImages.map((img, idx) =>
                 img.url ? (
                   img.link ? (
-                    <a key={idx} href={img.link} className="block h-full" style={{ minWidth: 180 }}>
-                      <img src={img.url} alt={img.label || `Slide ${idx + 1}`} className="h-full object-cover rounded-xl shadow" />
-                      {img.label && <div className="text-center text-xs mt-1 text-ink/70">{img.label}</div>}
-                    </a>
+                    <Link
+                      key={idx}
+                      to={img.link}
+                      className="block h-full"
+                      style={{ minWidth: 180 }}
+                      title={img.label}
+                    >
+                      <img
+                        src={img.url}
+                        alt={img.label || `Slide ${idx + 1}`}
+                        className="h-full object-cover rounded-xl shadow"
+                        loading="lazy"
+                      />
+                      {img.label && (
+                        <div className="text-center text-xs mt-1 text-ink/70">
+                          {img.label}
+                        </div>
+                      )}
+                    </Link>
                   ) : (
-                    <div key={idx} className="block h-full" style={{ minWidth: 180 }}>
-                      <img src={img.url} alt={img.label || `Slide ${idx + 1}`} className="h-full object-cover rounded-xl shadow" />
-                      {img.label && <div className="text-center text-xs mt-1 text-ink/70">{img.label}</div>}
+                    <div
+                      key={idx}
+                      className="block h-full"
+                      style={{ minWidth: 180 }}
+                    >
+                      <img
+                        src={img.url}
+                        alt={img.label || `Slide ${idx + 1}`}
+                        className="h-full object-cover rounded-xl shadow"
+                        loading="lazy"
+                      />
+                      {img.label && (
+                        <div className="text-center text-xs mt-1 text-ink/70">
+                          {img.label}
+                        </div>
+                      )}
                     </div>
                   )
                 ) : null
@@ -71,13 +111,19 @@ export default function Home() {
             <span className="text-ink/60 text-lg">[Photo Slider Placeholder]</span>
           )}
         </div>
+
         {/* Welcome and Name + Buttons */}
         <div className="w-full max-w-xl mx-auto flex flex-col items-center gap-3">
           <h2 className="text-2xl font-bold mb-1">Welcome 👋</h2>
           {user && (
             <div className="flex flex-col sm:flex-row items-center gap-2">
-              <span className="text-ink/80 text-lg font-semibold">{user.displayName || user.email || "Member"}</span>
-              <button className="btn btn-outline" onClick={() => setShowWhatYouHave(true)}>
+              <span className="text-ink/80 text-lg font-semibold">
+                {user.displayName || user.email || "Member"}
+              </span>
+              <button
+                className="btn btn-outline"
+                onClick={() => setShowWhatYouHave(true)}
+              >
                 What You Have
               </button>
               <button className="btn btn-primary">Report</button>
@@ -92,16 +138,33 @@ export default function Home() {
         <div className="w-full md:w-72 flex flex-col gap-4">
           <div className="card p-4 bg-yellow-50 border border-yellow-200">
             <h2 className="text-xl font-bold mb-2">Announcement</h2>
-            <div className="prose max-w-none" dangerouslySetInnerHTML={{ __html: content.announcement || "—" }} />
+            <Html
+              html={content.announcement || "—"}
+              className="prose max-w-none"
+            />
           </div>
+
           <div className="card p-4">
             <h3 className="font-semibold mb-2">Quick Links</h3>
             <ul className="list-disc list-inside text-ink/80 text-sm">
-              <li><Link to="/dashboard" className="underline">Dashboard</Link></li>
-              <li><Link to="/profile" className="underline">Profile</Link></li>
-              <li><Link to="/contact" className="underline">Contact Us</Link></li>
+              <li>
+                <Link to="/dashboard" className="underline">
+                  Dashboard
+                </Link>
+              </li>
+              <li>
+                <Link to="/profile" className="underline">
+                  Profile
+                </Link>
+              </li>
+              <li>
+                <Link to="/contact" className="underline">
+                  Contact Us
+                </Link>
+              </li>
             </ul>
           </div>
+
           <div className="card p-4">
             <h3 className="font-semibold mb-2">Photo Gallery</h3>
             <div className="text-ink/70">[Photo carousel/spotlight here]</div>
@@ -118,15 +181,22 @@ export default function Home() {
 
         {/* Main body */}
         <div className="flex-1 card p-6 flex flex-col gap-6">
-          {/* Photo slider placeholder (already above) intentionally omitted here) */}
-          <div className="prose max-w-none mb-4" dangerouslySetInnerHTML={{ __html: content.body || "" }} />
+          <Html html={content.body || ""} className="prose max-w-none mb-4" />
+
           <div className="bg-blue-50 border border-blue-200 rounded p-3 mb-3">
             <h3 className="font-semibold mb-1">Featured Event</h3>
-            <div className="prose max-w-none" dangerouslySetInnerHTML={{ __html: content.featuredEvent || "—" }} />
+            <Html
+              html={content.featuredEvent || "—"}
+              className="prose max-w-none"
+            />
           </div>
+
           <div className="bg-green-50 border border-green-200 rounded p-3">
             <h3 className="font-semibold mb-1">Resources</h3>
-            <div className="prose max-w-none" dangerouslySetInnerHTML={{ __html: content.resources || "—" }} />
+            <Html
+              html={content.resources || "—"}
+              className="prose max-w-none"
+            />
           </div>
         </div>
       </div>
@@ -137,7 +207,7 @@ export default function Home() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {content.news.map((html, i) => (
             <div key={i} className="bg-white border rounded p-3">
-              <div className="prose max-w-none text-sm" dangerouslySetInnerHTML={{ __html: html || "—" }} />
+              <Html html={html || "—"} className="prose max-w-none text-sm" />
             </div>
           ))}
         </div>
@@ -149,8 +219,26 @@ export default function Home() {
           open={showWhatYouHave}
           onClose={() => setShowWhatYouHave(false)}
           user={user}
-          shareCapital={loadingFinancial ? "Loading…" : (typeof shareCapital === "number" ? `₱${Math.abs(shareCapital).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "₱0.00")}
-          loan={loadingFinancial ? "Loading…" : (typeof loan === "number" ? `₱${Math.abs(loan).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "₱0.00")}
+          shareCapital={
+            loadingFinancial
+              ? "Loading…"
+              : typeof shareCapital === "number"
+              ? `₱${Math.abs(shareCapital).toLocaleString(undefined, {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}`
+              : "₱0.00"
+          }
+          loan={
+            loadingFinancial
+              ? "Loading…"
+              : typeof loan === "number"
+              ? `₱${Math.abs(loan).toLocaleString(undefined, {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}`
+              : "₱0.00"
+          }
           balikTangkilik={"[Coming soon]"}
         />
       )}

@@ -3,7 +3,20 @@ import React, { useState, useEffect, useRef } from "react";
 import { db } from "../../lib/firebase";
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 
-/* ---------------- Rich text editor (contentEditable) ---------------- */
+/* ---------------- Rich text editor (with tiny toolbar) ---------------- */
+function ToolbarButton({ onClick, title, children }) {
+  return (
+    <button
+      type="button"
+      className="px-2 py-1 text-sm rounded hover:bg-gray-100 border border-transparent hover:border-gray-200"
+      onClick={onClick}
+      title={title}
+    >
+      {children}
+    </button>
+  );
+}
+
 function RichTextEditor({ value, onChange, label }) {
   const ref = useRef(null);
 
@@ -13,17 +26,75 @@ function RichTextEditor({ value, onChange, label }) {
     }
   }, [value]);
 
+  const cmd = (command, arg = null) => {
+    ref.current?.focus();
+    document.execCommand(command, false, arg);
+    if (ref.current) onChange(ref.current.innerHTML);
+  };
+
+  const setBlock = (tag) => cmd("formatBlock", tag);
+  const makeLink = () => {
+    const url = window.prompt("Enter URL (https://…):", "https://");
+    if (!url) return;
+    cmd("createLink", url);
+  };
+  const unlink = () => cmd("unlink");
+  const clear = () => {
+    cmd("removeFormat");
+    unlink();
+  };
+
+  const onPaste = (e) => {
+    e.preventDefault();
+    const text = (e.clipboardData || window.clipboardData).getData("text/plain");
+    document.execCommand("insertText", false, text);
+  };
+
   return (
     <div className="mb-4">
       <label className="block font-semibold mb-1">{label}</label>
+
+      <div className="flex flex-wrap gap-1 mb-2">
+        <ToolbarButton title="Bold" onClick={() => cmd("bold")}><b>B</b></ToolbarButton>
+        <ToolbarButton title="Italic" onClick={() => cmd("italic")}><i>I</i></ToolbarButton>
+        <ToolbarButton title="Underline" onClick={() => cmd("underline")}><u>U</u></ToolbarButton>
+
+        <span className="mx-1 w-px bg-gray-300" />
+
+        <ToolbarButton title="Heading 1" onClick={() => setBlock("H1")}>H1</ToolbarButton>
+        <ToolbarButton title="Heading 2" onClick={() => setBlock("H2")}>H2</ToolbarButton>
+        <ToolbarButton title="Paragraph" onClick={() => setBlock("P")}>P</ToolbarButton>
+        <ToolbarButton title="Quote" onClick={() => setBlock("BLOCKQUOTE")}>❝ Quote</ToolbarButton>
+
+        <span className="mx-1 w-px bg-gray-300" />
+
+        <ToolbarButton title="Bulleted list" onClick={() => cmd("insertUnorderedList")}>• List</ToolbarButton>
+        <ToolbarButton title="Numbered list" onClick={() => cmd("insertOrderedList")}>1. List</ToolbarButton>
+
+        <span className="mx-1 w-px bg-gray-300" />
+
+        <ToolbarButton title="Insert link" onClick={makeLink}>🔗 Link</ToolbarButton>
+        <ToolbarButton title="Remove link" onClick={unlink}>⛔ Unlink</ToolbarButton>
+
+        <span className="mx-1 w-px bg-gray-300" />
+
+        <ToolbarButton title="Clear formatting" onClick={clear}>🧹 Clear</ToolbarButton>
+        <ToolbarButton title="Undo" onClick={() => cmd("undo")}>↶ Undo</ToolbarButton>
+        <ToolbarButton title="Redo" onClick={() => cmd("redo")}>↷ Redo</ToolbarButton>
+      </div>
+
       <div
         ref={ref}
-        className="border rounded bg-white p-2 min-h-[80px] focus:outline-none"
+        className="border rounded bg-white p-2 min-h-[100px] focus:outline-none prose prose-sm max-w-none"
         contentEditable
         suppressContentEditableWarning
         onInput={(e) => onChange(e.currentTarget.innerHTML)}
-        style={{ minHeight: 80 }}
+        onPaste={onPaste}
+        style={{ minHeight: 100 }}
       />
+      <div className="text-xs text-ink/60 mt-1">
+        Tip: select text then click buttons. Paste is plain text to keep styling clean.
+      </div>
     </div>
   );
 }
@@ -43,7 +114,6 @@ export default function EditHome() {
   const [success, setSuccess] = useState("");
   const successTimer = useRef(null);
 
-  // Editable fields
   const [announcement, setAnnouncement] = useState(
     `<b>Website Launch!</b> <br>We are excited to announce the launch of our cooperative's official website this August! Explore member services, accounting, news, and more.`
   );
@@ -57,7 +127,6 @@ export default function EditHome() {
     `<b>Rice Stall Update</b><br>Our rice stall is seeing more customers every day. Thank you for your continued patronage!<br><br><b>CDA Papers</b><br>We are making progress on getting our papers done with the CDA.<br><br><b>Accepting New Members</b><br>Invite your friends and family to join our cooperative!`,
   ]);
 
-  // Image slider array
   const [sliderImages, setSliderImages] = useState([
     {
       url: "https://images.unsplash.com/photo-1519125323398-675f0ddb6308?auto=format&fit=crop&w=1600&q=80",
@@ -76,7 +145,6 @@ export default function EditHome() {
     },
   ]);
 
-  /* ---------------- Load existing content ---------------- */
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -110,7 +178,6 @@ export default function EditHome() {
     };
   }, []);
 
-  /* ---------------- Slider helpers ---------------- */
   function addSliderImage() {
     setSliderImages((arr) => [
       ...arr,
@@ -150,7 +217,6 @@ export default function EditHome() {
     }
   }
 
-  /* ---------------- Save ---------------- */
   async function save() {
     setSaving(true);
     setErr("");
@@ -179,12 +245,10 @@ export default function EditHome() {
     }
   }
 
-  /* ---------------- News updater ---------------- */
   function setNewsItem(idx, val) {
     setNews((n) => n.map((item, i) => (i === idx ? val : item)));
   }
 
-  /* ---------------- UI ---------------- */
   return (
     <div className="max-w-2xl mx-auto card p-6">
       <h2 className="text-2xl font-bold mb-4">Edit Home Page Content</h2>
@@ -260,30 +324,30 @@ export default function EditHome() {
             </button>
           </div>
 
-
+          {/* Editors with toolbar */}
           <RichTextEditor
             label="Announcement"
             value={announcement}
             onChange={setAnnouncement}
           />
-          <div className="text-xs text-ink/60 mb-2">Supports HTML formatting (e.g. &lt;b&gt;, &lt;i&gt;, &lt;br&gt;)</div>
 
-          <RichTextEditor label="Main Body" value={body} onChange={setBody} />
-          <div className="text-xs text-ink/60 mb-2">Supports HTML formatting (e.g. &lt;b&gt;, &lt;i&gt;, &lt;br&gt;)</div>
+          <RichTextEditor
+            label="Main Body"
+            value={body}
+            onChange={setBody}
+          />
 
           <RichTextEditor
             label="Featured Event"
             value={featuredEvent}
             onChange={setFeaturedEvent}
           />
-          <div className="text-xs text-ink/60 mb-2">Supports HTML formatting (e.g. &lt;b&gt;, &lt;i&gt;, &lt;br&gt;)</div>
 
           <RichTextEditor
             label="Resources"
             value={resources}
             onChange={setResources}
           />
-          <div className="text-xs text-ink/60 mb-2">Supports HTML formatting (e.g. &lt;b&gt;, &lt;i&gt;, &lt;br&gt;)</div>
 
           <div>
             <label className="block font-semibold mb-1">News Items</label>
@@ -294,7 +358,6 @@ export default function EditHome() {
                   value={item}
                   onChange={(val) => setNewsItem(idx, val)}
                 />
-                <div className="text-xs text-ink/60 mb-2">Supports HTML formatting (e.g. &lt;b&gt;, &lt;i&gt;, &lt;br&gt;)</div>
               </div>
             ))}
           </div>
