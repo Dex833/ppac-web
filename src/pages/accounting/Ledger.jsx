@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+// src/pages/accounting/Ledger.jsx
+import React, { useEffect, useMemo, useState } from "react";
 import { db } from "../../lib/firebase";
 import { collection, query, orderBy, onSnapshot } from "firebase/firestore";
 
@@ -26,33 +27,6 @@ function labelForAccount(a) {
   return `${a.code ?? ""} — ${name}`;
 }
 
-function printHtmlDocument({ title = "Ledger", html = "" }) {
-  const w = window.open("", "_blank", "noopener,noreferrer");
-  if (!w) return;
-  w.document.open();
-  w.document.write(`<!doctype html>
-<html>
-<head>
-<meta charset="utf-8"/>
-<title>${title}</title>
-<style>
-  body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; padding: 24px; }
-  h1,h2,h3 { margin: 0 0 12px 0; }
-  table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
-  thead { background: #f7f7f7; }
-  .right { text-align: right; }
-  .muted { color: #666; }
-  .mb-16 { margin-bottom: 16px; }
-</style>
-</head>
-<body>
-${html}
-<script>window.onload = () => { window.print(); setTimeout(()=>window.close(), 200); }</script>
-</body></html>`);
-  w.document.close();
-}
-
 /* ------------- data hooks ------------- */
 function useAccounts() {
   const [accounts, setAccounts] = useState([]);
@@ -61,9 +35,7 @@ function useAccounts() {
     const unsub = onSnapshot(
       qAcc,
       (snap) => {
-        const rows = snap.docs
-          .map((d) => ({ id: d.id, ...d.data() }))
-          .filter((d) => !d.archived);
+        const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((d) => !d.archived);
         setAccounts(rows);
       },
       (err) => {
@@ -82,8 +54,8 @@ export default function Ledger() {
 
   // Filters
   const [filter, setFilter] = useState({
-    accountId: "", // dropdown selection (optional)
-    search: "", // text search across account labels
+    accountId: "",
+    search: "",
     from: "",
     to: "",
   });
@@ -117,8 +89,7 @@ export default function Ledger() {
   const ledger = useMemo(() => {
     const map = {};
     entries.forEach((entry) => {
-      const lines = entry.lines || [];
-      lines.forEach((line) => {
+      (entry.lines || []).forEach((line) => {
         const id = line.accountId;
         if (!id) return;
         if (!map[id]) map[id] = [];
@@ -152,9 +123,7 @@ export default function Ledger() {
 
     return keys.filter((accId) => {
       const acc = accounts.find((a) => a.id === accId);
-      const label = `${acc?.code ?? ""} ${acc?.main ?? ""} ${
-        acc?.individual ?? ""
-      }`.toLowerCase();
+      const label = `${acc?.code ?? ""} ${acc?.main ?? ""} ${acc?.individual ?? ""}`.toLowerCase();
       return label.includes(s);
     });
   }, [ledger, filter.accountId, filter.search, accounts]);
@@ -163,21 +132,15 @@ export default function Ledger() {
   const accountPeriodData = useMemo(() => {
     const obj = {};
     Object.keys(ledger).forEach((accId) => {
-      const allLines = (ledger[accId] || []).slice(); // already sorted
+      const allLines = (ledger[accId] || []).slice(); // sorted
       const opening = filter.from
         ? allLines
             .filter((l) => l.date < filter.from)
-            .reduce(
-              (bal, l) => bal + (+l.debit || 0) - (+l.credit || 0),
-              0
-            )
+            .reduce((bal, l) => bal + (+l.debit || 0) - (+l.credit || 0), 0)
         : 0;
       const lines = allLines.filter((l) => inRange(l.date, filter.from, filter.to));
       const totals = lines.reduce(
-        (t, l) => ({
-          debit: t.debit + (+l.debit || 0),
-          credit: t.credit + (+l.credit || 0),
-        }),
+        (t, l) => ({ debit: t.debit + (+l.debit || 0), credit: t.credit + (+l.credit || 0) }),
         { debit: 0, credit: 0 }
       );
       const ending = opening + totals.debit - totals.credit;
@@ -195,7 +158,6 @@ export default function Ledger() {
       if (!map[main]) map[main] = [];
       map[main].push(accId);
     });
-    // Sort accounts within each group by code
     Object.keys(map).forEach((m) => {
       map[m].sort((aId, bId) => {
         const a = accounts.find((x) => x.id === aId);
@@ -203,17 +165,13 @@ export default function Ledger() {
         return (Number(a?.code) || 0) - (Number(b?.code) || 0);
       });
     });
-    // Sort groups alphabetically
-    const sortedEntries = Object.entries(map).sort((a, b) =>
-      a[0].localeCompare(b[0])
-    );
+    const sortedEntries = Object.entries(map).sort((a, b) => a[0].localeCompare(b[0]));
     return Object.fromEntries(sortedEntries);
   }, [filteredAccountIds, accounts]);
 
   // Collapsible state per main group
   const [expanded, setExpanded] = useState({});
   useEffect(() => {
-    // expand groups once on first load
     const initial = {};
     Object.keys(groups).forEach((g) => (initial[g] = true));
     setExpanded((prev) => ({ ...initial, ...prev }));
@@ -230,21 +188,12 @@ export default function Ledger() {
     setExpanded(next);
   };
 
-  /* -------- CSV Export (account/group/all) -------- */
+  /* -------- CSV helpers / exports -------- */
   function csvRowsForAccount(acc, data) {
     let run = data.opening;
     const rows = [];
     if (filter.from) {
-      rows.push([
-        labelForAccount(acc),
-        filter.from,
-        "",
-        "Opening balance",
-        "",
-        "",
-        run.toFixed(2),
-        "",
-      ]);
+      rows.push([labelForAccount(acc), filter.from, "", "Opening balance", "", "", run.toFixed(2), ""]);
     }
     data.lines.forEach((line) => {
       const debit = +line.debit || 0;
@@ -266,26 +215,12 @@ export default function Ledger() {
 
   function exportAccountCsv(accId) {
     const acc = accounts.find((a) => a.id === accId);
-    const data = accountPeriodData[accId] || {
-      opening: 0,
-      lines: [],
-    };
-    const header = [
-      "Account",
-      "Date",
-      "Ref#",
-      "Description",
-      "Debit",
-      "Credit",
-      "Balance",
-      "Created By",
-    ];
+    const data = accountPeriodData[accId] || { opening: 0, lines: [] };
+    const header = ["Account", "Date", "Ref#", "Description", "Debit", "Credit", "Balance", "Created By"];
     const rows = csvRowsForAccount(acc, data);
-    const csv =
-      [header.map(csvEscape).join(",")]
-        .concat(rows.map((r) => r.map(csvEscape).join(",")))
-        .join("\n");
-
+    const csv = [header.map(csvEscape).join(",")]
+      .concat(rows.map((r) => r.map(csvEscape).join(",")))
+      .join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -297,26 +232,15 @@ export default function Ledger() {
   }
 
   function exportGroupCsv(mainName) {
-    const header = [
-      "Account",
-      "Date",
-      "Ref#",
-      "Description",
-      "Debit",
-      "Credit",
-      "Balance",
-      "Created By",
-    ];
-    const linesOut = [header.map(csvEscape).join(",")];
+    const header = ["Account", "Date", "Ref#", "Description", "Debit", "Credit", "Balance", "Created By"];
+    const out = [header.map(csvEscape).join(",")];
     (groups[mainName] || []).forEach((accId) => {
       const acc = accounts.find((a) => a.id === accId);
       const data = accountPeriodData[accId];
       if (!acc || !data) return;
-      csvRowsForAccount(acc, data).forEach((r) =>
-        linesOut.push(r.map(csvEscape).join(","))
-      );
+      csvRowsForAccount(acc, data).forEach((r) => out.push(r.map(csvEscape).join(",")));
     });
-    const csv = linesOut.join("\n");
+    const csv = out.join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -328,28 +252,17 @@ export default function Ledger() {
   }
 
   function exportAllFilteredCsv() {
-    const header = [
-      "Account",
-      "Date",
-      "Ref#",
-      "Description",
-      "Debit",
-      "Credit",
-      "Balance",
-      "Created By",
-    ];
-    const linesOut = [header.map(csvEscape).join(",")];
+    const header = ["Account", "Date", "Ref#", "Description", "Debit", "Credit", "Balance", "Created By"];
+    const out = [header.map(csvEscape).join(",")];
     Object.keys(groups).forEach((mainName) => {
       (groups[mainName] || []).forEach((accId) => {
         const acc = accounts.find((a) => a.id === accId);
         const data = accountPeriodData[accId];
         if (!acc || !data) return;
-        csvRowsForAccount(acc, data).forEach((r) =>
-          linesOut.push(r.map(csvEscape).join(","))
-        );
+        csvRowsForAccount(acc, data).forEach((r) => out.push(r.map(csvEscape).join(",")));
       });
     });
-    const csv = linesOut.join("\n");
+    const csv = out.join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -359,7 +272,27 @@ export default function Ledger() {
     setTimeout(() => URL.revokeObjectURL(url), 300);
   }
 
-  /* -------- Print/PDF (account or whole page) -------- */
+  /* -------- Print/PDF helpers -------- */
+  function printHtmlDocument({ title = "Ledger", html = "" }) {
+    const w = window.open("", "_blank", "noopener,noreferrer");
+    if (!w) return;
+    w.document.open();
+    w.document.write(`<!doctype html>
+<html><head><meta charset="utf-8"/><title>${title}</title>
+<style>
+body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial;padding:24px}
+h1,h2,h3{margin:0 0 12px 0}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{border:1px solid #ddd;padding:6px 8px;text-align:left}
+thead{background:#f7f7f7}
+.right{text-align:right}.muted{color:#666}.mb-16{margin-bottom:16px}
+</style>
+</head><body>${html}
+<script>window.onload=()=>{window.print();setTimeout(()=>window.close(),200)}</script>
+</body></html>`);
+    w.document.close();
+  }
+
   function printAccount(accId) {
     const acc = accounts.find((a) => a.id === accId);
     const data = accountPeriodData[accId];
@@ -369,11 +302,9 @@ export default function Ledger() {
     const rowsHtml = [];
     if (filter.from) {
       rowsHtml.push(
-        `<tr>
-          <td>${filter.from}</td><td></td><td>Opening balance</td>
-          <td class="right"></td><td class="right"></td>
-          <td class="right">${fmtMoney(run)}</td><td>—</td>
-        </tr>`
+        `<tr><td>${filter.from}</td><td></td><td>Opening balance</td><td class="right"></td><td class="right"></td><td class="right">${fmtMoney(
+          run
+        )}</td><td>—</td></tr>`
       );
     }
     data.lines.forEach((line) => {
@@ -395,22 +326,15 @@ export default function Ledger() {
 
     const html = `
       <h2>${labelForAccount(acc)}</h2>
-      <div class="muted mb-16">From: ${filter.from || "—"} &nbsp; To: ${
-      filter.to || "—"
-    }</div>
+      <div class="muted mb-16">From: ${filter.from || "—"} &nbsp; To: ${filter.to || "—"}</div>
       <table>
-        <thead><tr>
-          <th>Date</th><th>Ref#</th><th>Description</th>
-          <th>Debit</th><th>Credit</th><th>Balance</th><th>Created By</th>
-        </tr></thead>
+        <thead><tr><th>Date</th><th>Ref#</th><th>Description</th><th>Debit</th><th>Credit</th><th>Balance</th><th>Created By</th></tr></thead>
         <tbody>${rowsHtml.join("")}</tbody>
-      </table>
-    `;
+      </table>`;
     printHtmlDocument({ title: `Ledger - ${labelForAccount(acc)}`, html });
   }
 
   function printWholePage() {
-    // Simple: print current page (use browser "Save as PDF" to export PDF)
     window.print();
   }
 
@@ -424,42 +348,17 @@ export default function Ledger() {
     let running = data.opening;
 
     return (
-      <div
-        className="fixed inset-0 z-[1000] bg-black/50 flex items-center justify-center"
-        onClick={onClose}
-      >
-        <div
-          className="bg-white rounded-xl shadow-2xl w-[min(1100px,94vw)] max-h-[90vh] overflow-hidden"
-          onClick={(e) => e.stopPropagation()}
-        >
+      <div className="fixed inset-0 z-[1000] bg-black/50 flex items-center justify-center px-3" onClick={onClose}>
+        <div className="bg-white rounded-xl shadow-2xl w-full max-w-[1100px] max-h-[90vh] overflow-hidden" onClick={(e) => e.stopPropagation()}>
           <div className="px-4 py-3 border-b flex items-center justify-between">
             <div>
               <div className="font-semibold">{labelForAccount(acc)}</div>
-              <div className="text-xs text-gray-500">
-                Period: {filter.from || "—"} to {filter.to || "—"}
-              </div>
+              <div className="text-xs text-gray-500">Period: {filter.from || "—"} to {filter.to || "—"}</div>
             </div>
             <div className="flex gap-2">
-              <button
-                className="px-2 py-1 border rounded text-xs"
-                onClick={() => exportAccountCsv(accId)}
-                title="Export this account to CSV"
-              >
-                CSV
-              </button>
-              <button
-                className="px-2 py-1 border rounded text-xs"
-                onClick={() => printAccount(accId)}
-                title="Print or Save as PDF"
-              >
-                Print / PDF
-              </button>
-              <button
-                className="px-2 py-1 border rounded text-xs"
-                onClick={onClose}
-              >
-                Close
-              </button>
+              <button className="px-2 py-1 border rounded text-xs" onClick={() => exportAccountCsv(accId)}>CSV</button>
+              <button className="px-2 py-1 border rounded text-xs" onClick={() => printAccount(accId)}>Print / PDF</button>
+              <button className="px-2 py-1 border rounded text-xs" onClick={onClose}>Close</button>
             </div>
           </div>
 
@@ -484,49 +383,28 @@ export default function Ledger() {
                     <td className="p-2 border-b border-r border-gray-200">Opening balance</td>
                     <td className="p-2 border-b border-r border-gray-200 text-right"></td>
                     <td className="p-2 border-b border-r border-gray-200 text-right"></td>
-                    <td className="p-2 border-b border-r border-gray-200 text-right">
-                      {fmtMoney(data.opening)}
-                    </td>
+                    <td className="p-2 border-b border-r border-gray-200 text-right">{fmtMoney(data.opening)}</td>
                     <td className="p-2 border-b">—</td>
                   </tr>
                 )}
 
                 {data.lines.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="p-4 text-gray-500 text-center">
-                      No transactions.
-                    </td>
+                    <td colSpan={7} className="p-4 text-gray-500 text-center">No transactions.</td>
                   </tr>
                 ) : (
                   data.lines.map((line, idx) => {
                     const d = +line.debit || 0;
                     const c = +line.credit || 0;
                     running += d - c;
-                    const entryUrl = `/accounting/journal/${line.entryId || ""}`;
                     return (
                       <tr key={idx} className="odd:bg-white even:bg-gray-50">
                         <td className="p-2 border-b border-r border-gray-200">{line.date}</td>
-                        <td className="p-2 border-b border-r border-gray-200 font-mono">
-                          {line.refNumber}
-                        </td>
-                        <td className="p-2 border-b border-r border-gray-200">
-                          <a
-                            className="text-blue-600 underline"
-                            href={entryUrl}
-                            title="Open journal entry"
-                          >
-                            {line.description}
-                          </a>
-                        </td>
-                        <td className="p-2 border-b border-r border-gray-200 text-right">
-                          {d ? fmtMoney(d) : ""}
-                        </td>
-                        <td className="p-2 border-b border-r border-gray-200 text-right">
-                          {c ? fmtMoney(c) : ""}
-                        </td>
-                        <td className="p-2 border-b border-r border-gray-200 text-right">
-                          {fmtMoney(running)}
-                        </td>
+                        <td className="p-2 border-b border-r border-gray-200 font-mono">{line.refNumber}</td>
+                        <td className="p-2 border-b border-r border-gray-200">{line.description}</td>
+                        <td className="p-2 border-b border-r border-gray-200 text-right">{d ? fmtMoney(d) : ""}</td>
+                        <td className="p-2 border-b border-r border-gray-200 text-right">{c ? fmtMoney(c) : ""}</td>
+                        <td className="p-2 border-b border-r border-gray-200 text-right">{fmtMoney(running)}</td>
                         <td className="p-2 border-b">{line.createdBy || "-"}</td>
                       </tr>
                     );
@@ -535,18 +413,10 @@ export default function Ledger() {
 
                 {data.lines.length > 0 && (
                   <tr className="bg-gray-100 font-semibold">
-                    <td colSpan={3} className="p-2 border-b border-r border-gray-200">
-                      Period totals
-                    </td>
-                    <td className="p-2 border-b border-r border-gray-200 text-right">
-                      {fmtMoney(data.totals.debit)}
-                    </td>
-                    <td className="p-2 border-b border-r border-gray-200 text-right">
-                      {fmtMoney(data.totals.credit)}
-                    </td>
-                    <td className="p-2 border-b border-r border-gray-200 text-right">
-                      {fmtMoney(data.ending)}
-                    </td>
+                    <td colSpan={3} className="p-2 border-b border-r border-gray-200">Period totals</td>
+                    <td className="p-2 border-b border-r border-gray-200 text-right">{fmtMoney(data.totals.debit)}</td>
+                    <td className="p-2 border-b border-r border-gray-200 text-right">{fmtMoney(data.totals.credit)}</td>
+                    <td className="p-2 border-b border-r border-gray-200 text-right">{fmtMoney(data.ending)}</td>
                     <td className="p-2 border-b">—</td>
                   </tr>
                 )}
@@ -560,22 +430,14 @@ export default function Ledger() {
 
   /* -------- UI -------- */
   return (
-    <div className="overflow-x-auto print:p-6">
+    <div className="overflow-x-hidden print:p-6">
       <div className="flex items-center gap-3 mb-4">
         <h2 className="text-2xl font-bold">Ledger</h2>
         <div className="ml-auto flex gap-2">
-          <button
-            type="button"
-            className="px-3 py-1 border rounded text-sm"
-            onClick={expandAll}
-          >
+          <button type="button" className="px-3 py-1 border rounded text-sm" onClick={expandAll}>
             Expand all
           </button>
-          <button
-            type="button"
-            className="px-3 py-1 border rounded text-sm"
-            onClick={collapseAll}
-          >
+          <button type="button" className="px-3 py-1 border rounded text-sm" onClick={collapseAll}>
             Collapse all
           </button>
           <button
@@ -587,27 +449,20 @@ export default function Ledger() {
           >
             Export CSV (filtered)
           </button>
-          <button
-            type="button"
-            className="px-3 py-1 border rounded text-sm"
-            onClick={printWholePage}
-            title="Print or Save as PDF"
-          >
+          <button type="button" className="px-3 py-1 border rounded text-sm" onClick={printWholePage}>
             Print / PDF (page)
           </button>
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="mb-4 flex gap-3 flex-wrap items-end">
-        <div>
-          <label className="block text-xs text-gray-600">Account</label>
+      {/* Filters – responsive grid */}
+      <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 items-end">
+        <label className="block">
+          <span className="block text-xs text-gray-600">Account</span>
           <select
-            className="border rounded px-2 py-1 min-w-[280px]"
+            className="border rounded px-2 py-2 w-full"
             value={filter.accountId}
-            onChange={(e) =>
-              setFilter((f) => ({ ...f, accountId: e.target.value }))
-            }
+            onChange={(e) => setFilter((f) => ({ ...f, accountId: e.target.value }))}
           >
             <option value="">All accounts</option>
             {accounts.map((a) => (
@@ -616,52 +471,45 @@ export default function Ledger() {
               </option>
             ))}
           </select>
-        </div>
+        </label>
 
-        <div>
-          <label className="block text-xs text-gray-600">Find</label>
+        <label className="block">
+          <span className="block text-xs text-gray-600">Find</span>
           <input
-            className="border rounded px-2 py-1"
+            className="border rounded px-2 py-2 w-full"
             placeholder="Search account name/code"
             value={filter.search}
-            onChange={(e) =>
-              setFilter((f) => ({ ...f, search: e.target.value }))
-            }
+            onChange={(e) => setFilter((f) => ({ ...f, search: e.target.value }))}
             disabled={!!filter.accountId}
-            title={
-              filter.accountId
-                ? "Clear Account to use text search."
-                : "Type to filter by account label."
-            }
+            title={filter.accountId ? "Clear Account to use text search." : "Type to filter by account label."}
           />
-        </div>
+        </label>
 
-        <div className="flex items-end gap-2">
-          <div>
-            <label className="block text-xs text-gray-600">From</label>
+        <label className="block">
+          <span className="block text-xs text-gray-600">From</span>
+          <input
+            className="border rounded px-2 py-2 w-full"
+            type="date"
+            value={filter.from}
+            onChange={(e) => setFilter((f) => ({ ...f, from: e.target.value }))}
+          />
+        </label>
+
+        <div className="flex gap-2">
+          <label className="block flex-1">
+            <span className="block text-xs text-gray-600">To</span>
             <input
-              className="border rounded px-2 py-1"
-              type="date"
-              value={filter.from}
-              onChange={(e) => setFilter((f) => ({ ...f, from: e.target.value }))}
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-600">To</label>
-            <input
-              className="border rounded px-2 py-1"
+              className="border rounded px-2 py-2 w-full"
               type="date"
               value={filter.to}
               onChange={(e) => setFilter((f) => ({ ...f, to: e.target.value }))}
             />
-          </div>
+          </label>
           {(filter.from || filter.to || filter.accountId || filter.search) && (
             <button
               type="button"
-              className="px-2 py-1 border rounded text-sm"
-              onClick={() =>
-                setFilter({ accountId: "", search: "", from: "", to: "" })
-              }
+              className="self-end px-2 py-2 border rounded text-sm"
+              onClick={() => setFilter({ accountId: "", search: "", from: "", to: "" })}
             >
               Clear
             </button>
@@ -677,24 +525,17 @@ export default function Ledger() {
       ) : (
         Object.keys(groups).map((mainName) => {
           const accIds = groups[mainName] || [];
-          const groupEnding = accIds.reduce(
-            (sum, accId) => sum + (accountPeriodData[accId]?.ending || 0),
-            0
-          );
+          const groupEnding = accIds.reduce((sum, id) => sum + (accountPeriodData[id]?.ending || 0), 0);
 
           return (
             <div key={mainName} className="mb-6 border rounded">
               <div
                 className="flex items-center justify-between bg-blue-50 px-3 py-2 cursor-pointer"
-                onClick={() =>
-                  setExpanded((e) => ({ ...e, [mainName]: !e[mainName] }))
-                }
+                onClick={() => setExpanded((e) => ({ ...e, [mainName]: !e[mainName] }))}
               >
                 <div className="font-semibold">
                   {expanded[mainName] ? "▾" : "▸"} {mainName}
-                  <span className="ml-3 text-gray-600 font-normal">
-                    Ending Balance — {fmtMoney(groupEnding)}
-                  </span>
+                  <span className="ml-3 text-gray-600 font-normal">Ending Balance — {fmtMoney(groupEnding)}</span>
                 </div>
                 <div className="flex gap-2">
                   <button
@@ -712,63 +553,79 @@ export default function Ledger() {
 
               {expanded[mainName] && (
                 <div className="p-3">
-                  <table className="min-w-full border border-gray-300 rounded text-sm">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="text-left p-2 border-b border-r border-gray-200">Code</th>
-                        <th className="text-left p-2 border-b border-r border-gray-200">Account</th>
-                        <th className="text-left p-2 border-b border-r border-gray-200">
-                          Ending Balance
-                        </th>
-                        <th className="text-left p-2 border-b">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {accIds.map((accId) => {
-                        const acc = accounts.find((a) => a.id === accId);
-                        const data = accountPeriodData[accId];
-                        return (
-                          <tr key={accId} className="odd:bg-white even:bg-gray-50">
-                            <td className="p-2 border-b border-r border-gray-200 font-mono">
-                              {acc?.code}
-                            </td>
-                            <td className="p-2 border-b border-r border-gray-200">
-                              {labelForAccount(acc)}
-                            </td>
-                            <td className="p-2 border-b border-r border-gray-200">
-                              {fmtMoney(data?.ending || 0)}
-                            </td>
-                            <td className="p-2 border-b">
-                              <div className="flex gap-2">
-                                <button
-                                  type="button"
-                                  className="px-2 py-1 border rounded text-xs"
-                                  onClick={() => setModalAccId(accId)}
-                                >
-                                  View
-                                </button>
-                                <button
-                                  type="button"
-                                  className="px-2 py-1 border rounded text-xs"
-                                  onClick={() => exportAccountCsv(accId)}
-                                >
-                                  CSV
-                                </button>
-                                <button
-                                  type="button"
-                                  className="px-2 py-1 border rounded text-xs"
-                                  onClick={() => printAccount(accId)}
-                                  title="Print or Save as PDF"
-                                >
-                                  Print / PDF
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                  {/* Desktop table */}
+                  <div className="hidden sm:block overflow-x-auto">
+                    <table className="min-w-full border border-gray-300 rounded text-sm">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="text-left p-2 border-b border-r border-gray-200">Code</th>
+                          <th className="text-left p-2 border-b border-r border-gray-200">Account</th>
+                          <th className="text-left p-2 border-b border-r border-gray-200">Ending Balance</th>
+                          <th className="text-left p-2 border-b">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {accIds.map((accId) => {
+                          const acc = accounts.find((a) => a.id === accId);
+                          const data = accountPeriodData[accId];
+                          return (
+                            <tr key={accId} className="odd:bg-white even:bg-gray-50">
+                              <td className="p-2 border-b border-r border-gray-200 font-mono">{acc?.code}</td>
+                              <td className="p-2 border-b border-r border-gray-200">{labelForAccount(acc)}</td>
+                              <td className="p-2 border-b border-r border-gray-200">{fmtMoney(data?.ending || 0)}</td>
+                              <td className="p-2 border-b">
+                                <div className="flex gap-2">
+                                  <button type="button" className="px-2 py-1 border rounded text-xs" onClick={() => setModalAccId(accId)}>
+                                    View
+                                  </button>
+                                  <button type="button" className="px-2 py-1 border rounded text-xs" onClick={() => exportAccountCsv(accId)}>
+                                    CSV
+                                  </button>
+                                  <button type="button" className="px-2 py-1 border rounded text-xs" onClick={() => printAccount(accId)}>
+                                    Print / PDF
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Mobile cards */}
+                  <div className="sm:hidden space-y-3">
+                    {accIds.map((accId) => {
+                      const acc = accounts.find((a) => a.id === accId);
+                      const data = accountPeriodData[accId];
+                      return (
+                        <div key={accId} className="card p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-xs text-ink/50">Code</div>
+                              <div className="font-mono">{acc?.code}</div>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-xs text-ink/50">Ending</div>
+                              <div className="font-mono font-semibold">{fmtMoney(data?.ending || 0)}</div>
+                            </div>
+                          </div>
+                          <div className="mt-2 font-medium">{labelForAccount(acc)}</div>
+                          <div className="mt-3 flex justify-end gap-2">
+                            <button className="btn btn-sm btn-outline" onClick={() => setModalAccId(accId)}>
+                              View
+                            </button>
+                            <button className="btn btn-sm btn-outline" onClick={() => exportAccountCsv(accId)}>
+                              CSV
+                            </button>
+                            <button className="btn btn-sm btn-outline" onClick={() => printAccount(accId)}>
+                              Print
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>
@@ -777,9 +634,7 @@ export default function Ledger() {
       )}
 
       {/* Modal */}
-      {modalAccId && (
-        <AccountModal accId={modalAccId} onClose={() => setModalAccId(null)} />
-      )}
+      {modalAccId && <AccountModal accId={modalAccId} onClose={() => setModalAccId(null)} />}
     </div>
   );
 }
