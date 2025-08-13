@@ -1,233 +1,216 @@
 // src/pages/reports/Reports.jsx
 import React, { useEffect, useMemo, useState } from "react";
-import { db } from "../../lib/firebase";
-import { collection, onSnapshot } from "firebase/firestore";
 import { Link } from "react-router-dom";
+import { db } from "../../lib/firebase";
+import { collection, query, orderBy, onSnapshot, deleteDoc, doc } from "firebase/firestore";
+import useUserProfile from "../../hooks/useUserProfile";
 
-const TYPE_LABELS = {
-  trial_balance: "Trial Balance",
-  income_statement: "Income Statement",
-  balance_sheet: "Balance Sheet",
-  cash_flow: "Cash Flow",
+/* ------------ helpers ------------ */
+function tsToDate(ts) {
+  if (!ts) return null;
+  if (typeof ts?.toDate === "function") return ts.toDate();
+  try { return new Date(ts); } catch { return null; }
+}
+const fmtDateTime = (ts) => {
+  const d = tsToDate(ts);
+  return d ? d.toLocaleString() : "—";
+};
+const safeText = (v) => String(v ?? "");
+const badgeColor = (t) => {
+  switch ((t || "").toLowerCase()) {
+    case "trialbalance": return "bg-indigo-50 text-indigo-700 border border-indigo-200";
+    case "ledger": return "bg-amber-50 text-amber-800 border border-amber-200";
+    case "incomestatement": return "bg-emerald-50 text-emerald-700 border border-emerald-200";
+    case "balancesheet": return "bg-blue-50 text-blue-700 border border-blue-200";
+    case "cashflow": return "bg-teal-50 text-teal-700 border border-teal-200";
+    default: return "bg-gray-50 text-gray-700 border border-gray-200";
+  }
 };
 
-function toDate(v) {
-  if (!v) return null;
-  if (typeof v?.toDate === "function") return v.toDate();      // Timestamp
-  if (typeof v?.seconds === "number") return new Date(v.seconds * 1000);
-  const d = new Date(v);
-  return isNaN(d.getTime()) ? null : d;                        // ISO/string/Date
-}
-function fmtDate(d) {
-  return d ? d.toLocaleDateString() : "—";
-}
-function formatRange(start, end) {
-  return `${fmtDate(start)} – ${fmtDate(end)}`;
-}
-
-/** Normalize any report doc (new or legacy) to one shape for listing */
-function normalizeDoc(source, id, raw) {
-  const type =
-    raw?.type ||
-    (source === "incomeStatementReports" && "income_statement") ||
-    ((source === "balanceSheetReports" || source === "balanceSheets") && "balance_sheet") ||
-    (source === "cashFlowStatementReports" && "cash_flow") ||
-    "unknown";
-
-  const createdAt =
-    toDate(raw?.createdAt) ||
-    toDate(raw?.created_at) ||
-    toDate(raw?.report?.generatedAt) ||
-    toDate(raw?.generatedAt) ||
-    null;
-
-  const periodStart = toDate(raw?.periodStart) || toDate(raw?.from);
-  const periodEnd   = toDate(raw?.periodEnd)   || toDate(raw?.to);
-
-  const label =
-    raw?.label ||
-    raw?.title ||
-    (type !== "unknown" ? `${TYPE_LABELS[type]} (${formatRange(periodStart, periodEnd)})` : `(No label)`);
-
-  return {
-    id,
-    type,
-    label,
-    periodStart,
-    periodEnd,
-    createdAt,
-    createdByName: raw?.createdByName || raw?.generatedBy || raw?.report?.generatedBy || "",
-    _source: source,
-    _raw: raw,
-  };
-}
-
-function ReportCard({ r }) {
-  return (
-    <li key={`${r._source}:${r.id}`} className="border rounded-xl p-4 hover:shadow-sm transition bg-white">
-      <div className="text-xs uppercase tracking-wide text-ink/60">
-        {TYPE_LABELS[r.type] || r.type}
-        <span className="ml-2 text-ink/50">• {r._source}</span>
-      </div>
-      <div className="text-lg font-semibold mt-1">{r.label || "(No label)"}</div>
-      <div className="text-sm text-ink/60 mt-1">
-        Period: {fmtDate(r.periodStart)} – {fmtDate(r.periodEnd)}
-      </div>
-      <div className="text-xs text-ink/60 mt-1">
-        Saved: {r.createdAt ? r.createdAt.toLocaleString() : "—"} {r.createdByName ? `• by ${r.createdByName}` : ""}
-      </div>
-
-      <div className="mt-3">
-        <Link
-          to={`/reports/${encodeURIComponent(r.id)}?src=${encodeURIComponent(r._source)}`}
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm bg-brand-600 text-white hover:bg-brand-700"
-        >
-          Open
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-            <path d="M7 17l9-9M8 8h8v8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-          </svg>
-        </Link>
-      </div>
-    </li>
-  );
-}
-
 export default function Reports() {
-  const [data, setData] = useState({
-    financialReports: [],
-    incomeStatementReports: [],
-    balanceSheetReports: [],
-    balanceSheets: [],
-    cashFlowStatementReports: [],
-  });
+  const { profile } = useUserProfile();
+  const isAdmin = profile?.roles?.includes("admin") || profile?.role === "admin";
+  const notSuspended = profile?.suspended !== true;
+
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState("all"); // all | trial_balance | income_statement | balance_sheet | cash_flow
+  const [reports, setReports] = useState([]);
+
+  // simple client-side filters
+  const [qtext, setQtext] = useState("");
+  const [type, setType] = useState(""); // "", "trialBalance", "ledger", "incomeStatement", "balanceSheet", "cashFlow"
 
   useEffect(() => {
-    const sources = [
-      "financialReports",
-      "incomeStatementReports",
-      "balanceSheetReports",
-      "balanceSheets",
-      "cashFlowStatementReports",
-    ];
-
-    const unsubs = sources.map((colName) =>
-      onSnapshot(
-        collection(db, colName),
-        (snap) => {
-          const rows = snap.docs.map((d) => normalizeDoc(colName, d.id, d.data()));
-          setData((prev) => ({ ...prev, [colName]: rows }));
-          setLoading(false);
-        },
-        () => setLoading(false) // ignore permission errors silently
-      )
+    setLoading(true);
+    const q = query(collection(db, "financialReports"), orderBy("createdAt", "desc"));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        setReports(rows);
+        setLoading(false);
+      },
+      (err) => {
+        console.error("financialReports/onSnapshot:", err);
+        alert("Failed to load reports: " + err.message);
+        setLoading(false);
+      }
     );
-
-    return () => unsubs.forEach((u) => u && u());
+    return () => unsub();
   }, []);
 
-  // Merge, dedupe, sort by createdAt desc
-  const mergedSorted = useMemo(() => {
-    const all = [
-      ...data.financialReports,
-      ...data.incomeStatementReports,
-      ...data.balanceSheetReports,
-      ...data.balanceSheets,
-      ...data.cashFlowStatementReports,
-    ];
-    const m = new Map(all.map((r) => [`${r._source}:${r.id}`, r]));
-    const arr = Array.from(m.values());
-    arr.sort((a, b) => {
-      const at = a.createdAt ? a.createdAt.getTime() : -1;
-      const bt = b.createdAt ? b.createdAt.getTime() : -1;
-      return bt - at;
+  const filtered = useMemo(() => {
+    const t = (type || "").toLowerCase();
+    const s = qtext.trim().toLowerCase();
+    return reports.filter((r) => {
+      if (t && (String(r.type || "").toLowerCase() !== t)) return false;
+      if (!s) return true;
+      const hay = [
+        r.label,
+        r.type,
+        r.periodStart,
+        r.periodEnd,
+        r.createdByName,
+        r.source,
+        r.notes,
+      ].map(safeText).join(" ").toLowerCase();
+      return hay.includes(s);
     });
-    return arr;
-  }, [data]);
+  }, [reports, qtext, type]);
 
-  // Group by type
-  const byType = useMemo(() => {
-    const groups = {
-      trial_balance: [],
-      income_statement: [],
-      balance_sheet: [],
-      cash_flow: [],
-      unknown: [],
-    };
-    mergedSorted.forEach((r) => {
-      const key = r.type in groups ? r.type : "unknown";
-      groups[key].push(r);
-    });
-    return groups;
-  }, [mergedSorted]);
-
-  // For filtered view, show just that group; for "all", show headings with up to 10 per type
-  const sections = useMemo(() => {
-    if (filter !== "all") {
-      const list = byType[filter] || [];
-      return [{ heading: TYPE_LABELS[filter] || filter, items: list.slice(0, 10) }];
+  async function handleDelete(id) {
+    if (!isAdmin) return;
+    if (!window.confirm("Delete this saved report?")) return;
+    try {
+      await deleteDoc(doc(db, "financialReports", id));
+    } catch (e) {
+      console.error("delete report error:", e);
+      alert("Delete failed: " + (e?.message || e));
     }
-    return [
-      { key: "trial_balance", heading: "Trial Balance", items: byType.trial_balance.slice(0, 10) },
-      { key: "income_statement", heading: "Income Statement", items: byType.income_statement.slice(0, 10) },
-      { key: "balance_sheet", heading: "Balance Sheet", items: byType.balance_sheet.slice(0, 10) },
-      { key: "cash_flow", heading: "Cash Flow", items: byType.cash_flow.slice(0, 10) },
-    ].filter((s) => s.items.length > 0);
-  }, [byType, filter]);
+  }
+
+  function copyLink(id) {
+    const url = `${location.origin}/reports/${id}?src=financialReports`;
+    navigator.clipboard.writeText(url).then(
+      () => alert("Link copied to clipboard."),
+      () => alert("Copy failed. You can manually copy: " + url)
+    );
+  }
 
   return (
-    <div className="max-w-5xl mx-auto">
-      <h1 className="text-2xl sm:text-3xl font-semibold mb-2">Reports</h1>
-      <p className="text-ink/70 mb-6">
-        Read-only saved financial statements. Click a report to view the exact saved version.
-      </p>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-bold">Reports</h2>
+          <div className="text-sm text-ink/60">Saved snapshots from Ledger, Trial Balance, and Financial Statements.</div>
+        </div>
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="text-xs text-ink/60 flex flex-col">
+            Search
+            <input
+              className="border rounded px-2 py-1 w-56"
+              placeholder="label, user, notes, period…"
+              value={qtext}
+              onChange={(e) => setQtext(e.target.value)}
+            />
+          </label>
+          <label className="text-xs text-ink/60 flex flex-col">
+            Type
+            <select
+              className="border rounded px-2 py-1"
+              value={type}
+              onChange={(e) => setType(e.target.value)}
+            >
+              <option value="">All</option>
+              <option value="trialBalance">Trial Balance</option>
+              <option value="ledger">Ledger</option>
+              <option value="incomeStatement">Income Statement</option>
+              <option value="balanceSheet">Balance Sheet</option>
+              <option value="cashFlow">Cash Flow</option>
+            </select>
+          </label>
+        </div>
+      </div>
 
-      {/* Filter bar */}
-      <div className="flex flex-wrap gap-2 mb-4">
-        {[
-          { key: "all", label: "All" },
-          { key: "trial_balance", label: "Trial Balance" },
-          { key: "income_statement", label: "Income Statement" },
-          { key: "balance_sheet", label: "Balance Sheet" },
-          { key: "cash_flow", label: "Cash Flow" },
-        ].map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setFilter(t.key)}
-            className={[
-              "px-3 py-1.5 rounded-lg text-sm border transition",
-              filter === t.key
-                ? "bg-brand-600 text-white border-brand-600"
-                : "bg-white text-ink/80 border-border hover:bg-brand-50",
-            ].join(" ")}
-            type="button"
-          >
-            {t.label}
-          </button>
+      {/* Mobile cards */}
+      <div className="sm:hidden space-y-3">
+        {loading && <div>Loading…</div>}
+        {!loading && filtered.length === 0 && (
+          <div className="text-ink/60">No reports found.</div>
+        )}
+        {filtered.map((r) => (
+          <div key={r.id} className="border rounded p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="font-semibold">{r.label || "Untitled report"}</div>
+                <div className="text-xs text-ink/60 mt-0.5">Period: {(r.periodStart || "—")} – {(r.periodEnd || "—")}</div>
+                <div className="text-xs text-ink/60">Created: {fmtDateTime(r.createdAt)} by {r.createdByName || "—"}</div>
+                {r.notes && <div className="text-xs text-ink/70 mt-1">Notes: {r.notes}</div>}
+              </div>
+              <span className={`px-2 py-1 rounded text-xs whitespace-nowrap ${badgeColor(r.type)}`}>
+                {r.type || "unknown"}
+              </span>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2 justify-end">
+              <Link className="btn btn-sm btn-outline" to={`/reports/${r.id}?src=financialReports`}>Open</Link>
+              <button className="btn btn-sm btn-outline" onClick={() => copyLink(r.id)}>Copy link</button>
+              {isAdmin && notSuspended && (
+                <button className="btn btn-sm btn-outline text-rose-700" onClick={() => handleDelete(r.id)}>Delete</button>
+              )}
+            </div>
+          </div>
         ))}
       </div>
 
-      {loading && <div className="p-6">Loading…</div>}
-
-      {!loading && sections.length === 0 && (
-        <div className="p-8 text-center text-ink/60 border rounded-lg bg-white">
-          No reports found that you have permission to view.
-        </div>
-      )}
-
-      {!loading && sections.length > 0 && (
-        <div className="space-y-8">
-          {sections.map((sec) => (
-            <section key={sec.heading}>
-              <h2 className="text-lg font-semibold mb-3">{sec.heading}</h2>
-              <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {sec.items.map((r) => <ReportCard key={`${r._source}:${r.id}`} r={r} />)}
-              </ul>
-            </section>
-          ))}
-        </div>
-      )}
+      {/* Desktop table */}
+      <div className="hidden sm:block overflow-x-auto">
+        <table className="min-w-full border border-gray-300 rounded text-sm">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="p-2 text-left border-b border-r border-gray-200">Label</th>
+              <th className="p-2 text-left border-b border-r border-gray-200">Type</th>
+              <th className="p-2 text-left border-b border-r border-gray-200">Period</th>
+              <th className="p-2 text-left border-b border-r border-gray-200">Created</th>
+              <th className="p-2 text-left border-b border-r border-gray-200">By</th>
+              <th className="p-2 text-left border-b">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading && (
+              <tr><td colSpan={6} className="p-3">Loading…</td></tr>
+            )}
+            {!loading && filtered.length === 0 && (
+              <tr><td colSpan={6} className="p-3 text-ink/60">No reports found.</td></tr>
+            )}
+            {filtered.map((r) => (
+              <tr key={r.id} className="odd:bg-white even:bg-gray-50">
+                <td className="p-2 border-b border-r border-gray-200">
+                  <div className="font-medium">{r.label || "Untitled report"}</div>
+                  {r.notes && <div className="text-xs text-ink/60 mt-0.5">Notes: {r.notes}</div>}
+                </td>
+                <td className="p-2 border-b border-r border-gray-200">
+                  <span className={`px-2 py-1 rounded text-xs ${badgeColor(r.type)}`}>{r.type || "unknown"}</span>
+                </td>
+                <td className="p-2 border-b border-r border-gray-200">
+                  {(r.periodStart || "—")} – {(r.periodEnd || "—")}
+                </td>
+                <td className="p-2 border-b border-r border-gray-200">{fmtDateTime(r.createdAt)}</td>
+                <td className="p-2 border-b border-r border-gray-200">{r.createdByName || "—"}</td>
+                <td className="p-2 border-b">
+                  <div className="flex flex-wrap gap-2">
+                    <Link className="px-2 py-1 border rounded text-xs" to={`/reports/${r.id}?src=financialReports`}>Open</Link>
+                    <button className="px-2 py-1 border rounded text-xs" onClick={() => copyLink(r.id)}>Copy link</button>
+                    {isAdmin && notSuspended && (
+                      <button className="px-2 py-1 border rounded text-xs text-rose-700" onClick={() => handleDelete(r.id)}>
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
