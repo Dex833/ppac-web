@@ -1,242 +1,1069 @@
+// src/pages/accounting/financials/BalanceSheet.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { db } from "../../../lib/firebase";
 import {
   collection,
   query,
-  where,
   orderBy,
-  limit,
   onSnapshot,
-  getDocs,
   addDoc,
+  deleteDoc,
+  doc,
   serverTimestamp,
 } from "firebase/firestore";
+import useUserProfile from "../../../hooks/useUserProfile";
+import {
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Tooltip,
+  Legend,
+  BarChart,
+  XAxis,
+  YAxis,
+  Bar,
+} from "recharts";
+import jsPDF from "jspdf";
 
-// --- tiny helpers ---
-const fmt = (d) => new Date(d).toISOString().slice(0, 10); // YYYY-MM-DD
-const peso = (n) =>
-  (Number(n) || 0).toLocaleString("en-PH", { style: "currency", currency: "PHP" });
+/* --------------------------- helpers --------------------------- */
+const CHART_COLORS = [
+  "#3b82f6",
+  "#10b981",
+  "#f59e0b",
+  "#ef4444",
+  "#8b5cf6",
+  "#06b6d4",
+  "#84cc16",
+  "#f97316",
+];
 
-// Try to read net income from an IS report payload in a few common shapes
-function extractNetIncome(isReport) {
-  const p = isReport?.payload || {};
-  return (
-    p?.totals?.netIncome ??
-    p?.totals?.net ??
-    p?.sections?.find?.((s) => /net income/i.test(s?.label))?.amount ??
-    0
-  );
+function formatRange(from, to) {
+  if (!from && !to) return "—";
+  if (from && to) return `${from} → ${to}`;
+  return from ? `${from} → —` : `— → ${to}`;
 }
 
-// Try to read retained earnings from a BS report payload
-function extractRetained(bsReport) {
-  const p = bsReport?.payload || {};
-  return (
-    p?.totals?.retainedEarnings ??
-    p?.totals?.equity?.retainedEarnings ??
-    p?.sections?.find?.((s) => /retained/i.test(s?.label))?.amount ??
-    0
-  );
-}
-
-// Live list of generated IS reports, newest first
-function useIncomeStatements() {
-  const [items, setItems] = useState([]);
+/* Load accounts (non-archived), sorted by code */
+function useAccounts() {
+  const [accounts, setAccounts] = useState([]);
   useEffect(() => {
-    const qIS = query(
-      collection(db, "financialReports"),
-      where("type", "==", "income_statement"),
-      where("status", "==", "generated"),
-      orderBy("periodEnd", "desc"),
-      limit(25)
-    );
-    const unsub = onSnapshot(qIS, (snap) => {
-      setItems(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    const qAcc = query(collection(db, "accounts"), orderBy("code"));
+    const unsub = onSnapshot(qAcc, (snap) => {
+      setAccounts(
+        snap.docs
+          .filter((d) => !d.data().archived)
+          .map((d) => ({ id: d.id, ...d.data() }))
+      );
     });
     return () => unsub();
   }, []);
-  return items;
+  return accounts;
 }
 
-// Get the latest prior BS before a given date (no range filter to avoid new index)
-async function getPriorBS(beforeDate) {
-  const qBS = query(
-    collection(db, "financialReports"),
-    where("type", "==", "balance_sheet"),
-    where("status", "==", "generated"),
-    orderBy("periodEnd", "desc"),
-    limit(20)
-  );
-  const snap = await getDocs(qBS);
-  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  return rows.find((r) => r.periodEnd < beforeDate) || null;
+/* Deterministic, sticky Income Statements list */
+function useIncomeStatements() {
+  const [list, setList] = useState([]);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    // fetch by "to" broadly, then sort deterministically on the client
+    const qIS = query(collection(db, "incomeStatementReports"), orderBy("to", "desc"));
+    const unsub = onSnapshot(
+      qIS,
+      (snap) => {
+        setErr(null);
+        const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        items.sort((a, b) => {
+          // newest 'to' first, then newest 'from', then latest generatedAt
+          const toCmp = String(b.to || "").localeCompare(String(a.to || ""));
+          if (toCmp !== 0) return toCmp;
+          const fromCmp = String(b.from || "").localeCompare(String(a.from || ""));
+          if (fromCmp !== 0) return fromCmp;
+          const genB = String(b.report?.generatedAt || "");
+          const genA = String(a.report?.generatedAt || "");
+          return genB.localeCompare(genA);
+        });
+        setList(items);
+      },
+      (e) => {
+        console.error("incomeStatementReports query failed:", e);
+        setErr(e);
+        setList([]);
+      }
+    );
+    return () => unsub();
+  }, []);
+
+  return { list, err };
 }
 
+/* Balance-sheet side utility: sum movement for an account up to (and incl.) asOf */
+function sumLinesForAccountAsOf(acc, entriesUpTo) {
+  let debit = 0,
+    credit = 0;
+  entriesUpTo.forEach((e) => {
+    (e.lines || []).forEach((l) => {
+      if (l.accountId === acc.id) {
+        debit += Number(l.debit || 0);
+        credit += Number(l.credit || 0);
+      }
+    });
+  });
+  // normal balances
+  if (acc.type === "Asset") return debit - credit;
+  if (acc.type === "Liability" || acc.type === "Equity") return credit - debit;
+  return 0;
+}
+
+/* --------------------------- component --------------------------- */
 export default function BalanceSheet() {
-  const incomeStatements = useIncomeStatements();
+  const { profile } = useUserProfile();
+  const isAdmin = profile?.role === "admin" || (profile?.roles || []).includes("admin");
+  const isTreasurer =
+    profile?.role === "treasurer" || (profile?.roles || []).includes("treasurer");
 
-  const [selectedISId, setSelectedISId] = useState(null);
+  const accounts = useAccounts();
+  const { list: isReports } = useIncomeStatements();
+
+  // STICKY selection: only auto-pick when nothing chosen or the chosen id no longer exists.
+  const [selectedISId, setSelectedISId] = useState("");
+  useEffect(() => {
+    if (isReports.length === 0) return;
+    const exists = isReports.some((r) => r.id === selectedISId);
+    if (!selectedISId || !exists) {
+      setSelectedISId(isReports[0].id); // newest after deterministic sort
+    }
+  }, [isReports, selectedISId]);
+
   const selectedIS = useMemo(
-    () => incomeStatements.find((r) => r.id === selectedISId) || null,
-    [incomeStatements, selectedISId]
+    () => isReports.find((r) => r.id === selectedISId),
+    [isReports, selectedISId]
+  );
+  const asOf = selectedIS?.to || "";
+
+  // journal entries (oldest first -> we'll filter by date)
+  const [entries, setEntries] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    setLoading(true);
+    const qJE = query(collection(db, "journalEntries"), orderBy("createdAt", "asc"));
+    const unsub = onSnapshot(qJE, (snap) => {
+      setEntries(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setLoading(false);
+    });
+    return () => unsub();
+  }, []);
+
+  // saved balance sheets (for Recent list & prev retained)
+  const [bsReports, setBsReports] = useState([]);
+  useEffect(() => {
+    const qBS = query(collection(db, "balanceSheetReports"), orderBy("asOf", "desc"));
+    const unsub = onSnapshot(qBS, (snap) => {
+      setBsReports(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
+    return () => unsub();
+  }, []);
+
+  // previous BS strictly before selected asOf
+  const previousBS = useMemo(() => {
+    if (!asOf) return null;
+    const prior = bsReports.filter((r) => r.asOf && r.asOf < asOf);
+    if (prior.length === 0) return null;
+    // pick the latest prior asOf
+    prior.sort((a, b) => String(a.asOf).localeCompare(String(b.asOf)));
+    return prior[prior.length - 1];
+  }, [bsReports, asOf]);
+
+  // entries up to asOf (inclusive)
+  const entriesUpTo = useMemo(() => {
+    if (!asOf) return [];
+    return entries.filter((e) => e.date && e.date <= asOf);
+  }, [entries, asOf]);
+
+  // slices
+  const assets = useMemo(() => accounts.filter((a) => a.type === "Asset"), [accounts]);
+  const liabilities = useMemo(
+    () => accounts.filter((a) => a.type === "Liability"),
+    [accounts]
+  );
+  const equityAccounts = useMemo(
+    () => accounts.filter((a) => a.type === "Equity"),
+    [accounts]
   );
 
-  // When IS list loads, auto-pick the newest one if none selected
-  useEffect(() => {
-    if (!selectedISId && incomeStatements.length) {
-      setSelectedISId(incomeStatements[0].id); // newest due to orderBy desc
+  // rows at-asOf
+  const assetRows = useMemo(
+    () =>
+      assets.map((acc) => ({
+        acc,
+        amount: selectedIS ? sumLinesForAccountAsOf(acc, entriesUpTo) : 0,
+      })),
+    [assets, entriesUpTo, selectedIS]
+  );
+  const liabilityRows = useMemo(
+    () =>
+      liabilities.map((acc) => ({
+        acc,
+        amount: selectedIS ? sumLinesForAccountAsOf(acc, entriesUpTo) : 0,
+      })),
+    [liabilities, entriesUpTo, selectedIS]
+  );
+  const equityRows = useMemo(
+    () =>
+      equityAccounts.map((acc) => ({
+        acc,
+        amount: selectedIS ? sumLinesForAccountAsOf(acc, entriesUpTo) : 0,
+      })),
+    [equityAccounts, entriesUpTo, selectedIS]
+  );
+
+  // totals
+  const totalAssets = useMemo(
+    () => assetRows.reduce((s, r) => s + r.amount, 0),
+    [assetRows]
+  );
+  const totalLiabilities = useMemo(
+    () => liabilityRows.reduce((s, r) => s + r.amount, 0),
+    [liabilityRows]
+  );
+  const totalEquityExRetained = useMemo(
+    () => equityRows.reduce((s, r) => s + r.amount, 0),
+    [equityRows]
+  );
+
+  // retained = prior retained (from previous saved BS, if any) + selected IS net income
+  const prevRetained =
+    previousBS?.report?.retainedIncomeEnding != null
+      ? Number(previousBS.report.retainedIncomeEnding) || 0
+      : 0;
+  const isNetIncome = Number(selectedIS?.report?.netIncome ?? 0);
+  const retainedIncomeEnding = prevRetained + isNetIncome;
+
+  const totalEquity = totalEquityExRetained + (selectedIS ? retainedIncomeEnding : 0);
+  const totalLiabEquity = totalLiabilities + totalEquity;
+
+  const isBalanced = Math.abs(Number(totalAssets) - Number(totalLiabEquity)) < 0.005;
+
+  // charts / notes / print
+  const [notes, setNotes] = useState("");
+  const [downloading, setDownloading] = useState(false);
+  const [printing, setPrinting] = useState(false);
+
+  const barChartData = useMemo(
+    () => [
+      { name: "Liabilities", value: Math.max(0, totalLiabilities) },
+      { name: "Equity", value: Math.max(0, totalEquity) },
+    ],
+    [totalLiabilities, totalEquity]
+  );
+  const assetChartData = useMemo(
+    () =>
+      assetRows
+        .filter((r) => r.amount !== 0)
+        .map(({ acc, amount }) => ({
+          name: `${acc.code} - ${acc.main}${acc.individual ? " / " + acc.individual : ""}`,
+          value: Math.abs(amount),
+        })),
+    [assetRows]
+  );
+
+  function handlePrint() {
+    setPrinting(true);
+    setTimeout(() => {
+      window.print();
+      setPrinting(false);
+    }, 50);
+  }
+
+  function viewRowMap(rows) {
+    return rows.map(({ acc, amount }) => ({
+      id: acc.id,
+      code: acc.code,
+      name: acc.main + (acc.individual ? " / " + acc.individual : ""),
+      amount,
+    }));
+  }
+
+  // save / delete / view
+  const [saving, setSaving] = useState(false);
+  const [showReport, setShowReport] = useState(null);
+  const showSaved = Boolean(showReport?.report);
+  const view = showSaved ? showReport.report : null;
+  const viewAsOf = showSaved ? showReport.asOf : null;
+
+  async function handleGenerateAndSave() {
+    if (!selectedIS || !(isAdmin || isTreasurer)) return;
+    setSaving(true);
+    try {
+      const report = {
+        asOf,
+        sourceIS: {
+          id: selectedIS.id,
+          from: selectedIS.from || "",
+          to: selectedIS.to || "",
+          netIncome: isNetIncome,
+        },
+        notes,
+        prevRetained,
+        retainedIncomeEnding,
+        totals: {
+          assets: totalAssets,
+          liabilities: totalLiabilities,
+          equityExRetained: totalEquityExRetained,
+          equity: totalEquity,
+          liabPlusEquity: totalLiabEquity,
+        },
+        assets: viewRowMap(assetRows),
+        liabilities: viewRowMap(liabilityRows),
+        equity: viewRowMap(equityRows),
+        createdAt: serverTimestamp(),
+      };
+
+      await addDoc(collection(db, "balanceSheetReports"), {
+        asOf,
+        report,
+      });
+
+      alert("Balance Sheet saved.");
+      setNotes("");
+    } catch (e) {
+      console.error(e);
+      alert("Failed to save Balance Sheet.");
+    } finally {
+      setSaving(false);
     }
-  }, [incomeStatements, selectedISId]);
+  }
 
-  // “As of” date is ALWAYS the selected IS periodEnd (fixes the 01-01 bug)
-  const asOf = selectedIS ? fmt(selectedIS.periodEnd) : "";
+  async function handleDeleteBS(id) {
+    if (!id || !(isAdmin || isTreasurer)) return;
+    if (!window.confirm("Delete this saved Balance Sheet?")) return;
+    await deleteDoc(doc(db, "balanceSheetReports", id));
+  }
 
-  const [retainedPrev, setRetainedPrev] = useState(0);
-  const [netIncome, setNetIncome] = useState(0);
-  const [generating, setGenerating] = useState(false);
-  const [html, setHtml] = useState(""); // render-ready HTML snapshot
+  function handleShowSavedBS(r) {
+    setShowReport(r);
+    setSelectedISId(""); // viewing saved; detach from selector
+  }
 
-  // Whenever IS changes, recompute the dependent numbers
-  useEffect(() => {
-    (async () => {
-      if (!selectedIS) return;
-      setNetIncome(extractNetIncome(selectedIS));
-      const prior = await getPriorBS(selectedIS.periodEnd);
-      setRetainedPrev(extractRetained(prior));
-    })();
-  }, [selectedIS]);
+  // view model (current vs saved)
+  const viewTotals = showSaved
+    ? view.totals
+    : {
+        assets: totalAssets,
+        liabilities: totalLiabilities,
+        equityExRetained: totalEquityExRetained,
+        equity: totalEquity,
+        liabPlusEquity: totalLiabEquity,
+      };
+  const viewRetained = showSaved ? view.retainedIncomeEnding : retainedIncomeEnding;
+  const viewAssets = showSaved ? view.assets : viewRowMap(assetRows);
+  const viewLiabs = showSaved ? view.liabilities : viewRowMap(liabilityRows);
+  const viewEquity = showSaved ? view.equity : viewRowMap(equityRows);
 
-  // TODO: Replace with your existing BS builder if you already have one.
-  // Here we only demonstrate the header/retained/net wiring that was wrong.
-  async function generate() {
-    if (!selectedIS) return alert("Select an Income Statement first.");
-    setGenerating(true);
+  /* ---------------- drilldown (responsive modal) ---------------- */
+  const [drill, setDrill] = useState(null);
 
-    // --- Build a minimal HTML snapshot using your computed numbers.
-    // Replace this section with your full BS computation if you have it.
-    const body = `
-      <div style="font-family: ui-sans-serif, system-ui; max-width: 880px; margin: 0 auto;">
-        <h2 style="margin:0 0 4px 0;">Balance Sheet</h2>
-        <div style="opacity:.75; margin-bottom:16px;">As of ${asOf}</div>
-        <table style="width:100%; border-collapse:collapse;">
-          <tbody>
-            <tr><td style="padding:6px 0;">Retained income (prior)</td><td style="text-align:right;">${peso(retainedPrev)}</td></tr>
-            <tr><td style="padding:6px 0;">Plus: Net income (selected IS)</td><td style="text-align:right;">${peso(netIncome)}</td></tr>
-            <tr><td style="padding:6px 0; border-top:1px solid #ddd;"><strong>Ending retained earnings</strong></td><td style="text-align:right; border-top:1px solid #ddd;"><strong>${peso(retainedPrev + netIncome)}</strong></td></tr>
-          </tbody>
-        </table>
-        <div style="margin-top:16px; font-size:12px; opacity:.7;">
-          Linked IS: ${selectedIS.label || selectedIS.periodStart + " → " + selectedIS.periodEnd}
+  function openDrilldown(row) {
+    setDrill({
+      code: row.code,
+      name: row.name,
+    });
+  }
+
+  function renderDrilldown() {
+    if (!drill) return null;
+
+    // resolve the real accountId from accounts by code
+    const target =
+      accounts.find((a) => a.code === drill.code) ||
+      accounts.find((a) => a.id === drill.id);
+
+    const limitDate = showSaved ? viewAsOf || asOf : asOf;
+    const list = limitDate
+      ? entries.filter((e) => e.date && e.date <= limitDate)
+      : entries;
+
+    // build rows for that accountId
+    const rows = [];
+    (list || []).forEach((e) => {
+      (e.lines || []).forEach((l) => {
+        if (target && l.accountId === target.id) {
+          rows.push({
+            date: e.date,
+            ref: e.refNumber,
+            desc: e.description,
+            debit: Number(l.debit || 0),
+            credit: Number(l.credit || 0),
+          });
+        }
+      });
+    });
+
+    rows.sort(
+      (a, b) =>
+        (a.date || "").localeCompare(b.date || "") ||
+        String(a.ref || "").localeCompare(String(b.ref || ""))
+    );
+
+    return (
+      <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center px-3">
+        <div className="bg-white rounded-xl w-[min(720px,94vw)] max-h-[84vh] overflow-auto shadow-lg p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="font-semibold">
+              {drill.code} - {drill.name}
+            </h4>
+            <button className="px-3 py-1 rounded bg-gray-200" onClick={() => setDrill(null)}>
+              Close
+            </button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50 sticky top-0 z-10">
+                <tr>
+                  <th className="p-2 text-left">Date</th>
+                  <th className="p-2 text-left">Ref#</th>
+                  <th className="p-2 text-left">Desc</th>
+                  <th className="p-2 text-right">Debit</th>
+                  <th className="p-2 text-right">Credit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.length === 0 ? (
+                  <tr>
+                    <td className="p-3 text-gray-500 text-center" colSpan={5}>
+                      No entries for this account in the selected period.
+                    </td>
+                  </tr>
+                ) : (
+                  rows.map((r, i) => (
+                    <tr key={i} className="odd:bg-white even:bg-gray-50">
+                      <td className="p-2">{r.date}</td>
+                      <td className="p-2 font-mono">{r.ref}</td>
+                      <td className="p-2">{r.desc}</td>
+                      <td className="p-2 text-right">
+                        {r.debit.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </td>
+                      <td className="p-2 text-right">
+                        {r.credit.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
-    `;
-    setHtml(body);
-
-    setGenerating(false);
+    );
   }
 
-  async function saveReport() {
-    if (!selectedIS) return alert("Select an Income Statement first.");
-    const docBody = {
-      type: "balance_sheet",
-      status: "generated",
-      label: `As of ${asOf}`,
-      periodStart: asOf, // BS is a point-in-time statement; start=end for convenience
-      periodEnd: asOf,
-      createdAt: serverTimestamp(),
-      createdByUid: "system", // fill with real user if you track it
-      payload: {
-        html, // full render snapshot for exact reproduction
-        totals: {
-          retainedEarnings: retainedPrev + netIncome,
-          retainedPrev,
-          netIncome,
-        },
-      },
-      // keep a backlink to the IS we used (this fixes wrong references later)
-      linkedIncomeStatementId: selectedIS.id,
-      linkedIncomeStatementPeriodEnd: selectedIS.periodEnd,
-    };
-    await addDoc(collection(db, "financialReports"), docBody);
-    alert("Balance Sheet saved to Reports.");
+  /* ---------------- exports ---------------- */
+  function handleExportCSV() {
+    if (!asOf && !showSaved) return;
+    setDownloading(true);
+    const header = `Balance Sheet\nAs of,${showSaved ? viewAsOf : asOf}\n\n`;
+    let csv = header + "Assets\nAccount,Amount\n";
+    viewAssets.forEach((r) => {
+      csv += `"${r.code} - ${r.name}",${r.amount}\n`;
+    });
+    csv += `Total Assets,${viewTotals.assets}\n\nLiabilities\nAccount,Amount\n`;
+    viewLiabs.forEach((r) => {
+      csv += `"${r.code} - ${r.name}",${r.amount}\n`;
+    });
+    csv += `Total Liabilities,${viewTotals.liabilities}\n\nEquity\nAccount,Amount\n`;
+    viewEquity.forEach((r) => {
+      csv += `"${r.code} - ${r.name}",${r.amount}\n`;
+    });
+    csv += `Retained Income/Loss,${viewRetained}\nTotal Equity,${viewTotals.equity}\n\nTotal Liabilities & Equity,${viewTotals.liabPlusEquity}\n`;
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `BalanceSheet_${showSaved ? viewAsOf : asOf}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setDownloading(false);
   }
 
+  function handleExportPDF() {
+    if (!asOf && !showSaved) return;
+    setDownloading(true);
+    const d = new jsPDF();
+    const title = `Balance Sheet (As of ${showSaved ? viewAsOf : asOf})`;
+    d.setFontSize(14);
+    d.text(title, 14, 16);
+    let y = 26;
+
+    function section(name, rows, total) {
+      d.setFontSize(11);
+      d.text(name, 14, y);
+      y += 6;
+      d.setFontSize(10);
+      rows.forEach((r) => {
+        d.text(`${r.code} - ${r.name}`, 16, y);
+        d.text(
+          Number(r.amount).toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          }),
+          190 - 14,
+          y,
+          { align: "right" }
+        );
+        y += 6;
+      });
+      d.setFont(undefined, "bold");
+      d.text(`Total ${name}`, 16, y);
+      d.text(
+        Number(total).toLocaleString(undefined, {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }),
+        190 - 14,
+        y,
+        { align: "right" }
+      );
+      d.setFont(undefined, "normal");
+      y += 8;
+    }
+
+    section("Assets", viewAssets, viewTotals.assets);
+    section("Liabilities", viewLiabs, viewTotals.liabilities);
+    section("Equity", viewEquity, viewTotals.equity);
+
+    d.setFont(undefined, "bold");
+    d.text("Total Liabilities & Equity", 16, y);
+    d.text(
+      Number(viewTotals.liabPlusEquity).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }),
+      190 - 14,
+      y,
+      { align: "right" }
+    );
+
+    d.save(`BalanceSheet_${showSaved ? viewAsOf : asOf}.pdf`);
+    setDownloading(false);
+  }
+
+  // small notice
+  const prevNotice = useMemo(() => {
+    if (!selectedIS) return "";
+    if (!previousBS)
+      return "No prior Balance Sheet, this will be your first period. Beginning balances are 0. Ending balances are as of the selected IS end date.";
+    if (previousBS?.asOf && previousBS.asOf === asOf) return "";
+    return `Prior saved Balance Sheet is as of ${previousBS?.asOf || "—"}.`;
+  }, [selectedIS, previousBS, asOf]);
+
+  const showAsOf = showSaved ? viewAsOf : asOf;
+
+  /* --------------------------- render --------------------------- */
   return (
-    <div className="p-4 max-w-5xl mx-auto">
-      <h1 className="text-2xl font-semibold">Balance Sheet</h1>
+    <div className={`flex flex-col lg:flex-row gap-6 lg:gap-8${printing ? " print:block" : ""}`}>
+      {renderDrilldown()}
 
-      {/* IS selector */}
-      <div className="mt-4 grid gap-2 sm:grid-cols-2">
-        <label className="text-sm text-gray-600">Select Income Statement</label>
-        <select
-          className="border rounded px-3 py-2"
-          value={selectedISId || ""}
-          onChange={(e) => setSelectedISId(e.target.value || null)}
-        >
-          {/* Keep a blank option so user explicitly sees nothing is auto-picked only once */}
-          <option value="" disabled>
-            -- choose an Income Statement --
-          </option>
-          {incomeStatements.map((r) => {
-            const label =
-              r.label ||
-              `${fmt(r.periodStart)} → ${fmt(r.periodEnd)} (Net: ${peso(
-                extractNetIncome(r)
-              )})`;
-            return (
-              <option key={r.id} value={r.id}>
-                {label}
-              </option>
-            );
-          })}
-        </select>
-      </div>
+      {/* Main column */}
+      <div className="flex-1 min-w-0">
+        <h3 className="text-xl font-semibold mb-3">Balance Sheet</h3>
 
-      {/* Summary of linkage */}
-      <div className="mt-3 text-sm text-gray-700">
-        {selectedIS ? (
+        {(selectedIS || showSaved) && (
+          <div className="mb-3 flex flex-wrap gap-2 items-start sm:items-center">
+            <button className="btn btn-primary" onClick={handleExportCSV} disabled={downloading}>
+              Export CSV
+            </button>
+            <button className="btn btn-primary" onClick={handleExportPDF} disabled={downloading}>
+              Export PDF
+            </button>
+            <button className="btn btn-outline" onClick={handlePrint}>
+              Print
+            </button>
+            <textarea
+              className="border rounded px-3 py-2 min-w-[200px] flex-1"
+              placeholder="Add notes (saved with report)"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              maxLength={500}
+            />
+            {!isBalanced && (
+              <span className="text-red-600 font-semibold">⚠️ Out of balance!</span>
+            )}
+          </div>
+        )}
+
+        {/* Selector panel */}
+        <div className="mb-4 p-3 border rounded bg-gray-50">
+          <label className="block text-sm font-medium mb-1">
+            Select Income Statement (sets Balance Sheet period)
+          </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 items-center">
+            <select
+              className="border rounded px-3 py-2"
+              value={selectedISId}
+              onChange={(e) => setSelectedISId(e.target.value)}
+            >
+              {isReports.length === 0 && <option value="">— No Income Statements —</option>}
+              {isReports.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {formatRange(r.from, r.to)} • Net Income:{" "}
+                  {(r.report?.netIncome ?? 0).toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </option>
+              ))}
+            </select>
+
+            {selectedIS && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-700">
+                  As of: <strong>{asOf}</strong>
+                </span>
+                {(isAdmin || isTreasurer) && (
+                  <button
+                    onClick={handleGenerateAndSave}
+                    disabled={saving || loading}
+                    className="btn btn-primary"
+                  >
+                    {saving ? "Saving…" : "Generate & Save"}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {showSaved && (
+              <span className="text-sm text-gray-700">
+                Viewing saved BS • as of <strong>{showAsOf}</strong>
+              </span>
+            )}
+          </div>
+
+          {!selectedIS && !showSaved && (
+            <p className="mt-2 text-xs text-gray-600">
+              Pick an Income Statement to generate a Balance Sheet as of that end date, then
+              click <em>Generate &amp; Save</em>.
+            </p>
+          )}
+        </div>
+
+        {!selectedIS && !showSaved ? (
+          <div className="text-gray-500 text-sm">No report selected.</div>
+        ) : loading ? (
+          <div>Loading…</div>
+        ) : (
           <>
-            <div>
-              <span className="font-medium">As of:</span> {asOf}
+            {!showSaved && prevNotice && (
+              <div className="mb-4 p-3 bg-yellow-50 border-l-4 border-yellow-400 text-sm text-yellow-900">
+                {prevNotice}
+              </div>
+            )}
+
+            <div className="mb-3 text-sm text-gray-700">
+              <div>
+                <span className="font-semibold">Retained Income/Loss:</span>{" "}
+                {viewRetained.toLocaleString(undefined, {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}
+                {!showSaved && (
+                  <span className="text-gray-500">
+                    {" "}
+                    (Prior retained{" "}
+                    {(previousBS?.report?.retainedIncomeEnding || 0).toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                    {" + "}Net income{" "}
+                    {(isNetIncome || 0).toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                    )
+                  </span>
+                )}
+              </div>
             </div>
-            <div>
-              <span className="font-medium">Net income (from selected IS):</span>{" "}
-              {peso(netIncome)}
+
+            {/* charts */}
+            <div className="w-full flex flex-wrap gap-8 mb-4">
+              <div className="min-w-[240px] flex-1">
+                <h4 className="font-semibold mb-1">Asset Allocation</h4>
+                <ResponsiveContainer width="100%" height={180}>
+                  <PieChart>
+                    <Pie
+                      data={assetChartData}
+                      dataKey="value"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={60}
+                      label
+                    >
+                      {assetChartData.map((entry, idx) => (
+                        <Cell
+                          key={`cell-${idx}`}
+                          fill={CHART_COLORS[idx % CHART_COLORS.length]}
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      formatter={(v) =>
+                        Number(v).toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })
+                      }
+                    />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="min-w-[240px] flex-1">
+                <h4 className="font-semibold mb-1">Liabilities vs Equity</h4>
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart data={barChartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                    <XAxis dataKey="name" />
+                    <YAxis />
+                    <Tooltip
+                      formatter={(v) =>
+                        Number(v).toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })
+                      }
+                    />
+                    <Legend />
+                    <Bar dataKey="value" fill="#60a5fa" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </div>
-            <div>
-              <span className="font-medium">Retained (prior BS):</span>{" "}
-              {peso(retainedPrev)}
+
+            {/* Desktop tables */}
+            <div className="hidden sm:flex flex-wrap gap-8">
+              {/* Assets */}
+              <div className="flex-1 min-w-[300px]">
+                <div className="overflow-x-auto">
+                  <table className="min-w-full border border-gray-300 rounded text-sm mb-6">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="text-left p-2 border-b">Assets</th>
+                        <th className="text-right p-2 border-b">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {viewAssets.map((row, i) => (
+                        <tr
+                          key={row.code + i}
+                          className="hover:bg-blue-50 cursor-pointer"
+                          onClick={() => openDrilldown(row)}
+                        >
+                          <td className="p-2 border-b border-r border-gray-200">
+                            {row.code} - {row.name}
+                          </td>
+                          <td className="p-2 border-b text-right">
+                            {Number(row.amount || 0).toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </td>
+                        </tr>
+                      ))}
+                      <tr className="font-bold bg-gray-100">
+                        <td className="p-2 border-t text-right">Total Assets</td>
+                        <td className="p-2 border-t text-right">
+                          {Number(viewTotals.assets || 0).toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Liabilities & Equity */}
+              <div className="flex-1 min-w-[300px]">
+                <div className="overflow-x-auto">
+                  <table className="min-w-full border border-gray-300 rounded text-sm mb-6">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="text-left p-2 border-b">Liabilities &amp; Equity</th>
+                        <th className="text-right p-2 border-b">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {/* Liabilities */}
+                      <tr>
+                        <td colSpan={2} className="font-bold p-2">
+                          Liabilities
+                        </td>
+                      </tr>
+                      {viewLiabs.map((row, i) => (
+                        <tr
+                          key={row.code + i}
+                          className="hover:bg-blue-50 cursor-pointer"
+                          onClick={() => openDrilldown(row)}
+                        >
+                          <td className="p-2 border-b border-r border-gray-200">
+                            {row.code} - {row.name}
+                          </td>
+                          <td className="p-2 border-b text-right">
+                            {Number(row.amount || 0).toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </td>
+                        </tr>
+                      ))}
+                      <tr className="font-bold">
+                        <td className="p-2 border-t border-r border-gray-200 text-right">
+                          Total Liabilities
+                        </td>
+                        <td className="p-2 border-t text-right">
+                          {Number(viewTotals.liabilities || 0).toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </td>
+                      </tr>
+
+                      {/* Equity */}
+                      <tr>
+                        <td colSpan={2} className="font-bold p-2">
+                          Equity
+                        </td>
+                      </tr>
+                      {viewEquity.map((row, i) => (
+                        <tr
+                          key={row.code + i}
+                          className="hover:bg-blue-50 cursor-pointer"
+                          onClick={() => openDrilldown(row)}
+                        >
+                          <td className="p-2 border-b border-r border-gray-200">
+                            {row.code} - {row.name}
+                          </td>
+                          <td className="p-2 border-b text-right">
+                            {Number(row.amount || 0).toLocaleString(undefined, {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })}
+                          </td>
+                        </tr>
+                      ))}
+
+                      <tr className="bg-gray-50">
+                        <td className="p-2 border-b border-r border-gray-200">
+                          Retained Income/Loss
+                        </td>
+                        <td className="p-2 border-b text-right">
+                          {Number(viewRetained || 0).toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </td>
+                      </tr>
+
+                      <tr className="font-bold">
+                        <td className="p-2 border-t border-r border-gray-200 text-right">
+                          Total Equity
+                        </td>
+                        <td className="p-2 border-t text-right">
+                          {Number(viewTotals.equity || 0).toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </td>
+                      </tr>
+
+                      <tr className="font-bold bg-gray-100">
+                        <td className="p-2 border-t border-r border-gray-200 text-right">
+                          Total Liabilities &amp; Equity
+                        </td>
+                        <td className="p-2 border-t text-right">
+                          {Number(viewTotals.liabPlusEquity || 0).toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            {/* Mobile cards (<= sm) */}
+            <div className="sm:hidden space-y-6">
+              {/* Assets */}
+              <div>
+                <div className="font-semibold mb-1">Assets</div>
+                <div className="space-y-2">
+                  {viewAssets.map((row, i) => (
+                    <button
+                      key={row.code + i}
+                      onClick={() => openDrilldown(row)}
+                      className="w-full text-left card px-3 py-2 active:opacity-80"
+                    >
+                      <div className="text-sm">
+                        {row.code} - {row.name}
+                      </div>
+                      <div className="font-mono text-right">
+                        {Number(row.amount || 0).toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-2 flex justify-between font-semibold">
+                  <span>Total Assets</span>
+                  <span className="font-mono">
+                    {Number(viewTotals.assets || 0).toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </span>
+                </div>
+              </div>
+
+              {/* Liabilities */}
+              <div>
+                <div className="font-semibold mb-1">Liabilities</div>
+                <div className="space-y-2">
+                  {viewLiabs.map((row, i) => (
+                    <button
+                      key={row.code + i}
+                      onClick={() => openDrilldown(row)}
+                      className="w-full text-left card px-3 py-2 active:opacity-80"
+                    >
+                      <div className="text-sm">
+                        {row.code} - {row.name}
+                      </div>
+                      <div className="font-mono text-right">
+                        {Number(row.amount || 0).toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-2 flex justify-between font-semibold">
+                  <span>Total Liabilities</span>
+                  <span className="font-mono">
+                    {Number(viewTotals.liabilities || 0).toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </span>
+                </div>
+              </div>
+
+              {/* Equity */}
+              <div>
+                <div className="font-semibold mb-1">Equity</div>
+                <div className="space-y-2">
+                  {viewEquity.map((row, i) => (
+                    <button
+                      key={row.code + i}
+                      onClick={() => openDrilldown(row)}
+                      className="w-full text-left card px-3 py-2 active:opacity-80"
+                    >
+                      <div className="text-sm">
+                        {row.code} - {row.name}
+                      </div>
+                      <div className="font-mono text-right">
+                        {Number(row.amount || 0).toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <div className="card px-3 py-2">
+                    <div className="text-xs text-ink/70">Retained Income/Loss</div>
+                    <div className="font-mono">
+                      {Number(viewRetained || 0).toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </div>
+                  </div>
+                  <div className="card px-3 py-2">
+                    <div className="text-xs text-ink/70">Total Equity</div>
+                    <div className="font-mono">
+                      {Number(viewTotals.equity || 0).toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-3 py-2 px-3 bg-gray-100 rounded font-bold flex justify-between">
+                  <span>Total Liabilities & Equity</span>
+                  <span className="font-mono">
+                    {Number(viewTotals.liabPlusEquity || 0).toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
+                  </span>
+                </div>
+              </div>
             </div>
           </>
-        ) : (
-          <div className="text-red-600">Please select an Income Statement.</div>
         )}
       </div>
 
-      <div className="mt-4 flex gap-2">
-        <button
-          className="px-4 py-2 rounded bg-blue-600 text-white disabled:opacity-50"
-          onClick={generate}
-          disabled={!selectedIS || generating}
-        >
-          {generating ? "Generating…" : "Generate"}
-        </button>
-        <button
-          className="px-4 py-2 rounded bg-emerald-600 text-white disabled:opacity-50"
-          onClick={saveReport}
-          disabled={!html}
-        >
-          Save to Reports
-        </button>
-      </div>
-
-      {/* Render preview */}
-      {html ? (
-        <div
-          className="mt-6 border rounded-lg"
-          dangerouslySetInnerHTML={{ __html: html }}
-        />
-      ) : null}
+      {/* Right sidebar (Recent Reports) */}
+      <aside className="w-full lg:w-80 shrink-0">
+        <h4 className="text-lg font-semibold mb-2">Recent Reports</h4>
+        <ul className="space-y-2">
+          {bsReports.map((r) => (
+            <li
+              key={r.id}
+              className="flex items-center justify-between border border-gray-200 rounded px-3 py-2"
+            >
+              <button
+                className="text-left truncate"
+                onClick={() => handleShowSavedBS(r)}
+                title={`as of ${r.asOf}`}
+              >
+                as of {r.asOf}
+              </button>
+              {(isAdmin || isTreasurer) && (
+                <button
+                  className="ml-2 px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-800 text-xs font-semibold"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteBS(r.id);
+                  }}
+                >
+                  Delete
+                </button>
+              )}
+            </li>
+          ))}
+          {bsReports.length === 0 && (
+            <li className="text-sm text-gray-500">No saved balance sheets yet.</li>
+          )}
+        </ul>
+      </aside>
     </div>
   );
 }
