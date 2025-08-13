@@ -1,14 +1,7 @@
 // src/pages/reports/Reports.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { db } from "../../lib/firebase";
-import {
-  collection,
-  query,
-  where,
-  orderBy,
-  limit,
-  onSnapshot,
-} from "firebase/firestore";
+import { collection, query, orderBy, limit, onSnapshot } from "firebase/firestore";
 import { Link } from "react-router-dom";
 
 const TYPE_LABELS = {
@@ -20,38 +13,46 @@ const TYPE_LABELS = {
 
 function toDate(value) {
   if (!value) return null;
-  // Firestore Timestamp
   if (typeof value?.toDate === "function") return value.toDate();
   if (typeof value?.seconds === "number") return new Date(value.seconds * 1000);
-  // ISO string or Date
   return new Date(value);
 }
 
 export default function Reports() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [filter, setFilter] = useState("all"); // all | trial_balance | income_statement | balance_sheet | cash_flow
 
   useEffect(() => {
-    // latest generated reports (up to 40) for a simple initial list
+    // NOTE: no 'where' to avoid composite index requirement
     const q = query(
       collection(db, "financialReports"),
-      where("status", "==", "generated"),
       orderBy("createdAt", "desc"),
       limit(40)
     );
-    const unsub = onSnapshot(q, (snap) => {
-      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      setRows(list);
-      setLoading(false);
-    });
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        setRows(list);
+        setLoading(false);
+      },
+      (err) => {
+        console.error(err);
+        setError(err?.message || "Failed to load reports.");
+        setLoading(false);
+      }
+    );
     return () => unsub();
   }, []);
 
+  // Filter to only generated reports, then by type
+  const generated = useMemo(() => rows.filter((r) => r.status === "generated"), [rows]);
   const filtered = useMemo(() => {
-    if (filter === "all") return rows;
-    return rows.filter((r) => r.type === filter);
-  }, [rows, filter]);
+    if (filter === "all") return generated;
+    return generated.filter((r) => r.type === filter);
+  }, [generated, filter]);
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -85,13 +86,23 @@ export default function Reports() {
         ))}
       </div>
 
-      {loading ? (
-        <div className="p-6">Loading…</div>
-      ) : filtered.length === 0 ? (
-        <div className="p-8 text-center text-ink/60 border rounded-lg bg-white">
-          No reports found.
+      {loading && <div className="p-6">Loading…</div>}
+
+      {!loading && error && (
+        <div className="p-4 mb-4 border rounded-lg bg-rose-50 text-rose-700">
+          {error}
+          <div className="text-xs text-rose-600 mt-1">
+            Tip: If you keep the server-side filter later, create a composite index:
+            <code className="ml-1">financialReports — status ASC, createdAt DESC</code>.
+          </div>
         </div>
-      ) : (
+      )}
+
+      {!loading && !error && filtered.length === 0 && (
+        <div className="p-8 text-center text-ink/60 border rounded-lg bg-white">No reports found.</div>
+      )}
+
+      {!loading && !error && filtered.length > 0 && (
         <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {filtered.slice(0, 10).map((r) => {
             const start = toDate(r.periodStart);
@@ -102,9 +113,7 @@ export default function Reports() {
                 <div className="text-xs uppercase tracking-wide text-ink/60">
                   {TYPE_LABELS[r.type] || r.type}
                 </div>
-                <div className="text-lg font-semibold mt-1">
-                  {r.label || "(No label)"}
-                </div>
+                <div className="text-lg font-semibold mt-1">{r.label || "(No label)"}</div>
                 <div className="text-sm text-ink/60 mt-1">
                   Period: {start ? start.toLocaleDateString() : "—"} – {end ? end.toLocaleDateString() : "—"}
                 </div>
