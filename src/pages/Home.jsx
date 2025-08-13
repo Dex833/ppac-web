@@ -115,7 +115,7 @@ export default function Home() {
         {/* Welcome and Name + Buttons */}
         <div className="w-full max-w-xl mx-auto flex flex-col items-center gap-3">
           <h2 className="text-2xl font-bold mb-1">Welcome 👋</h2>
-          {user && (
+          {user ? (
             <div className="flex flex-col sm:flex-row items-center gap-2">
               <span className="text-ink/80 text-lg font-semibold">
                 {user.displayName || user.email || "Member"}
@@ -127,6 +127,11 @@ export default function Home() {
                 What You Have
               </button>
               <button className="btn btn-primary">Report</button>
+            </div>
+          ) : (
+            <div className="flex flex-col sm:flex-row items-center gap-2 mt-2">
+              <Link to="/BecomeMember" className="btn btn-primary w-full sm:w-auto text-center">Become a Member</Link>
+              <Link to="/RequirementsMembership" className="btn btn-outline w-full sm:w-auto text-center">See Requirements</Link>
             </div>
           )}
         </div>
