@@ -153,15 +153,6 @@ export default function Accounting() {
         </button>
       </div>
 
-      {/* Responsive filter/toolbar stack */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 mb-4">
-        <input className="w-full min-w-0 border rounded px-2 py-2 text-sm" placeholder="Filter by Ref#" />
-        <input type="date" className="w-full min-w-0 border rounded px-2 py-2 text-sm" />
-        <input className="w-full min-w-0 border rounded px-2 py-2 text-sm" placeholder="Filter by Account" />
-        <div className="flex sm:justify-end">
-          <button className="w-full sm:w-auto btn btn-primary">Action</button>
-        </div>
-      </div>
 
       {/* Desktop tabs (your existing component) */}
       <div className="hidden md:block mb-6">
