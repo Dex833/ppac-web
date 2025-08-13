@@ -16,7 +16,9 @@ function MobileMenu({
     if (open) {
       const prev = document.body.style.overflow;
       document.body.style.overflow = "hidden";
-      return () => { document.body.style.overflow = prev; };
+      return () => {
+        document.body.style.overflow = prev;
+      };
     }
   }, [open]);
 
@@ -62,7 +64,10 @@ function MobileMenu({
                 <li>
                   <button
                     className="block w-full text-left px-3 py-2 rounded hover:bg-brand-50"
-                    onClick={() => { onLogin(); onClose(); }}
+                    onClick={() => {
+                      onLogin();
+                      onClose();
+                    }}
                   >
                     Login
                   </button>
@@ -80,6 +85,15 @@ function MobileMenu({
                 Dashboard
               </a>
             </li>
+
+            {/* NEW: Reports (signed-in, not suspended) */}
+            {profile && notSuspended && (
+              <li>
+                <a className="block px-3 py-2 rounded hover:bg-brand-50" href="/reports" onClick={onClose}>
+                  Reports
+                </a>
+              </li>
+            )}
 
             {isAdmin && notSuspended && (
               <li>
@@ -101,12 +115,16 @@ function MobileMenu({
           {profile && (
             <div className="mt-4 border-t pt-3 px-1">
               <div className="px-2 text-xs text-ink/60 mb-2">
-                Signed in as<br />
+                Signed in as
+                <br />
                 <span className="font-medium text-ink">{profile.displayName || profile.email}</span>
               </div>
               <button
                 className="w-full px-3 py-2 rounded text-rose-700 hover:bg-rose-50 text-left"
-                onClick={async () => { await onSignout(); onClose(); }}
+                onClick={async () => {
+                  await onSignout();
+                  onClose();
+                }}
               >
                 Sign out
               </button>
@@ -117,6 +135,7 @@ function MobileMenu({
     </div>
   );
 }
+
 // src/App.jsx
 import BecomeMember from "./pages/BecomeMember.jsx";
 import React, { Suspense, lazy } from "react";
@@ -130,7 +149,7 @@ import GuestRoute from "./components/GuestRoute.jsx";
 import RequireRole from "./components/RequireRole.jsx";
 import LoginModal from "./components/LoginModal.jsx";
 
-import Home from "./pages/Home.jsx";                 // <-- new: renders Firestore-driven home content
+import Home from "./pages/Home.jsx"; // <-- new: renders Firestore-driven home content
 import Signup from "./pages/Signup.jsx";
 import Dashboard from "./pages/Dashboard.jsx";
 import Verify from "./pages/Verify.jsx";
@@ -151,6 +170,10 @@ const GeneralJournal = lazy(() => import("./pages/accounting/GeneralJournal.jsx"
 const Ledger = lazy(() => import("./pages/accounting/Ledger.jsx"));
 const TrialBalance = lazy(() => import("./pages/accounting/TrialBalance.jsx"));
 const FinancialStatements = lazy(() => import("./pages/accounting/FinancialStatements.jsx"));
+
+// NEW: lazy load reports pages
+const Reports = lazy(() => import("./pages/reports/Reports.jsx"));
+const ReportView = lazy(() => import("./pages/reports/ReportView.jsx"));
 
 import ppacLogo from "./assets/ppac-logo.png";
 
@@ -182,8 +205,6 @@ export default function App() {
   const isManager = roles.includes("manager");
   const notSuspended = profile?.suspended !== true;
 
-
-
   const [menuOpen, setMenuOpen] = React.useState(false);
 
   return (
@@ -195,8 +216,15 @@ export default function App() {
           <span>☎️ 0950-468-6668</span>
         </div>
         <div>
-          <a href="https://facebook.com/ppac.coop" target="_blank" rel="noopener noreferrer" className="text-blue-700 hover:underline flex items-center gap-1">
-            <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M22.675 0h-21.35C.595 0 0 .592 0 1.326v21.348C0 23.406.595 24 1.325 24h11.495v-9.294H9.692v-3.622h3.128V8.413c0-3.1 1.893-4.788 4.659-4.788 1.325 0 2.463.099 2.797.143v3.24l-1.918.001c-1.504 0-1.797.715-1.797 1.763v2.313h3.587l-.467 3.622h-3.12V24h6.116C23.406 24 24 23.406 24 22.674V1.326C24 .592 23.406 0 22.675 0"/></svg>
+          <a
+            href="https://facebook.com/ppac.coop"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-700 hover:underline flex items-center gap-1"
+          >
+            <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M22.675 0h-21.35C.595 0 0 .592 0 1.326v21.348C0 23.406.595 24 1.325 24h11.495v-9.294H9.692v-3.622h3.128V8.413c0-3.1 1.893-4.788 4.659-4.788 1.325 0 2.463.099 2.797.143v3.24l-1.918.001c-1.504 0-1.797.715-1.797 1.763v2.313h3.587l-.467 3.622h-3.12V24h6.116C23.406 24 24 23.406 24 22.674V1.326C24 .592 23.406 0 22.675 0" />
+            </svg>
             Facebook
           </a>
         </div>
@@ -206,14 +234,8 @@ export default function App() {
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur border-b border-border">
         <div className="mx-auto page-boxed page-gutter h-16 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-3">
-            <img
-              src={ppacLogo}
-              alt="Puerto Princesa Agriculture Cooperative"
-              className="h-9 w-auto rounded-full"
-            />
-            <span className="text-lg sm:text-xl font-semibold">
-              Puerto Princesa Agriculture Cooperative
-            </span>
+            <img src={ppacLogo} alt="Puerto Princesa Agriculture Cooperative" className="h-9 w-auto rounded-full" />
+            <span className="text-lg sm:text-xl font-semibold">Puerto Princesa Agriculture Cooperative</span>
           </Link>
 
           {/* Desktop nav */}
@@ -232,10 +254,12 @@ export default function App() {
               </>
             )}
             <NavItem to="/dashboard">Dashboard</NavItem>
+
+            {/* NEW: Reports (signed-in, not suspended) */}
+            {profile && notSuspended && <NavItem to="/reports">Reports</NavItem>}
+
             {isAdmin && notSuspended && <NavItem to="/admin/users">Admin</NavItem>}
-            {(notSuspended && (isAdmin || isTreasurer || isManager)) && (
-              <NavItem to="/accounting">Accounting</NavItem>
-            )}
+            {(notSuspended && (isAdmin || isTreasurer || isManager)) && <NavItem to="/accounting">Accounting</NavItem>}
             {profile && (
               <>
                 <span className="ml-2 px-2 text-sm text-ink/80 whitespace-nowrap">
@@ -263,7 +287,7 @@ export default function App() {
             onClick={() => setMenuOpen(true)}
           >
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             </svg>
           </button>
         </div>
@@ -280,7 +304,10 @@ export default function App() {
         profile={profile}
         onLogin={() => setLoginOpen(true)}
         onSignup={() => nav("/signup")}
-        onSignout={async () => { await signout(); nav("/", { replace: true }); }}
+        onSignout={async () => {
+          await signout();
+          nav("/", { replace: true });
+        }}
       />
 
       <LoginModal
@@ -292,7 +319,7 @@ export default function App() {
         }}
       />
 
-  <main className="page-boxed page-gutter py-8 sm:py-10">
+      <main className="page-boxed page-gutter py-8 sm:py-10">
         <Routes>
           {/* Home (driven by Firestore via pages/Home.jsx) */}
           <Route path="/" element={<Home />} />
@@ -341,6 +368,28 @@ export default function App() {
             element={
               <ProtectedRoute requireVerified={true}>
                 <Profile />
+              </ProtectedRoute>
+            }
+          />
+
+          {/* NEW: Reports (read-only for signed-in users) */}
+          <Route
+            path="/reports"
+            element={
+              <ProtectedRoute>
+                <Suspense fallback={<div className="p-6">Loading…</div>}>
+                  <Reports />
+                </Suspense>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/reports/:id"
+            element={
+              <ProtectedRoute>
+                <Suspense fallback={<div className="p-6">Loading…</div>}>
+                  <ReportView />
+                </Suspense>
               </ProtectedRoute>
             }
           />
