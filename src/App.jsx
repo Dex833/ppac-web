@@ -61,6 +61,9 @@ export default function App() {
   const isManager = roles.includes("manager");
   const notSuspended = profile?.suspended !== true;
 
+
+  const [menuOpen, setMenuOpen] = React.useState(false);
+
   return (
     <div className="min-h-screen text-ink">
       {/* Top info bar */}
@@ -77,25 +80,23 @@ export default function App() {
         </div>
       </div>
 
-      {/* Title bar */}
+      {/* Responsive header with mobile hamburger */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur border-b border-border">
-        <div className="mx-auto max-w-5xl px-4 flex flex-col sm:flex-row items-center sm:justify-between py-4">
-          <div className="flex items-center gap-3 w-full">
-            <Link to="/" className="flex items-center gap-3 flex-1 min-w-0">
-              <img src={ppacLogo} alt="Puerto Princesa Agriculture Cooperative" className="h-9 w-auto rounded-full shrink-0" />
-              <span className="text-lg sm:text-xl font-semibold truncate">
-                Puerto Princesa Agriculture Cooperative
-              </span>
-            </Link>
-          </div>
-        </div>
-        {/* Nav bar below title */}
-        <nav className="w-full border-t border-border bg-white flex items-center py-2 relative">
-          <div className="flex gap-1 items-center justify-center flex-1">
+        <div className="mx-auto page-boxed page-gutter h-16 flex items-center justify-between">
+          <Link to="/" className="flex items-center gap-3">
+            <img
+              src={ppacLogo}
+              alt="Puerto Princesa Agriculture Cooperative"
+              className="h-9 w-auto rounded-full"
+            />
+            <span className="text-lg sm:text-xl font-semibold">
+              Puerto Princesa Agriculture Cooperative
+            </span>
+          </Link>
+
+          {/* Desktop nav */}
+          <nav className="hidden md:flex gap-1 items-center">
             <NavItem to="/">Home</NavItem>
-            {profile && <NavItem to="/dashboard">Dashboard</NavItem>}
-            {isAdmin && notSuspended && <NavItem to="/admin/users">Admin</NavItem>}
-            {notSuspended && (isAdmin || isTreasurer || isManager) && <NavItem to="/accounting">Accounting</NavItem>}
             {!profile && (
               <>
                 <button
@@ -108,31 +109,95 @@ export default function App() {
                 <NavItem to="/signup">Signup</NavItem>
               </>
             )}
+            <NavItem to="/dashboard">Dashboard</NavItem>
+            {isAdmin && notSuspended && <NavItem to="/admin/users">Admin</NavItem>}
+            {(notSuspended && (isAdmin || isTreasurer || isManager)) && (
+              <NavItem to="/accounting">Accounting</NavItem>
+            )}
+            {profile && (
+              <>
+                <span className="ml-2 px-2 text-sm text-ink/80 whitespace-nowrap">
+                  Welcome, {profile.displayName || profile.email || "User"}
+                </span>
+                <button
+                  className="ml-2 px-3 py-2 rounded-lg text-sm font-medium transition text-rose-700 hover:bg-rose-50 hover:text-rose-900"
+                  onClick={async () => {
+                    if (window.confirm("Are you sure you want to sign out?")) {
+                      await signout();
+                      nav("/", { replace: true });
+                    }
+                  }}
+                >
+                  Sign out
+                </button>
+              </>
+            )}
+          </nav>
+
+          {/* Mobile hamburger */}
+          <button
+            className="md:hidden inline-flex items-center justify-center p-2 rounded-lg hover:bg-brand-50"
+            aria-label="Open menu"
+            onClick={() => setMenuOpen(true)}
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+              <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
+          </button>
+        </div>
+
+        {/* Mobile sheet */}
+        {menuOpen && (
+          <div className="fixed inset-0 z-50 md:hidden" role="dialog" aria-modal="true">
+            <div className="absolute inset-0 bg-black/30" onClick={() => setMenuOpen(false)} />
+            <div className="absolute right-0 top-0 h-full w-[82%] max-w-xs bg-white shadow-xl p-4 flex flex-col">
+              <div className="flex items-center justify-between mb-4">
+                <span className="font-semibold">Menu</span>
+                <button className="p-2 rounded hover:bg-gray-100" onClick={() => setMenuOpen(false)}>
+                  ✕
+                </button>
+              </div>
+              <div className="flex flex-col gap-2">
+                <Link className="px-3 py-2 rounded hover:bg-brand-50" to="/" onClick={() => setMenuOpen(false)}>Home</Link>
+                {!profile && (
+                  <>
+                    <button className="px-3 py-2 rounded hover:bg-brand-50 text-left" onClick={() => { setLoginOpen(true); setMenuOpen(false); }}>
+                      Login
+                    </button>
+                    <Link className="px-3 py-2 rounded hover:bg-brand-50" to="/signup" onClick={() => setMenuOpen(false)}>Signup</Link>
+                  </>
+                )}
+                <Link className="px-3 py-2 rounded hover:bg-brand-50" to="/dashboard" onClick={() => setMenuOpen(false)}>Dashboard</Link>
+                {isAdmin && notSuspended && (
+                  <>
+                    <Link className="px-3 py-2 rounded hover:bg-brand-50" to="/admin/users" onClick={() => setMenuOpen(false)}>Admin</Link>
+                    <Link className="px-3 py-2 rounded hover:bg-brand-50" to="/admin/edit-home" onClick={() => setMenuOpen(false)}>Edit Home</Link>
+                  </>
+                )}
+                {(notSuspended && (isAdmin || isTreasurer || isManager)) && (
+                  <Link className="px-3 py-2 rounded hover:bg-brand-50" to="/accounting" onClick={() => setMenuOpen(false)}>Accounting</Link>
+                )}
+                {profile && (
+                  <>
+                    <div className="px-3 py-2 text-sm text-ink/70">Signed in as<br/>{profile.displayName || profile.email}</div>
+                    <button
+                      className="px-3 py-2 rounded text-rose-700 hover:bg-rose-50 text-left"
+                      onClick={async () => {
+                        if (window.confirm("Sign out?")) {
+                          await signout();
+                          setMenuOpen(false);
+                          nav("/", { replace: true });
+                        }
+                      }}
+                    >
+                      Sign out
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
-          {/* Right-aligned Become Member or Welcome/Sign out */}
-          {!profile ? (
-            <div className="absolute right-4">
-              <Link to="/become-member" className="btn btn-primary">Become Member</Link>
-            </div>
-          ) : (
-            <div className="absolute right-4 flex items-center">
-              <span className="px-2 text-sm text-ink/80 font-medium whitespace-nowrap">
-                Welcome, {profile.displayName || profile.email || "User"}
-              </span>
-              <button
-                className="ml-2 px-3 py-2 rounded-lg text-sm font-medium transition text-rose-700 hover:bg-rose-50 hover:text-rose-900"
-                onClick={async () => {
-                  if (window.confirm("Are you sure you want to sign out?")) {
-                    await signout();
-                    nav("/", { replace: true });
-                  }
-                }}
-              >
-                Sign out
-              </button>
-            </div>
-          )}
-        </nav>
+        )}
       </header>
 
       <LoginModal
@@ -144,7 +209,7 @@ export default function App() {
         }}
       />
 
-  <main>
+  <main className="page-boxed page-gutter py-8 sm:py-10">
         <Routes>
           {/* Home (driven by Firestore via pages/Home.jsx) */}
           <Route path="/" element={<Home />} />

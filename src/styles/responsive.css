@@ -1,0 +1,76 @@
+/* src/styles/responsive.css */
+
+/* ---- helpers you can use anywhere ---- */
+.hide-on-mobile { display: block; }
+.show-on-mobile { display: none; }
+
+@media (max-width: 768px) {
+  .hide-on-mobile { display: none !important; }
+  .show-on-mobile { display: block !important; }
+}
+
+/* Tighter UI on small screens */
+@media (max-width: 768px) {
+  :root { --ui-radius: 12px; }
+
+  .card {
+    border-radius: var(--ui-radius);
+    padding: 0.875rem !important;
+  }
+
+  .btn {
+    padding: 0.5rem 0.75rem !important;
+    border-radius: 9999px !important;
+    font-size: 0.9375rem !important;
+  }
+
+  .input, input[type="date"], select, textarea {
+    padding: 0.5rem 0.625rem !important;
+    border-radius: 10px !important;
+    font-size: 0.9375rem !important;
+  }
+
+  /* Header height a bit smaller */
+  header .h-16 { height: 3.25rem !important; }
+}
+
+/* Desktop/boxed page gutters – ensure background peeks on the sides */
+.page-boxed { max-width: 72rem; margin-left: auto; margin-right: auto; }
+.page-gutter { padding-left: 1rem; padding-right: 1rem; }
+@media (min-width: 768px) {
+  .page-gutter { padding-left: 1.25rem; padding-right: 1.25rem; }
+}
+
+/* Tables: compact by default on phones */
+.table-compact th,
+.table-compact td {
+  padding: 0.5rem 0.625rem;
+}
+
+/* Optional: stack tables into cards on phones
+   Use this by adding class "stack-on-mobile" to a table,
+   and set data-label on each <td> with the column name. */
+@media (max-width: 768px) {
+  table.stack-on-mobile { border: 0; width: 100%; }
+  table.stack-on-mobile thead { display: none; }
+  table.stack-on-mobile tr {
+    display: block;
+    background: #fff;
+    border: 1px solid rgb(229 231 235);
+    border-radius: 12px;
+    margin-bottom: 0.75rem;
+    padding: 0.5rem 0.75rem;
+  }
+  table.stack-on-mobile td {
+    display: grid;
+    grid-template-columns: 9.5rem 1fr;
+    gap: 0.5rem;
+    border: 0 !important;
+    padding: 0.375rem 0 !important;
+  }
+  table.stack-on-mobile td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: rgb(55 65 81);
+  }
+}
