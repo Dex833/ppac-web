@@ -63,7 +63,8 @@ function TypeBadge({ t }) {
   return (
     <span
       className={
-        "inline-block text-xs px-2 py-0.5 rounded border " + (map[t] || "bg-gray-100 text-gray-800 border-gray-200")
+        "inline-block text-xs px-2 py-0.5 rounded border " +
+        (map[t] || "bg-gray-100 text-gray-800 border-gray-200")
       }
       title={t}
     >
@@ -131,9 +132,9 @@ export default function Reports() {
           va = (a.label || "").toLowerCase();
           vb = (b.label || "").toLowerCase();
           break;
-        case "type:
-          va = (a.type || "");
-          vb = (b.type || "");
+        case "type":
+          va = a.type || "";
+          vb = b.type || "";
           break;
         case "period":
           va = periodLabel(a);
