@@ -1,10 +1,15 @@
 // src/pages/reports/ReportView.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { db } from "../../lib/firebase";
 import { doc, getDoc, deleteDoc } from "firebase/firestore";
 import useUserProfile from "../../hooks/useUserProfile";
+import PageBackground from "../../components/PageBackground";
 import jsPDF from "jspdf";
+
+/* ----------------------------- background ----------------------------- */
+const reportsBg =
+  "https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80";
 
 /* ----------------------------- utils ----------------------------- */
 const S = (v) => String(v ?? "");
@@ -13,7 +18,6 @@ const fmt = (n) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
-
 function longDate(ymd) {
   if (!ymd) return "";
   const [y, m, d] = ymd.split("-").map((x) => parseInt(x, 10));
@@ -24,11 +28,10 @@ function longDate(ymd) {
     year: "numeric",
   });
 }
-
 function periodLabel(r) {
-  // Prefer {from,to}, fall back to {periodStart,periodEnd}
-  const L = r?.from || r?.periodStart || "—";
-  const R = r?.to || r?.periodEnd || "—";
+  // We store period as {from, to}. For BS, from === to (as-of).
+  const L = r?.from || "—";
+  const R = r?.to || "—";
   if (L === R) return `as of ${R}`;
   return `${L} → ${R}`;
 }
@@ -38,9 +41,31 @@ function csvEscape(v) {
   return `"${String(v ?? "").replace(/"/g, '""')}"`;
 }
 
-/* ========================== RENDERERS ============================ */
-/* ---------------------- Income Statement ------------------------- */
-// Saved in /financialReports with type: "incomeStatement"
+/* -------------------------- report css shim ----------------------- */
+/* Enables Tailwind-like display utils in saved HTML (e.g., hidden/sm:block) */
+const REPORT_CSS = `
+  html,body{margin:0;padding:16px;background:#fff;color:#111827;
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial}
+  table{width:100%;border-collapse:collapse}
+  th,td{border:1px solid #e5e7eb;padding:6px 8px;font-size:12px}
+  thead{background:#f9fafb}
+  .block{display:block!important}
+  .hidden{display:none!important}
+  .sm\\:hidden{display:initial!important}
+  .sm\\:block{display:initial!important}
+  @media (min-width:640px){
+    .sm\\:hidden{display:none!important}
+    .sm\\:block{display:block!important}
+    .hidden.sm\\:block{display:block!important}
+  }
+`;
+const wrapSnapshotHtml = (innerHtml) =>
+  `<!doctype html><html><head><meta charset="utf-8"/>
+    <style id="ppac-report-css">${REPORT_CSS}</style>
+  </head><body>${innerHtml || ""}</body></html>`;
+
+/* -------------------------- renderers ----------------------------- */
+// Income Statement (type: "incomeStatement")
 function IncomeStatementView({ reportDoc }) {
   const { from, to, report } = reportDoc || {};
   const revenues = report?.revenues || [];
@@ -55,7 +80,6 @@ function IncomeStatementView({ reportDoc }) {
     report?.totalExpense ?? expenses.reduce((s, a) => s + (a.amount || 0), 0);
   const netIncome = report?.netIncome ?? (grossProfit - totalExpense);
 
-  /* ---- CSV / PDF ---- */
   function exportCSV() {
     const period = periodLabel({ from, to });
     let csv = `Income Statement\nPeriod:,${period}\n`;
@@ -179,7 +203,6 @@ function IncomeStatementView({ reportDoc }) {
             </tr>
           </thead>
           <tbody>
-            {/* Revenues */}
             <tr>
               <td colSpan={2} className="font-bold p-2">
                 Revenues
@@ -200,7 +223,6 @@ function IncomeStatementView({ reportDoc }) {
               <td className="p-2 border-t text-right">{fmt(totalRevenue)}</td>
             </tr>
 
-            {/* COGS */}
             {cogs.length > 0 && (
               <tr>
                 <td colSpan={2} className="font-bold p-2">
@@ -225,7 +247,6 @@ function IncomeStatementView({ reportDoc }) {
               </tr>
             )}
 
-            {/* Gross Profit */}
             <tr className="font-bold bg-gray-50">
               <td className="p-2 border-t border-r border-gray-200 text-right">
                 Gross Profit
@@ -233,7 +254,6 @@ function IncomeStatementView({ reportDoc }) {
               <td className="p-2 border-t text-right">{fmt(grossProfit)}</td>
             </tr>
 
-            {/* Expenses */}
             <tr>
               <td colSpan={2} className="font-bold p-2">
                 Expenses
@@ -254,7 +274,6 @@ function IncomeStatementView({ reportDoc }) {
               <td className="p-2 border-t text-right">{fmt(totalExpense)}</td>
             </tr>
 
-            {/* Net Income */}
             <tr className="font-bold bg-gray-100">
               <td className="p-2 border-t border-r border-gray-200 text-right">
                 Net Income
@@ -294,11 +313,10 @@ function IncomeStatementView({ reportDoc }) {
   );
 }
 
-/* ------------------------- Balance Sheet ------------------------- */
-// Saved in /financialReports with type: "balanceSheet"
+// Balance Sheet (type: "balanceSheet")
 function BalanceSheetView({ reportDoc }) {
   const { from, to, report } = reportDoc || {};
-  const asOf = to || from || report?.asOf || "";
+  const asOf = to || from || report?.asOf || ""; // as-of
   const assets = report?.assets || [];
   const liabilities = report?.liabilities || [];
   const equity = report?.equity || [];
@@ -480,9 +498,7 @@ function BalanceSheetView({ reportDoc }) {
                   <td className="p-2 border-t border-r border-gray-200 text-right">
                     Total Equity
                   </td>
-                  <td className="p-2 border-t text-right">
-                    {fmt(totals.equity ?? 0)}
-                  </td>
+                  <td className="p-2 border-t text-right">{fmt(totals.equity ?? 0)}</td>
                 </tr>
 
                 <tr className="font-bold bg-gray-100">
@@ -536,8 +552,7 @@ function BalanceSheetView({ reportDoc }) {
   );
 }
 
-/* ---------------------------- Cash Flow --------------------------- */
-// Saved in /financialReports with type: "cashFlow"
+// Cash Flow (type: "cashFlow")
 function CashFlowView({ reportDoc }) {
   const { from, to, report } = reportDoc || {};
   const o = report?.sections?.operating || { netIncome: 0, net: 0 };
@@ -614,43 +629,37 @@ function CashFlowView({ reportDoc }) {
     pdf.setFont(undefined, "italic");
     pdf.text("Net Changes on Working Capital", col1 + 8, y);
     pdf.setFont(undefined, "normal");
-    pdf.text(fmt(d.workingCapital), colAmt, y, { align: "right" });
-    y += 8;
 
-    pdf.setFont(undefined, "bold");
+    y += 8;
     pdf.text("Net Cash Flow From Operating Activities", col1, y);
-    pdf.setFont(undefined, "normal");
     pdf.text(fmt(o.net), colAmt, y, { align: "right" });
-    y += 12;
 
     // Investing
+    y += 16;
     pdf.setFontSize(12);
-    pdf.text("Cash Flow From Investing Activities:", 14, y);
+    pdf.text("Cash Flow from Investing Activities:", 14, y);
     y += 8;
     pdf.setFontSize(10);
     pdf.text("None", col1, y);
     pdf.text("0.00", colAmt, y, { align: "right" });
-    y += 12;
 
     // Financing
+    y += 16;
     pdf.setFontSize(12);
     pdf.text("Cash Flow From Financing Activities:", 14, y);
     y += 8;
     pdf.setFontSize(10);
-    pdf.text("Share Capital", col1 + 8, y);
+    pdf.text("Share Capital", col1, y);
     pdf.text("Share Capital", col2, y);
     pdf.text(fmt(d.shareCapital), colAmt, y, { align: "right" });
     y += 8;
-
-    pdf.setFont(undefined, "bold");
     pdf.text("Net Cash Flow From Financing Activities", col1, y);
-    pdf.setFont(undefined, "normal");
     pdf.text(fmt(f.net), colAmt, y, { align: "right" });
-    y += 12;
 
     // Summary
+    y += 16;
     pdf.setFontSize(12);
-    pdf.text("Summary:", 14, y);
+    pdf.text("Summary", 14, y);
     y += 8;
     pdf.setFontSize(10);
     pdf.text("Net Increase In Cash", col1, y);
@@ -667,111 +676,52 @@ function CashFlowView({ reportDoc }) {
 
   return (
     <>
-      {/* Simple sectioned table */}
-      <div className="overflow-x-auto">
-        <table className="min-w-full border border-gray-300 rounded text-sm mb-4">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="text-left p-2">Description</th>
-              <th className="text-left p-2">Account</th>
-              <th className="text-right p-2">Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            {/* Operating */}
-            <tr>
-              <td colSpan={3} className="font-bold p-2">
-                Cash Flow From Operating Activities
-              </td>
-            </tr>
-            <tr>
-              <td className="p-2">Net Profit/Loss</td>
-              <td className="p-2"></td>
-              <td className="p-2 text-right">{fmt(o.netIncome)}</td>
-            </tr>
-            <tr>
-              <td className="p-2 italic">Changes In Working Capital</td>
-              <td className="p-2"></td>
-              <td className="p-2"></td>
-            </tr>
-            <tr>
-              <td className="p-2">Changes in Loan Receivable</td>
-              <td className="p-2">Loan Receivable</td>
-              <td className="p-2 text-right">{fmt(d.loanReceivable)}</td>
-            </tr>
-            <tr>
-              <td className="p-2">Changes in Rice Inventory</td>
-              <td className="p-2">Rice Inventory</td>
-              <td className="p-2 text-right">{fmt(d.inventory)}</td>
-            </tr>
-            <tr className="font-semibold">
-              <td className="p-2">Net Changes on Working Capital</td>
-              <td className="p-2"></td>
-              <td className="p-2 text-right">{fmt(d.workingCapital)}</td>
-            </tr>
-            <tr className="font-bold bg-gray-50">
-              <td className="p-2">Net Cash Flow From Operating Activities</td>
-              <td className="p-2"></td>
-              <td className="p-2 text-right">{fmt(o.net)}</td>
-            </tr>
+      {/* Simple desktop block (the report layout is already simplified) */}
+      <div className="card p-3 hidden sm:block">
+        <div className="font-semibold mb-1">
+          Cash Flow Statement — {periodLabel({ from, to })}
+        </div>
+        <div className="text-sm">
+          <div className="mb-2">
+            <div className="font-semibold">Operating Activities</div>
+            <div>Net Profit/Loss: <span className="font-mono">{fmt(o.netIncome)}</span></div>
+            <div className="mt-1 text-ink/70">Changes in Working Capital</div>
+            <div>Loan Receivable: <span className="font-mono">{fmt(d.loanReceivable)}</span></div>
+            <div>Rice Inventory: <span className="font-mono">{fmt(d.inventory)}</span></div>
+            <div>Net Changes on Working Capital: <span className="font-mono">{fmt(d.workingCapital)}</span></div>
+            <div className="mt-1">Net Cash Flow From Operating Activities: <span className="font-mono">{fmt(o.net)}</span></div>
+          </div>
 
-            {/* Investing */}
-            <tr>
-              <td colSpan={3} className="font-bold p-2">
-                Cash Flow From Investing Activities
-              </td>
-            </tr>
-            <tr>
-              <td className="p-2">None</td>
-              <td className="p-2"></td>
-              <td className="p-2 text-right">0.00</td>
-            </tr>
-            <tr className="font-bold bg-gray-50">
-              <td className="p-2">Net Cash Flow From Investing Activities</td>
-              <td className="p-2"></td>
-              <td className="p-2 text-right">0.00</td>
-            </tr>
+          <div className="mb-2">
+            <div className="font-semibold">Investing Activities</div>
+            <div>None</div>
+          </div>
 
-            {/* Financing */}
-            <tr>
-              <td colSpan={3} className="font-bold p-2">
-                Cash Flow From Financing Activities
-              </td>
-            </tr>
-            <tr>
-              <td className="p-2">Share Capital</td>
-              <td className="p-2">Share Capital</td>
-              <td className="p-2 text-right">{fmt(d.shareCapital)}</td>
-            </tr>
-            <tr className="font-bold bg-gray-50">
-              <td className="p-2">Net Cash Flow From Financing Activities</td>
-              <td className="p-2"></td>
-              <td className="p-2 text-right">{fmt(f.net)}</td>
-            </tr>
+          <div className="mb-2">
+            <div className="font-semibold">Financing Activities</div>
+            <div>Share Capital: <span className="font-mono">{fmt(d.shareCapital)}</span></div>
+            <div>Net Cash Flow From Financing Activities: <span className="font-mono">{fmt(f.net)}</span></div>
+          </div>
 
-            {/* Summary */}
-            <tr>
-              <td colSpan={3} className="font-bold p-2">
-                Summary
-              </td>
-            </tr>
-            <tr>
-              <td className="p-2">Net Increase In Cash</td>
-              <td className="p-2"></td>
-              <td className="p-2 text-right">{fmt(s.netChangeCash)}</td>
-            </tr>
-            <tr>
-              <td className="p-2">Beginning Cash Balance</td>
-              <td className="p-2"></td>
-              <td className="p-2 text-right">{fmt(s.startCash)}</td>
-            </tr>
-            <tr className="font-semibold">
-              <td className="p-2">Ending Balance Of Cash As Of {longDate(to)}</td>
-              <td className="p-2"></td>
-              <td className="p-2 text-right">{fmt(s.endCash)}</td>
-            </tr>
-          </tbody>
-        </table>
+          <div className="mt-3">
+            <div>Net Increase In Cash: <span className="font-mono">{fmt(s.netChangeCash)}</span></div>
+            <div>Beginning Cash Balance: <span className="font-mono">{fmt(s.startCash)}</span></div>
+            <div>Ending Balance Of Cash As Of {longDate(to)}: <span className="font-mono">{fmt(s.endCash)}</span></div>
+          </div>
+        </div>
+      </div>
+
+      {/* Mobile quick card */}
+      <div className="sm:hidden space-y-3">
+        <div className="card p-3">
+          <div className="font-semibold">Cash Flow</div>
+          <div className="text-sm text-ink/70">
+            Period: {periodLabel({ from, to })}
+          </div>
+          <div className="mt-2">
+            Net Δ Cash: <span className="font-mono">{fmt(s.netChangeCash)}</span>
+          </div>
+        </div>
       </div>
 
       {/* Actions */}
@@ -790,33 +740,28 @@ function CashFlowView({ reportDoc }) {
   );
 }
 
-/* -------------------- HTML snapshot (TB / Ledger) ----------------- */
+// Generic HTML snapshot (e.g., Trial Balance saved HTML)
 function HtmlSnapshotView({ reportDoc, titleFallback }) {
-  const iframeRef = useRef(null);
-  const html = reportDoc?.payload?.html || "";
+  const iframeRef = React.useRef(null);
+  const rawHtml = reportDoc?.payload?.html || "";
+  const srcDoc = React.useMemo(() => wrapSnapshotHtml(rawHtml), [rawHtml]);
 
   function printIframe() {
-    const iframe = iframeRef.current;
-    if (!iframe) return;
-    const w = iframe.contentWindow;
+    const w = iframeRef.current?.contentWindow;
     if (w) w.print();
   }
-
   function downloadHtml() {
-    const blob = new Blob([html || ""], { type: "text/html" });
+    const blob = new Blob([rawHtml || ""], { type: "text/html" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    const base =
-      reportDoc?.label || titleFallback || reportDoc?.type || "snapshot";
+    const base = reportDoc?.label || titleFallback || reportDoc?.type || "snapshot";
     a.href = url;
     a.download = `${base.replace(/[^\w\-]+/g, "_")}.html`;
     a.click();
     URL.revokeObjectURL(url);
   }
 
-  if (!html) {
-    return <div className="text-sm text-ink/60">No snapshot HTML stored.</div>;
-  }
+  if (!rawHtml) return <div className="text-sm text-ink/60">No snapshot HTML stored.</div>;
 
   return (
     <>
@@ -824,122 +769,139 @@ function HtmlSnapshotView({ reportDoc, titleFallback }) {
         <iframe
           ref={iframeRef}
           title="Snapshot"
-          srcDoc={html}
-          className="w-full min-h-[700px] bg-white"
+          srcDoc={srcDoc}
+          className="w-full min-h-[720px] bg-white"
           sandbox="allow-same-origin allow-modals allow-popups allow-forms allow-scripts"
         />
       </div>
       <div className="mt-2 flex gap-2">
-        <button className="btn btn-outline" onClick={printIframe}>
-          Print
-        </button>
-        <button className="btn btn-primary" onClick={downloadHtml}>
-          Download HTML
-        </button>
+        <button className="btn btn-outline" onClick={printIframe}>Print</button>
+        <button className="btn btn-primary" onClick={downloadHtml}>Download HTML</button>
       </div>
     </>
   );
 }
 
-/* =========================== PAGE WRAPPER ======================== */
+/* -------------------------- main view ----------------------------- */
 export default function ReportView() {
   const { id } = useParams();
   const nav = useNavigate();
   const { profile } = useUserProfile();
+  const isAdmin =
+    profile?.roles?.includes("admin") || profile?.role === "admin";
 
-  const [reportDoc, setReportDoc] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [docState, setDocState] = React.useState({
+    loading: true,
+    error: "",
+    report: null,
+  });
 
-  const canDelete = useMemo(() => {
-    const isAdmin =
-      profile?.role === "admin" || (profile?.roles || []).includes("admin");
-    const createdById = reportDoc?.createdById;
-    return isAdmin || (!!createdById && createdById === profile?.uid);
-  }, [profile, reportDoc]);
-
-  useEffect(() => {
+  React.useEffect(() => {
     let alive = true;
-    async function run() {
+    (async () => {
       try {
-        setLoading(true);
         const snap = await getDoc(doc(db, "financialReports", id));
         if (!alive) return;
-        setReportDoc({ id: snap.id, ...snap.data() });
+        if (!snap.exists()) {
+          setDocState({ loading: false, error: "Not found", report: null });
+        } else {
+          setDocState({
+            loading: false,
+            error: "",
+            report: { id: snap.id, ...snap.data() },
+          });
+        }
       } catch (e) {
-        console.error(e);
-        alert("Failed to load report: " + (e?.message || e));
-      } finally {
-        if (alive) setLoading(false);
+        if (!alive) return;
+        setDocState({
+          loading: false,
+          error: e?.message || "Failed to load",
+          report: null,
+        });
       }
-    }
-    run();
+    })();
     return () => {
       alive = false;
     };
   }, [id]);
 
   async function handleDelete() {
-    if (!canDelete) return;
+    if (!docState.report) return;
     if (!window.confirm("Delete this report?")) return;
-    await deleteDoc(doc(db, "financialReports", id));
+    await deleteDoc(doc(db, "financialReports", docState.report.id));
     nav("/reports");
   }
 
-  const type = reportDoc?.type || "";
-  const period = periodLabel({
-    from: reportDoc?.from,
-    to: reportDoc?.to,
-    periodStart: reportDoc?.periodStart,
-    periodEnd: reportDoc?.periodEnd,
-  });
+  const r = docState.report;
+  const period =
+    r?.type === "balanceSheet"
+      ? `as of ${r?.to || r?.from || "—"}`
+      : r
+      ? periodLabel({ from: r.from, to: r.to })
+      : "—";
 
   return (
-    <div className="max-w-screen-xl mx-auto px-3 sm:px-4 lg:px-6">
-      <div className="flex items-center gap-3 mb-3">
+    <PageBackground
+      image={reportsBg}
+      boxed
+      boxedWidth="max-w-6xl"
+      overlayClass="bg-white/85 backdrop-blur"
+      className="page-gutter"
+    >
+      <div className="flex items-center justify-between gap-3 mb-4">
         <button className="btn btn-outline" onClick={() => nav(-1)}>
           ← Back
         </button>
-        <h2 className="text-2xl font-bold flex-1">
-          {reportDoc?.label || "Report"}
-        </h2>
-        {canDelete && (
-          <button className="btn bg-red-600 text-white" onClick={handleDelete}>
+        <h1 className="text-2xl font-bold">
+          {r?.label || "Report"}
+        </h1>
+        {isAdmin ? (
+          <button className="btn btn-danger" onClick={handleDelete}>
             Delete
           </button>
+        ) : (
+          <span />
         )}
       </div>
 
-      <div className="text-sm text-ink/70 mb-3">
-        <span className="mr-4">
-          <strong>Type:</strong> {type || "—"}
-        </span>
-        <span>
-          <strong>Period:</strong> {period}
-        </span>
+      {/* Meta row */}
+      <div className="mb-3 text-sm text-ink/70 flex flex-wrap gap-4">
+        <div>
+          <span className="uppercase tracking-wide">Type:</span>{" "}
+          <span className="font-mono">{r?.type || "—"}</span>
+        </div>
+        <div>
+          <span className="uppercase tracking-wide">Period:</span>{" "}
+          <span className="font-mono">{period}</span>
+        </div>
       </div>
 
-      {loading ? (
-        <div>Loading…</div>
-      ) : !reportDoc ? (
-        <div className="text-red-600">Report not found.</div>
-      ) : type === "incomeStatement" ? (
-        <IncomeStatementView reportDoc={reportDoc} />
-      ) : type === "balanceSheet" ? (
-        <BalanceSheetView reportDoc={reportDoc} />
-      ) : type === "cashFlow" ? (
-        <CashFlowView reportDoc={reportDoc} />
-      ) : type === "trial_balance" ? (
-        <HtmlSnapshotView reportDoc={reportDoc} titleFallback="Trial Balance" />
-      ) : type === "ledger" ? (
-        <HtmlSnapshotView reportDoc={reportDoc} titleFallback="Ledger" />
-      ) : (
-        <div className="border rounded p-3">
-          <div className="font-semibold mb-2">Unknown report type. Raw JSON:</div>
-          <pre className="text-xs overflow-auto bg-gray-50 p-3 rounded">
-{JSON.stringify(reportDoc, null, 2)}
-          </pre>
-        </div>
-      )}
-    </div>
+      {/* Body */}
+      <div className="card p-4">
+        {docState.loading ? (
+          <div>Loading…</div>
+        ) : docState.error ? (
+          <div className="text-rose-700">{docState.error}</div>
+        ) : !r ? (
+          <div>Not found.</div>
+        ) : r.type === "incomeStatement" ? (
+          <IncomeStatementView reportDoc={r} />
+        ) : r.type === "balanceSheet" ? (
+          <BalanceSheetView reportDoc={r} />
+        ) : r.type === "cashFlow" ? (
+          <CashFlowView reportDoc={r} />
+        ) : r.payload?.html ? (
+          // Trial Balance or any HTML snapshot
+          <HtmlSnapshotView reportDoc={r} titleFallback={r.label} />
+        ) : (
+          <div>
+            <div className="mb-2 font-semibold">Unknown report type. Raw JSON:</div>
+            <pre className="text-xs whitespace-pre-wrap bg-gray-50 border p-3 rounded">
+              {JSON.stringify(r, null, 2)}
+            </pre>
+          </div>
+        )}
+      </div>
+    </PageBackground>
   );
 }
