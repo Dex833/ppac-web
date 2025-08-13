@@ -36,14 +36,35 @@ export default function EditHome() {
   const [success, setSuccess] = useState("");
 
   // Editable fields
-  const [announcement, setAnnouncement] = useState("");
+  const [announcement, setAnnouncement] = useState(`<b>Website Launch!</b> <br>We are excited to announce the launch of our cooperative's official website this August! Explore member services, accounting, news, and more.`);
   const [body, setBody] = useState("");
   const [featuredEvent, setFeaturedEvent] = useState("");
   const [resources, setResources] = useState("");
-  const [news, setNews] = useState(["", "", "", ""]);
+  const [news, setNews] = useState([
+    `<b>Great New Start for the Cooperative</b><br>We are off to a strong start this year, with new members joining and exciting plans ahead!`,
+    `<b>Financial System Online</b><br>Our website now features a full accounting system for members to view their share capital, loans, and more.`,
+    `<b>Agri Trading Center Sales</b><br>Sales every Tuesday and Friday night are going strong. Thank you for supporting our agri trading center!`,
+    `<b>Rice Stall Update</b><br>Our rice stall is seeing more customers every day. Thank you for your continued patronage!<br><br><b>CDA Papers</b><br>We are making progress on getting our papers done with the CDA.<br><br><b>Accepting New Members</b><br>Invite your friends and family to join our cooperative!`
+  ]);
 
   // Editable image slider array
-  const [sliderImages, setSliderImages] = useState([]); // [{url, link, label}]
+  const [sliderImages, setSliderImages] = useState([
+    {
+      url: "https://images.unsplash.com/photo-1519125323398-675f0ddb6308?auto=format&fit=crop&w=800&q=80",
+      link: "/BecomeMember",
+      label: "Become a Member"
+    },
+    {
+      url: "https://images.unsplash.com/photo-1464983953574-0892a716854b?auto=format&fit=crop&w=800&q=80",
+      link: "/ReportsToUser",
+      label: "Reports for Members"
+    },
+    {
+      url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=800&q=80",
+      link: "/RequirementsMembership",
+      label: "Membership Requirements"
+    }
+  ]); // [{url, link, label}]
 
   function addSliderImage() {
     setSliderImages((arr) => [...arr, { url: "", link: "", label: "" }]);
