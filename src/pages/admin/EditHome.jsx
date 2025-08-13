@@ -260,32 +260,42 @@ export default function EditHome() {
             </button>
           </div>
 
+
           <RichTextEditor
             label="Announcement"
             value={announcement}
             onChange={setAnnouncement}
           />
+          <div className="text-xs text-ink/60 mb-2">Supports HTML formatting (e.g. &lt;b&gt;, &lt;i&gt;, &lt;br&gt;)</div>
+
           <RichTextEditor label="Main Body" value={body} onChange={setBody} />
+          <div className="text-xs text-ink/60 mb-2">Supports HTML formatting (e.g. &lt;b&gt;, &lt;i&gt;, &lt;br&gt;)</div>
+
           <RichTextEditor
             label="Featured Event"
             value={featuredEvent}
             onChange={setFeaturedEvent}
           />
+          <div className="text-xs text-ink/60 mb-2">Supports HTML formatting (e.g. &lt;b&gt;, &lt;i&gt;, &lt;br&gt;)</div>
+
           <RichTextEditor
             label="Resources"
             value={resources}
             onChange={setResources}
           />
+          <div className="text-xs text-ink/60 mb-2">Supports HTML formatting (e.g. &lt;b&gt;, &lt;i&gt;, &lt;br&gt;)</div>
 
           <div>
             <label className="block font-semibold mb-1">News Items</label>
             {news.map((item, idx) => (
-              <RichTextEditor
-                key={idx}
-                label={`News #${idx + 1}`}
-                value={item}
-                onChange={(val) => setNewsItem(idx, val)}
-              />
+              <div key={idx}>
+                <RichTextEditor
+                  label={`News #${idx + 1}`}
+                  value={item}
+                  onChange={(val) => setNewsItem(idx, val)}
+                />
+                <div className="text-xs text-ink/60 mb-2">Supports HTML formatting (e.g. &lt;b&gt;, &lt;i&gt;, &lt;br&gt;)</div>
+              </div>
             ))}
           </div>
 
