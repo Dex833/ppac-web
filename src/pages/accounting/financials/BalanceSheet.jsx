@@ -28,14 +28,8 @@ import jsPDF from "jspdf";
 
 /* --------------------------- helpers --------------------------- */
 const CHART_COLORS = [
-  "#3b82f6",
-  "#10b981",
-  "#f59e0b",
-  "#ef4444",
-  "#8b5cf6",
-  "#06b6d4",
-  "#84cc16",
-  "#f97316",
+  "#3b82f6", "#10b981", "#f59e0b", "#ef4444",
+  "#8b5cf6", "#06b6d4", "#84cc16", "#f97316",
 ];
 
 function formatRange(from, to) {
@@ -44,7 +38,6 @@ function formatRange(from, to) {
   return from ? `${from} → —` : `— → ${to}`;
 }
 
-/* Load accounts (non-archived), sorted by code */
 function useAccounts() {
   const [accounts, setAccounts] = useState([]);
   useEffect(() => {
@@ -61,47 +54,8 @@ function useAccounts() {
   return accounts;
 }
 
-/* Deterministic, sticky Income Statements list */
-function useIncomeStatements() {
-  const [list, setList] = useState([]);
-  const [err, setErr] = useState(null);
-
-  useEffect(() => {
-    // fetch by "to" broadly, then sort deterministically on the client
-    const qIS = query(collection(db, "incomeStatementReports"), orderBy("to", "desc"));
-    const unsub = onSnapshot(
-      qIS,
-      (snap) => {
-        setErr(null);
-        const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        items.sort((a, b) => {
-          // newest 'to' first, then newest 'from', then latest generatedAt
-          const toCmp = String(b.to || "").localeCompare(String(a.to || ""));
-          if (toCmp !== 0) return toCmp;
-          const fromCmp = String(b.from || "").localeCompare(String(a.from || ""));
-          if (fromCmp !== 0) return fromCmp;
-          const genB = String(b.report?.generatedAt || "");
-          const genA = String(a.report?.generatedAt || "");
-          return genB.localeCompare(genA);
-        });
-        setList(items);
-      },
-      (e) => {
-        console.error("incomeStatementReports query failed:", e);
-        setErr(e);
-        setList([]);
-      }
-    );
-    return () => unsub();
-  }, []);
-
-  return { list, err };
-}
-
-/* Balance-sheet side utility: sum movement for an account up to (and incl.) asOf */
 function sumLinesForAccountAsOf(acc, entriesUpTo) {
-  let debit = 0,
-    credit = 0;
+  let debit = 0, credit = 0;
   entriesUpTo.forEach((e) => {
     (e.lines || []).forEach((l) => {
       if (l.accountId === acc.id) {
@@ -110,7 +64,6 @@ function sumLinesForAccountAsOf(acc, entriesUpTo) {
       }
     });
   });
-  // normal balances
   if (acc.type === "Asset") return debit - credit;
   if (acc.type === "Liability" || acc.type === "Equity") return credit - debit;
   return 0;
@@ -120,29 +73,11 @@ function sumLinesForAccountAsOf(acc, entriesUpTo) {
 export default function BalanceSheet() {
   const { profile } = useUserProfile();
   const isAdmin = profile?.role === "admin" || (profile?.roles || []).includes("admin");
-  const isTreasurer =
-    profile?.role === "treasurer" || (profile?.roles || []).includes("treasurer");
+  const isTreasurer = profile?.role === "treasurer" || (profile?.roles || []).includes("treasurer");
 
   const accounts = useAccounts();
-  const { list: isReports } = useIncomeStatements();
 
-  // STICKY selection: only auto-pick when nothing chosen or the chosen id no longer exists.
-  const [selectedISId, setSelectedISId] = useState("");
-  useEffect(() => {
-    if (isReports.length === 0) return;
-    const exists = isReports.some((r) => r.id === selectedISId);
-    if (!selectedISId || !exists) {
-      setSelectedISId(isReports[0].id); // newest after deterministic sort
-    }
-  }, [isReports, selectedISId]);
-
-  const selectedIS = useMemo(
-    () => isReports.find((r) => r.id === selectedISId),
-    [isReports, selectedISId]
-  );
-  const asOf = selectedIS?.to || "";
-
-  // journal entries (oldest first -> we'll filter by date)
+  // journal entries (oldest first)
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -155,7 +90,51 @@ export default function BalanceSheet() {
     return () => unsub();
   }, []);
 
-  // saved balance sheets (for Recent list & prev retained)
+  /* ---------------- IS reports (robust sort & sticky selection) ---------------- */
+  const [isReports, setIsReports] = useState([]);
+  const [selectedISId, setSelectedISId] = useState("");
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "incomeStatementReports"), (snap) => {
+      const list = snap.docs.map((d) => {
+        const data = d.data();
+        // normalize created timestamp (server or inside report)
+        const created =
+          data.createdAt?.toDate?.() ||
+          (data.report?.generatedAt ? new Date(data.report.generatedAt) : null);
+      return { id: d.id, ...data, _createdAt: created };
+      });
+
+      // sort: to DESC, then from DESC, then createdAt DESC
+      list.sort((a, b) => {
+        const aTo = a.to || a.report?.to || "";
+        const bTo = b.to || b.report?.to || "";
+        if (aTo !== bTo) return bTo.localeCompare(aTo);
+        const aFrom = a.from || a.report?.from || "";
+        const bFrom = b.from || b.report?.from || "";
+        if (aFrom !== bFrom) return bFrom.localeCompare(aFrom);
+        const at = a._createdAt ? a._createdAt.getTime() : 0;
+        const bt = b._createdAt ? b._createdAt.getTime() : 0;
+        return bt - at;
+      });
+
+      setIsReports(list);
+
+      // keep user's choice; otherwise default to first
+      setSelectedISId((prev) => (prev && list.some((r) => r.id === prev) ? prev : (list[0]?.id || "")));
+    });
+    return () => unsub();
+  }, []);
+
+  const selectedIS = useMemo(
+    () => isReports.find((r) => r.id === selectedISId),
+    [isReports, selectedISId]
+  );
+
+  // the Balance Sheet "as of" date is the Income Statement's 'to'
+  const asOf = selectedIS?.to || selectedIS?.report?.to || "";
+
+  /* ---------------- saved Balance Sheets ---------------- */
   const [bsReports, setBsReports] = useState([]);
   useEffect(() => {
     const qBS = query(collection(db, "balanceSheetReports"), orderBy("asOf", "desc"));
@@ -165,17 +144,18 @@ export default function BalanceSheet() {
     return () => unsub();
   }, []);
 
-  // previous BS strictly before selected asOf
+  // prior BS before current asOf (for retained earnings carry)
   const previousBS = useMemo(() => {
     if (!asOf) return null;
-    const prior = bsReports.filter((r) => r.asOf && r.asOf < asOf);
-    if (prior.length === 0) return null;
-    // pick the latest prior asOf
-    prior.sort((a, b) => String(a.asOf).localeCompare(String(b.asOf)));
-    return prior[prior.length - 1];
+    return (
+      bsReports
+        .filter((r) => r.asOf && r.asOf < asOf)
+        .sort((a, b) => a.asOf.localeCompare(b.asOf))
+        .pop() || null
+    );
   }, [bsReports, asOf]);
 
-  // entries up to asOf (inclusive)
+  // entries up to asOf
   const entriesUpTo = useMemo(() => {
     if (!asOf) return [];
     return entries.filter((e) => e.date && e.date <= asOf);
@@ -183,56 +163,29 @@ export default function BalanceSheet() {
 
   // slices
   const assets = useMemo(() => accounts.filter((a) => a.type === "Asset"), [accounts]);
-  const liabilities = useMemo(
-    () => accounts.filter((a) => a.type === "Liability"),
-    [accounts]
-  );
-  const equityAccounts = useMemo(
-    () => accounts.filter((a) => a.type === "Equity"),
-    [accounts]
-  );
+  const liabilities = useMemo(() => accounts.filter((a) => a.type === "Liability"), [accounts]);
+  const equityAccounts = useMemo(() => accounts.filter((a) => a.type === "Equity"), [accounts]);
 
-  // rows at-asOf
+  // rows
   const assetRows = useMemo(
-    () =>
-      assets.map((acc) => ({
-        acc,
-        amount: selectedIS ? sumLinesForAccountAsOf(acc, entriesUpTo) : 0,
-      })),
+    () => assets.map((acc) => ({ acc, amount: selectedIS ? sumLinesForAccountAsOf(acc, entriesUpTo) : 0 })),
     [assets, entriesUpTo, selectedIS]
   );
   const liabilityRows = useMemo(
-    () =>
-      liabilities.map((acc) => ({
-        acc,
-        amount: selectedIS ? sumLinesForAccountAsOf(acc, entriesUpTo) : 0,
-      })),
+    () => liabilities.map((acc) => ({ acc, amount: selectedIS ? sumLinesForAccountAsOf(acc, entriesUpTo) : 0 })),
     [liabilities, entriesUpTo, selectedIS]
   );
   const equityRows = useMemo(
-    () =>
-      equityAccounts.map((acc) => ({
-        acc,
-        amount: selectedIS ? sumLinesForAccountAsOf(acc, entriesUpTo) : 0,
-      })),
+    () => equityAccounts.map((acc) => ({ acc, amount: selectedIS ? sumLinesForAccountAsOf(acc, entriesUpTo) : 0 })),
     [equityAccounts, entriesUpTo, selectedIS]
   );
 
-  // totals
-  const totalAssets = useMemo(
-    () => assetRows.reduce((s, r) => s + r.amount, 0),
-    [assetRows]
-  );
-  const totalLiabilities = useMemo(
-    () => liabilityRows.reduce((s, r) => s + r.amount, 0),
-    [liabilityRows]
-  );
-  const totalEquityExRetained = useMemo(
-    () => equityRows.reduce((s, r) => s + r.amount, 0),
-    [equityRows]
-  );
+  // totals (before retained)
+  const totalAssets = useMemo(() => assetRows.reduce((s, r) => s + r.amount, 0), [assetRows]);
+  const totalLiabilities = useMemo(() => liabilityRows.reduce((s, r) => s + r.amount, 0), [liabilityRows]);
+  const totalEquityExRetained = useMemo(() => equityRows.reduce((s, r) => s + r.amount, 0), [equityRows]);
 
-  // retained = prior retained (from previous saved BS, if any) + selected IS net income
+  // retained = prior retained + current IS net income (from the selected IS report)
   const prevRetained =
     previousBS?.report?.retainedIncomeEnding != null
       ? Number(previousBS.report.retainedIncomeEnding) || 0
@@ -242,7 +195,6 @@ export default function BalanceSheet() {
 
   const totalEquity = totalEquityExRetained + (selectedIS ? retainedIncomeEnding : 0);
   const totalLiabEquity = totalLiabilities + totalEquity;
-
   const isBalanced = Math.abs(Number(totalAssets) - Number(totalLiabEquity)) < 0.005;
 
   // charts / notes / print
@@ -285,7 +237,7 @@ export default function BalanceSheet() {
     }));
   }
 
-  // save / delete / view
+  // save / delete / view (single saving state)
   const [saving, setSaving] = useState(false);
   const [showReport, setShowReport] = useState(null);
   const showSaved = Boolean(showReport?.report);
@@ -343,19 +295,13 @@ export default function BalanceSheet() {
 
   function handleShowSavedBS(r) {
     setShowReport(r);
-    setSelectedISId(""); // viewing saved; detach from selector
+    // leave selectedISId as-is; user can switch back
   }
 
   // view model (current vs saved)
   const viewTotals = showSaved
     ? view.totals
-    : {
-        assets: totalAssets,
-        liabilities: totalLiabilities,
-        equityExRetained: totalEquityExRetained,
-        equity: totalEquity,
-        liabPlusEquity: totalLiabEquity,
-      };
+    : { assets: totalAssets, liabilities: totalLiabilities, equityExRetained: totalEquityExRetained, equity: totalEquity, liabPlusEquity: totalLiabEquity };
   const viewRetained = showSaved ? view.retainedIncomeEnding : retainedIncomeEnding;
   const viewAssets = showSaved ? view.assets : viewRowMap(assetRows);
   const viewLiabs = showSaved ? view.liabilities : viewRowMap(liabilityRows);
@@ -363,18 +309,12 @@ export default function BalanceSheet() {
 
   /* ---------------- drilldown (responsive modal) ---------------- */
   const [drill, setDrill] = useState(null);
-
   function openDrilldown(row) {
-    setDrill({
-      code: row.code,
-      name: row.name,
-    });
+    setDrill({ code: row.code, name: row.name });
   }
-
   function renderDrilldown() {
     if (!drill) return null;
 
-    // resolve the real accountId from accounts by code
     const target =
       accounts.find((a) => a.code === drill.code) ||
       accounts.find((a) => a.id === drill.id);
@@ -384,7 +324,6 @@ export default function BalanceSheet() {
       ? entries.filter((e) => e.date && e.date <= limitDate)
       : entries;
 
-    // build rows for that accountId
     const rows = [];
     (list || []).forEach((e) => {
       (e.lines || []).forEach((l) => {
@@ -442,16 +381,10 @@ export default function BalanceSheet() {
                       <td className="p-2 font-mono">{r.ref}</td>
                       <td className="p-2">{r.desc}</td>
                       <td className="p-2 text-right">
-                        {r.debit.toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
+                        {r.debit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
                       <td className="p-2 text-right">
-                        {r.credit.toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
+                        {r.credit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
                     </tr>
                   ))
@@ -466,7 +399,6 @@ export default function BalanceSheet() {
 
   /* ---------------- exports ---------------- */
   function handleExportCSV() {
-    if (!asOf && !showSaved) return;
     setDownloading(true);
     const header = `Balance Sheet\nAs of,${showSaved ? viewAsOf : asOf}\n\n`;
     let csv = header + "Assets\nAccount,Amount\n";
@@ -495,7 +427,6 @@ export default function BalanceSheet() {
   }
 
   function handleExportPDF() {
-    if (!asOf && !showSaved) return;
     setDownloading(true);
     const d = new jsPDF();
     const title = `Balance Sheet (As of ${showSaved ? viewAsOf : asOf})`;
@@ -511,26 +442,16 @@ export default function BalanceSheet() {
       rows.forEach((r) => {
         d.text(`${r.code} - ${r.name}`, 16, y);
         d.text(
-          Number(r.amount).toLocaleString(undefined, {
-            minimumFractionDigits: 2,
-            maximumFractionDigits: 2,
-          }),
-          190 - 14,
-          y,
-          { align: "right" }
+          Number(r.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+          190 - 14, y, { align: "right" }
         );
         y += 6;
       });
       d.setFont(undefined, "bold");
       d.text(`Total ${name}`, 16, y);
       d.text(
-        Number(total).toLocaleString(undefined, {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        }),
-        190 - 14,
-        y,
-        { align: "right" }
+        Number(total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        190 - 14, y, { align: "right" }
       );
       d.setFont(undefined, "normal");
       y += 8;
@@ -543,13 +464,8 @@ export default function BalanceSheet() {
     d.setFont(undefined, "bold");
     d.text("Total Liabilities & Equity", 16, y);
     d.text(
-      Number(viewTotals.liabPlusEquity).toLocaleString(undefined, {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-      }),
-      190 - 14,
-      y,
-      { align: "right" }
+      Number(viewTotals.liabPlusEquity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+      190 - 14, y, { align: "right" }
     );
 
     d.save(`BalanceSheet_${showSaved ? viewAsOf : asOf}.pdf`);
@@ -611,10 +527,10 @@ export default function BalanceSheet() {
               value={selectedISId}
               onChange={(e) => setSelectedISId(e.target.value)}
             >
-              {isReports.length === 0 && <option value="">— No Income Statements —</option>}
+              <option value="">— Choose an Income Statement report —</option>
               {isReports.map((r) => (
                 <option key={r.id} value={r.id}>
-                  {formatRange(r.from, r.to)} • Net Income:{" "}
+                  {formatRange(r.from || r.report?.from, r.to || r.report?.to)} • Net Income:{" "}
                   {(r.report?.netIncome ?? 0).toLocaleString(undefined, {
                     minimumFractionDigits: 2,
                     maximumFractionDigits: 2,
@@ -626,7 +542,7 @@ export default function BalanceSheet() {
             {selectedIS && (
               <div className="flex items-center gap-2">
                 <span className="text-sm text-gray-700">
-                  As of: <strong>{asOf}</strong>
+                  As of: <strong>{asOf || "—"}</strong>
                 </span>
                 {(isAdmin || isTreasurer) && (
                   <button
@@ -649,8 +565,7 @@ export default function BalanceSheet() {
 
           {!selectedIS && !showSaved && (
             <p className="mt-2 text-xs text-gray-600">
-              Pick an Income Statement to generate a Balance Sheet as of that end date, then
-              click <em>Generate &amp; Save</em>.
+              Pick an Income Statement to generate a Balance Sheet as of that end date, then click <em>Generate &amp; Save</em>.
             </p>
           )}
         </div>
@@ -670,23 +585,13 @@ export default function BalanceSheet() {
             <div className="mb-3 text-sm text-gray-700">
               <div>
                 <span className="font-semibold">Retained Income/Loss:</span>{" "}
-                {viewRetained.toLocaleString(undefined, {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}
+                {viewRetained.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 {!showSaved && (
                   <span className="text-gray-500">
-                    {" "}
-                    (Prior retained{" "}
-                    {(previousBS?.report?.retainedIncomeEnding || 0).toLocaleString(undefined, {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
+                    {" "} (Prior retained{" "}
+                    {(previousBS?.report?.retainedIncomeEnding || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     {" + "}Net income{" "}
-                    {(isNetIncome || 0).toLocaleString(undefined, {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
+                    {(isNetIncome || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     )
                   </span>
                 )}
@@ -699,30 +604,12 @@ export default function BalanceSheet() {
                 <h4 className="font-semibold mb-1">Asset Allocation</h4>
                 <ResponsiveContainer width="100%" height={180}>
                   <PieChart>
-                    <Pie
-                      data={assetChartData}
-                      dataKey="value"
-                      nameKey="name"
-                      cx="50%"
-                      cy="50%"
-                      outerRadius={60}
-                      label
-                    >
-                      {assetChartData.map((entry, idx) => (
-                        <Cell
-                          key={`cell-${idx}`}
-                          fill={CHART_COLORS[idx % CHART_COLORS.length]}
-                        />
+                    <Pie data={assetChartData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={60} label>
+                      {assetChartData.map((_, idx) => (
+                        <Cell key={idx} fill={CHART_COLORS[idx % CHART_COLORS.length]} />
                       ))}
                     </Pie>
-                    <Tooltip
-                      formatter={(v) =>
-                        Number(v).toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })
-                      }
-                    />
+                    <Tooltip formatter={(v) => Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} />
                     <Legend />
                   </PieChart>
                 </ResponsiveContainer>
@@ -733,14 +620,7 @@ export default function BalanceSheet() {
                   <BarChart data={barChartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                     <XAxis dataKey="name" />
                     <YAxis />
-                    <Tooltip
-                      formatter={(v) =>
-                        Number(v).toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })
-                      }
-                    />
+                    <Tooltip formatter={(v) => Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} />
                     <Legend />
                     <Bar dataKey="value" fill="#60a5fa" />
                   </BarChart>
@@ -762,29 +642,17 @@ export default function BalanceSheet() {
                     </thead>
                     <tbody>
                       {viewAssets.map((row, i) => (
-                        <tr
-                          key={row.code + i}
-                          className="hover:bg-blue-50 cursor-pointer"
-                          onClick={() => openDrilldown(row)}
-                        >
-                          <td className="p-2 border-b border-r border-gray-200">
-                            {row.code} - {row.name}
-                          </td>
+                        <tr key={row.code + i} className="hover:bg-blue-50 cursor-pointer" onClick={() => openDrilldown(row)}>
+                          <td className="p-2 border-b border-r border-gray-200">{row.code} - {row.name}</td>
                           <td className="p-2 border-b text-right">
-                            {Number(row.amount || 0).toLocaleString(undefined, {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
+                            {Number(row.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </td>
                         </tr>
                       ))}
                       <tr className="font-bold bg-gray-100">
                         <td className="p-2 border-t text-right">Total Assets</td>
                         <td className="p-2 border-t text-right">
-                          {Number(viewTotals.assets || 0).toLocaleString(undefined, {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}
+                          {Number(viewTotals.assets || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
                       </tr>
                     </tbody>
@@ -804,97 +672,48 @@ export default function BalanceSheet() {
                     </thead>
                     <tbody>
                       {/* Liabilities */}
-                      <tr>
-                        <td colSpan={2} className="font-bold p-2">
-                          Liabilities
-                        </td>
-                      </tr>
+                      <tr><td colSpan={2} className="font-bold p-2">Liabilities</td></tr>
                       {viewLiabs.map((row, i) => (
-                        <tr
-                          key={row.code + i}
-                          className="hover:bg-blue-50 cursor-pointer"
-                          onClick={() => openDrilldown(row)}
-                        >
-                          <td className="p-2 border-b border-r border-gray-200">
-                            {row.code} - {row.name}
-                          </td>
+                        <tr key={row.code + i} className="hover:bg-blue-50 cursor-pointer" onClick={() => openDrilldown(row)}>
+                          <td className="p-2 border-b border-r border-gray-200">{row.code} - {row.name}</td>
                           <td className="p-2 border-b text-right">
-                            {Number(row.amount || 0).toLocaleString(undefined, {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
+                            {Number(row.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </td>
                         </tr>
                       ))}
                       <tr className="font-bold">
-                        <td className="p-2 border-t border-r border-gray-200 text-right">
-                          Total Liabilities
-                        </td>
+                        <td className="p-2 border-t border-r border-gray-200 text-right">Total Liabilities</td>
                         <td className="p-2 border-t text-right">
-                          {Number(viewTotals.liabilities || 0).toLocaleString(undefined, {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}
+                          {Number(viewTotals.liabilities || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
                       </tr>
 
                       {/* Equity */}
-                      <tr>
-                        <td colSpan={2} className="font-bold p-2">
-                          Equity
-                        </td>
-                      </tr>
+                      <tr><td colSpan={2} className="font-bold p-2">Equity</td></tr>
                       {viewEquity.map((row, i) => (
-                        <tr
-                          key={row.code + i}
-                          className="hover:bg-blue-50 cursor-pointer"
-                          onClick={() => openDrilldown(row)}
-                        >
-                          <td className="p-2 border-b border-r border-gray-200">
-                            {row.code} - {row.name}
-                          </td>
+                        <tr key={row.code + i} className="hover:bg-blue-50 cursor-pointer" onClick={() => openDrilldown(row)}>
+                          <td className="p-2 border-b border-r border-gray-200">{row.code} - {row.name}</td>
                           <td className="p-2 border-b text-right">
-                            {Number(row.amount || 0).toLocaleString(undefined, {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
+                            {Number(row.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </td>
                         </tr>
                       ))}
-
                       <tr className="bg-gray-50">
-                        <td className="p-2 border-b border-r border-gray-200">
-                          Retained Income/Loss
-                        </td>
+                        <td className="p-2 border-b border-r border-gray-200">Retained Income/Loss</td>
                         <td className="p-2 border-b text-right">
-                          {Number(viewRetained || 0).toLocaleString(undefined, {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}
+                          {Number(viewRetained || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
                       </tr>
-
                       <tr className="font-bold">
-                        <td className="p-2 border-t border-r border-gray-200 text-right">
-                          Total Equity
-                        </td>
+                        <td className="p-2 border-t border-r border-gray-200 text-right">Total Equity</td>
                         <td className="p-2 border-t text-right">
-                          {Number(viewTotals.equity || 0).toLocaleString(undefined, {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}
+                          {Number(viewTotals.equity || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
                       </tr>
-
                       <tr className="font-bold bg-gray-100">
-                        <td className="p-2 border-t border-r border-gray-200 text-right">
-                          Total Liabilities &amp; Equity
-                        </td>
+                        <td className="p-2 border-t border-r border-gray-200 text-right">Total Liabilities &amp; Equity</td>
                         <td className="p-2 border-t text-right">
-                          {Number(viewTotals.liabPlusEquity || 0).toLocaleString(undefined, {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}
+                          {Number(viewTotals.liabPlusEquity || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
                       </tr>
                     </tbody>
@@ -903,26 +722,17 @@ export default function BalanceSheet() {
               </div>
             </div>
 
-            {/* Mobile cards (<= sm) */}
+            {/* Mobile cards */}
             <div className="sm:hidden space-y-6">
               {/* Assets */}
               <div>
                 <div className="font-semibold mb-1">Assets</div>
                 <div className="space-y-2">
                   {viewAssets.map((row, i) => (
-                    <button
-                      key={row.code + i}
-                      onClick={() => openDrilldown(row)}
-                      className="w-full text-left card px-3 py-2 active:opacity-80"
-                    >
-                      <div className="text-sm">
-                        {row.code} - {row.name}
-                      </div>
+                    <button key={row.code + i} onClick={() => openDrilldown(row)} className="w-full text-left card px-3 py-2 active:opacity-80">
+                      <div className="text-sm">{row.code} - {row.name}</div>
                       <div className="font-mono text-right">
-                        {Number(row.amount || 0).toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
+                        {Number(row.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </button>
                   ))}
@@ -930,10 +740,7 @@ export default function BalanceSheet() {
                 <div className="mt-2 flex justify-between font-semibold">
                   <span>Total Assets</span>
                   <span className="font-mono">
-                    {Number(viewTotals.assets || 0).toLocaleString(undefined, {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
+                    {Number(viewTotals.assets || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
               </div>
@@ -943,19 +750,10 @@ export default function BalanceSheet() {
                 <div className="font-semibold mb-1">Liabilities</div>
                 <div className="space-y-2">
                   {viewLiabs.map((row, i) => (
-                    <button
-                      key={row.code + i}
-                      onClick={() => openDrilldown(row)}
-                      className="w-full text-left card px-3 py-2 active:opacity-80"
-                    >
-                      <div className="text-sm">
-                        {row.code} - {row.name}
-                      </div>
+                    <button key={row.code + i} onClick={() => openDrilldown(row)} className="w-full text-left card px-3 py-2 active:opacity-80">
+                      <div className="text-sm">{row.code} - {row.name}</div>
                       <div className="font-mono text-right">
-                        {Number(row.amount || 0).toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
+                        {Number(row.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </button>
                   ))}
@@ -963,10 +761,7 @@ export default function BalanceSheet() {
                 <div className="mt-2 flex justify-between font-semibold">
                   <span>Total Liabilities</span>
                   <span className="font-mono">
-                    {Number(viewTotals.liabilities || 0).toLocaleString(undefined, {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
+                    {Number(viewTotals.liabilities || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
               </div>
@@ -976,19 +771,10 @@ export default function BalanceSheet() {
                 <div className="font-semibold mb-1">Equity</div>
                 <div className="space-y-2">
                   {viewEquity.map((row, i) => (
-                    <button
-                      key={row.code + i}
-                      onClick={() => openDrilldown(row)}
-                      className="w-full text-left card px-3 py-2 active:opacity-80"
-                    >
-                      <div className="text-sm">
-                        {row.code} - {row.name}
-                      </div>
+                    <button key={row.code + i} onClick={() => openDrilldown(row)} className="w-full text-left card px-3 py-2 active:opacity-80">
+                      <div className="text-sm">{row.code} - {row.name}</div>
                       <div className="font-mono text-right">
-                        {Number(row.amount || 0).toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
+                        {Number(row.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                     </button>
                   ))}
@@ -998,19 +784,13 @@ export default function BalanceSheet() {
                   <div className="card px-3 py-2">
                     <div className="text-xs text-ink/70">Retained Income/Loss</div>
                     <div className="font-mono">
-                      {Number(viewRetained || 0).toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
+                      {Number(viewRetained || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
                   </div>
                   <div className="card px-3 py-2">
                     <div className="text-xs text-ink/70">Total Equity</div>
                     <div className="font-mono">
-                      {Number(viewTotals.equity || 0).toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
+                      {Number(viewTotals.equity || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
                   </div>
                 </div>
@@ -1018,10 +798,7 @@ export default function BalanceSheet() {
                 <div className="mt-3 py-2 px-3 bg-gray-100 rounded font-bold flex justify-between">
                   <span>Total Liabilities & Equity</span>
                   <span className="font-mono">
-                    {Number(viewTotals.liabPlusEquity || 0).toLocaleString(undefined, {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
+                    {Number(viewTotals.liabPlusEquity || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
               </div>
@@ -1035,15 +812,8 @@ export default function BalanceSheet() {
         <h4 className="text-lg font-semibold mb-2">Recent Reports</h4>
         <ul className="space-y-2">
           {bsReports.map((r) => (
-            <li
-              key={r.id}
-              className="flex items-center justify-between border border-gray-200 rounded px-3 py-2"
-            >
-              <button
-                className="text-left truncate"
-                onClick={() => handleShowSavedBS(r)}
-                title={`as of ${r.asOf}`}
-              >
+            <li key={r.id} className="flex items-center justify-between border border-gray-200 rounded px-3 py-2">
+              <button className="text-left truncate" onClick={() => handleShowSavedBS(r)} title={`as of ${r.asOf}`}>
                 as of {r.asOf}
               </button>
               {(isAdmin || isTreasurer) && (
