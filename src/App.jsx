@@ -54,9 +54,9 @@ function MobileMenu({
         <nav className="px-2 flex-1 overflow-auto">
           <ul className="space-y-1">
             <li>
-              <a className="block px-3 py-2 rounded hover:bg-brand-50" href="/" onClick={onClose}>
+              <Link className="block px-3 py-2 rounded hover:bg-brand-50" to="/" onClick={onClose}>
                 Home
-              </a>
+              </Link>
             </li>
 
             {!profile && (
@@ -73,41 +73,41 @@ function MobileMenu({
                   </button>
                 </li>
                 <li>
-                  <a className="block px-3 py-2 rounded hover:bg-brand-50" href="/signup" onClick={onClose}>
+                  <Link className="block px-3 py-2 rounded hover:bg-brand-50" to="/signup" onClick={onClose}>
                     Signup
-                  </a>
+                  </Link>
                 </li>
               </>
             )}
 
             <li>
-              <a className="block px-3 py-2 rounded hover:bg-brand-50" href="/dashboard" onClick={onClose}>
+              <Link className="block px-3 py-2 rounded hover:bg-brand-50" to="/dashboard" onClick={onClose}>
                 Dashboard
-              </a>
+              </Link>
             </li>
 
             {/* NEW: Reports (signed-in, not suspended) */}
             {profile && notSuspended && (
               <li>
-                <a className="block px-3 py-2 rounded hover:bg-brand-50" href="/reports" onClick={onClose}>
+                <Link className="block px-3 py-2 rounded hover:bg-brand-50" to="/reports" onClick={onClose}>
                   Reports
-                </a>
+                </Link>
               </li>
             )}
 
             {isAdmin && notSuspended && (
               <li>
-                <a className="block px-3 py-2 rounded hover:bg-brand-50" href="/admin/users" onClick={onClose}>
+                <Link className="block px-3 py-2 rounded hover:bg-brand-50" to="/admin/users" onClick={onClose}>
                   Admin
-                </a>
+                </Link>
               </li>
             )}
 
             {(notSuspended && (isAdmin || isTreasurer || isManager)) && (
               <li>
-                <a className="block px-3 py-2 rounded hover:bg-brand-50" href="/accounting" onClick={onClose}>
+                <Link className="block px-3 py-2 rounded hover:bg-brand-50" to="/accounting" onClick={onClose}>
                   Accounting
-                </a>
+                </Link>
               </li>
             )}
           </ul>

@@ -1,144 +1,126 @@
 // src/pages/reports/ReportView.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useSearchParams, Link } from "react-router-dom";
 import { db } from "../../lib/firebase";
-import { doc, getDoc } from "firebase/firestore";
-import { useParams, Link, useLocation } from "react-router-dom";
+import { doc, onSnapshot } from "firebase/firestore";
 
-const TYPE_LABELS = {
-  trial_balance: "Trial Balance",
-  income_statement: "Income Statement",
-  balance_sheet: "Balance Sheet",
-  cash_flow: "Cash Flow",
+/* ------------- helpers ------------- */
+function tsToDate(ts) {
+  if (!ts) return null;
+  if (typeof ts?.toDate === "function") return ts.toDate();
+  try { return new Date(ts); } catch { return null; }
+}
+const fmtDateTime = (ts) => {
+  const d = tsToDate(ts);
+  return d ? d.toLocaleString() : "—";
 };
-
-function toDate(v) {
-  if (!v) return null;
-  if (typeof v?.toDate === "function") return v.toDate();
-  if (typeof v?.seconds === "number") return new Date(v.seconds * 1000);
-  const d = new Date(v);
-  return isNaN(d.getTime()) ? null : d;
-}
-
-function normalizeDoc(source, id, raw) {
-  const type =
-    raw?.type ||
-    (source === "incomeStatementReports" && "income_statement") ||
-    ((source === "balanceSheetReports" || source === "balanceSheets") && "balance_sheet") ||
-    (source === "cashFlowStatementReports" && "cash_flow") ||
-    "unknown";
-
-  const createdAt =
-    toDate(raw?.createdAt) ||
-    toDate(raw?.created_at) ||
-    toDate(raw?.report?.generatedAt) ||
-    toDate(raw?.generatedAt) ||
-    null;
-
-  const periodStart = toDate(raw?.periodStart) || toDate(raw?.from);
-  const periodEnd   = toDate(raw?.periodEnd)   || toDate(raw?.to);
-
-  const title =
-    raw?.label ||
-    raw?.title ||
-    `${TYPE_LABELS[type] || type}`;
-
-  // Prefer saved HTML “payload.html” if present (new collection)
-  const payload = raw?.payload
-    ? raw.payload
-    : { report: raw?.report || raw }; // legacy: put whole doc/report as fallback
-
-  return {
-    id,
-    source,
-    type,
-    title,
-    periodStart,
-    periodEnd,
-    createdAt,
-    createdByName: raw?.createdByName || raw?.generatedBy || raw?.report?.generatedBy || "",
-    payload,
-    _raw: raw,
-  };
-}
-
-async function getFromAnyCollection(id, hintedSource) {
-  const candidates = hintedSource
-    ? [hintedSource]
-    : ["financialReports", "incomeStatementReports", "balanceSheetReports", "balanceSheets", "cashFlowStatementReports"];
-
-  for (const col of candidates) {
-    try {
-      const snap = await getDoc(doc(db, col, id));
-      if (snap.exists()) return normalizeDoc(col, snap.id, snap.data());
-    } catch (e) {
-      // ignore and try next (may be permission-restricted)
-    }
-  }
-  return null;
-}
+const safeFile = (s) => String(s || "report").replace(/[^\w\-]+/g, "_");
 
 export default function ReportView() {
   const { id } = useParams();
-  const { search } = useLocation();
-  const hintedSource = new URLSearchParams(search).get("src") || undefined;
+  const [search] = useSearchParams();
+  const collectionName = search.get("src") || "financialReports"; // default store
 
-  const [report, setReport] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [state, setState] = useState({ loading: true, exists: false, data: null });
+  const iframeRef = useRef(null);
 
   useEffect(() => {
-    let mounted = true;
-    (async () => {
-      const r = await getFromAnyCollection(id, hintedSource);
-      if (mounted) {
-        setReport(r);
-        setLoading(false);
+    const ref = doc(db, collectionName, id);
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        if (!snap.exists()) {
+          setState({ loading: false, exists: false, data: null });
+        } else {
+          setState({ loading: false, exists: true, data: { id: snap.id, ...snap.data() } });
+        }
+      },
+      (err) => {
+        console.error("ReportView error:", err);
+        setState({ loading: false, exists: false, data: null });
+        alert("Failed to load report: " + err.message);
       }
-    })();
-    return () => { mounted = false; };
-  }, [id, hintedSource]);
+    );
+    return () => unsub();
+  }, [collectionName, id]);
 
-  if (loading) return <div className="p-6">Loading…</div>;
+  const html = useMemo(() => state.data?.payload?.html || "", [state.data]);
+  const label = state.data?.label || "Report";
+  const period =
+    (state.data?.periodStart || "—") + " – " + (state.data?.periodEnd || "—");
+  const metaLine = useMemo(() => {
+    const who = state.data?.createdByName || "Unknown";
+    const when = fmtDateTime(state.data?.createdAt);
+    const type = state.data?.type || "—";
+    return `Type: ${type} • Created: ${when} • By: ${who}`;
+  }, [state.data]);
 
-  if (!report) {
+  function handlePrint() {
+    const frame = iframeRef.current;
+    if (!frame) return;
+    try {
+      frame.contentWindow?.focus();
+      frame.contentWindow?.print();
+    } catch {
+      window.print();
+    }
+  }
+
+  function handleDownloadHtml() {
+    if (!html) return;
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${safeFile(label)}.html`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 300);
+  }
+
+  if (state.loading) {
+    return <div className="p-4">Loading…</div>;
+  }
+  if (!state.exists) {
     return (
-      <div className="max-w-4xl mx-auto">
-        <Link to="/reports" className="text-sm text-blue-700 hover:underline">← Back to Reports</Link>
-        <div className="mt-4 p-6 border rounded-lg bg-white">Report not found or you lack permission to view it.</div>
+      <div className="p-6">
+        <h2 className="text-xl font-semibold mb-2">Report not found</h2>
+        <div className="text-ink/70 mb-4">ID: {id} (from {collectionName})</div>
+        <Link className="text-blue-700 underline" to="/accounting">Back to Accounting</Link>
       </div>
     );
   }
 
-  const start = report.periodStart;
-  const end = report.periodEnd;
-
   return (
-    <div className="max-w-5xl mx-auto">
-      <div className="flex items-center justify-between gap-3">
-        <Link to="/reports" className="text-sm text-blue-700 hover:underline">← Back to Reports</Link>
-        <div className="text-xs text-ink/60">{report.source}</div>
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-bold">{label}</h2>
+          <div className="text-sm text-ink/70">Period: {period}</div>
+          <div className="text-xs text-ink/60 mt-1">{metaLine}</div>
+        </div>
+        <div className="flex gap-2">
+          <button className="px-3 py-2 border rounded text-sm" onClick={handleDownloadHtml} disabled={!html}>
+            Download HTML
+          </button>
+          <button className="px-3 py-2 border rounded text-sm" onClick={handlePrint} disabled={!html}>
+            Print
+          </button>
+        </div>
       </div>
 
-      <div className="mt-3">
-        <div className="text-xs uppercase tracking-wide text-ink/60">{TYPE_LABELS[report.type] || report.type}</div>
-        <h1 className="text-2xl sm:text-3xl font-semibold mt-1">{report.title}</h1>
-        <div className="text-sm text-ink/60 mt-1">
-          Period: {start ? start.toLocaleDateString() : "—"} – {end ? end.toLocaleDateString() : "—"}
+      {!html ? (
+        <div className="p-4 border rounded bg-amber-50 text-amber-900">
+          This report has no HTML payload to display.
         </div>
-        <div className="text-xs text-ink/60">
-          Saved: {report.createdAt ? report.createdAt.toLocaleString() : "—"}{" "}
-          {report.createdByName ? `• by ${report.createdByName}` : ""}
-        </div>
-      </div>
-
-      <div className="mt-6 p-4 sm:p-6 border rounded-xl bg-white overflow-auto">
-        {report.payload?.html ? (
-          <div className="prose max-w-none" dangerouslySetInnerHTML={{ __html: report.payload.html }} />
-        ) : (
-          <pre className="text-xs overflow-auto">
-            {JSON.stringify(report.payload ?? report._raw, null, 2)}
-          </pre>
-        )}
-      </div>
+      ) : (
+        <iframe
+          ref={iframeRef}
+          title="Report"
+          srcDoc={html}
+          className="w-full border rounded"
+          style={{ height: "80vh", background: "white" }}
+        />
+      )}
     </div>
   );
 }

@@ -1,8 +1,40 @@
 // src/pages/accounting/TrialBalance.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { db } from "../../lib/firebase";
-import { collection, query, orderBy, onSnapshot } from "firebase/firestore";
+import {
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+  addDoc,
+  serverTimestamp,
+} from "firebase/firestore";
+import { useNavigate } from "react-router-dom";
+import useUserProfile from "../../hooks/useUserProfile";
 import jsPDF from "jspdf";
+
+/* ---------- Save TB snapshot to /financialReports ---------- */
+async function saveTrialBalanceReport({
+  html,
+  periodStart = null,
+  periodEnd = null,
+  label = "Trial Balance",
+  createdByName = "",
+  createdById = "",
+}) {
+  const ref = await addDoc(collection(db, "financialReports"), {
+    type: "trial_balance",
+    status: "generated",
+    label,
+    periodStart,
+    periodEnd,
+    createdAt: serverTimestamp(),
+    createdByName,
+    createdById,
+    payload: { html }, // rendered on /reports/:id
+  });
+  return ref.id;
+}
 
 /* ---------- Accounts hook ---------- */
 function useAccounts() {
@@ -27,11 +59,12 @@ const fmt = (n) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
-
 const safeNum = (v) => (v == null || v === "" ? 0 : parseFloat(v) || 0);
 
 export default function TrialBalance() {
   const accounts = useAccounts();
+  const { profile } = useUserProfile();
+  const nav = useNavigate();
 
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -43,6 +76,9 @@ export default function TrialBalance() {
 
   const [sortKey, setSortKey] = useState("code"); // 'code' | 'name' | 'debit' | 'credit'
   const [sortDir, setSortDir] = useState("asc"); // 'asc' | 'desc'
+
+  const [saving, setSaving] = useState(false);
+  const viewRef = useRef(null); // we snapshot this HTML
 
   // journalEntries in time order
   useEffect(() => {
@@ -59,7 +95,7 @@ export default function TrialBalance() {
   const filteredEntries = useMemo(() => {
     if (!from && !to) return entries;
     return entries.filter((e) => {
-      const d = e.date || ""; // expect 'YYYY-MM-DD' like the rest of the app
+      const d = e.date || ""; // 'YYYY-MM-DD'
       if (from && d < from) return false;
       if (to && d > to) return false;
       return true;
@@ -121,8 +157,7 @@ export default function TrialBalance() {
           vb = b.credit;
           break;
         default:
-          // code
-          va = a.code || "";
+          va = a.code || ""; // code
           vb = b.code || "";
       }
       if (va < vb) return sortDir === "asc" ? -1 : 1;
@@ -229,6 +264,58 @@ export default function TrialBalance() {
     }
   }
 
+  /* ---------- Save to Reports ---------- */
+  function suggestedLabel() {
+    return from || to
+      ? `Trial Balance (${from || "—"} – ${to || "—"})`
+      : "Trial Balance";
+  }
+
+  async function doSave(labelText) {
+    if (!viewRef.current) return;
+    setSaving(true);
+    try {
+      const html = `<!doctype html><meta charset="utf-8" />
+        <style>
+          body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial}
+          table{border-collapse:collapse;width:100%}
+          th,td{border:1px solid #e5e7eb;padding:6px 8px;font-size:12px}
+          th{background:#f9fafb;text-align:left}
+          .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+        </style>
+        <h1>Trial Balance</h1>
+        <div>Period: ${from || "—"} – ${to || "—"}</div>
+        <div style="margin-top:10px">${viewRef.current.innerHTML}</div>`;
+
+      const id = await saveTrialBalanceReport({
+        html,
+        periodStart: from || null,
+        periodEnd: to || null,
+        label: labelText || suggestedLabel(),
+        createdByName: profile?.displayName || profile?.email || "Unknown",
+        createdById: profile?.uid || "",
+      });
+
+      alert("Saved to Reports ✅");
+      nav(`/reports/${id}`);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to save: " + (e?.message || e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSaveToReports() {
+    await doSave(suggestedLabel());
+  }
+
+  async function handleSaveAs() {
+    const name = window.prompt("Name this report:", suggestedLabel());
+    if (name === null) return; // user cancelled
+    await doSave(name.trim() || suggestedLabel());
+  }
+
   return (
     <div className="overflow-x-auto">
       <div className="flex items-end justify-between gap-4 mb-4">
@@ -268,6 +355,8 @@ export default function TrialBalance() {
             />
             Include zero rows
           </label>
+
+          {/* Exports */}
           <button
             className="bg-blue-600 text-white px-3 py-2 rounded font-semibold"
             onClick={exportCSV}
@@ -288,107 +377,133 @@ export default function TrialBalance() {
           >
             Print
           </button>
+
+          {/* NEW: Save buttons */}
+          <button
+            className="bg-emerald-600 text-white px-3 py-2 rounded font-semibold disabled:opacity-60"
+            onClick={handleSaveToReports}
+            disabled={loading || saving}
+            title="Save a read-only snapshot to Reports"
+          >
+            {saving ? "Saving…" : "Save to Reports"}
+          </button>
+          <button
+            className="bg-emerald-700 text-white px-3 py-2 rounded font-semibold disabled:opacity-60"
+            onClick={handleSaveAs}
+            disabled={loading || saving}
+            title="Save with a custom name"
+          >
+            Save As…
+          </button>
         </div>
       </div>
 
-      {/* Mobile cards */}
-      <div className="sm:hidden space-y-3">
-        {rows.map((r) => (
-          <div key={r.id} className="rounded border border-gray-200 bg-white p-3">
-            <div className="flex items-center justify-between">
-              <div className="font-mono text-sm">{r.code}</div>
-              <div className="text-xs text-ink/60">{r.name}</div>
+      {/* === CONTENT TO SNAPSHOT === */}
+      <div ref={viewRef}>
+        {/* Mobile cards */}
+        <div className="sm:hidden space-y-3">
+          {rows.map((r) => (
+            <div key={r.id} className="rounded border border-gray-200 bg-white p-3">
+              <div className="flex items-center justify-between">
+                <div className="font-mono text-sm">{r.code}</div>
+                <div className="text-xs text-ink/60">{r.name}</div>
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                <div>
+                  Debit: <span className="font-mono">{r.debit ? fmt(r.debit) : "0.00"}</span>
+                </div>
+                <div>
+                  Credit: <span className="font-mono">{r.credit ? fmt(r.credit) : "0.00"}</span>
+                </div>
+              </div>
             </div>
-            <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-              <div>Debit: <span className="font-mono">{r.debit ? fmt(r.debit) : "0.00"}</span></div>
-              <div>Credit: <span className="font-mono">{r.credit ? fmt(r.credit) : "0.00"}</span></div>
-            </div>
+          ))}
+          {rows.length === 0 && !loading && (
+            <div className="text-sm text-ink/60">No matching accounts for the selected filters.</div>
+          )}
+          {loading && <div>Loading…</div>}
+        </div>
+
+        {/* Desktop table */}
+        <div className="hidden sm:block">
+          <div className="-mx-4 sm:mx-0 table-scroll">
+            <table className="min-w-full border border-gray-300 rounded text-sm">
+              <thead className="bg-gray-50 sticky top-0">
+                <tr>
+                  <th
+                    className="text-left p-2 border-b border-r border-gray-200 cursor-pointer select-none"
+                    onClick={() => setSortKey("code")}
+                    title="Sort by code"
+                  >
+                    Code {sortKey === "code" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                  </th>
+                  <th
+                    className="text-left p-2 border-b border-r border-gray-200 cursor-pointer select-none"
+                    onClick={() => setSortKey("name")}
+                    title="Sort by account"
+                  >
+                    Account {sortKey === "name" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                  </th>
+                  <th
+                    className="text-right p-2 border-b border-r border-gray-200 cursor-pointer select-none"
+                    onClick={() => setSortKey("debit")}
+                    title="Sort by debit"
+                  >
+                    Debit {sortKey === "debit" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                  </th>
+                  <th
+                    className="text-right p-2 border-b cursor-pointer select-none"
+                    onClick={() => setSortKey("credit")}
+                    title="Sort by credit"
+                  >
+                    Credit {sortKey === "credit" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id} className="odd:bg-white even:bg-gray-50">
+                    <td className="p-2 border-b border-r border-gray-200">{r.code}</td>
+                    <td className="p-2 border-b border-r border-gray-200">{r.name}</td>
+                    <td className="p-2 border-b border-r border-gray-200 text-right">
+                      {r.debit ? fmt(r.debit) : ""}
+                    </td>
+                    <td className="p-2 border-b text-right">{r.credit ? fmt(r.credit) : ""}</td>
+                  </tr>
+                ))}
+                <tr className="font-bold bg-gray-100">
+                  <td colSpan={2} className="p-2 border-t text-right">
+                    Totals:
+                  </td>
+                  <td className="p-2 border-t border-r border-gray-200 text-right">
+                    {fmt(totals.debit)}
+                  </td>
+                  <td className="p-2 border-t text-right">{fmt(totals.credit)}</td>
+                </tr>
+                {!isBalanced && (
+                  <tr className="bg-red-100 text-red-700 font-semibold">
+                    <td colSpan={2} className="p-2 border-t text-right">
+                      Difference:
+                    </td>
+                    <td colSpan={2} className="p-2 border-t text-right">
+                      {fmt(diff)}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
-        ))}
-        {rows.length === 0 && !loading && (
-          <div className="text-sm text-ink/60">No matching accounts for the selected filters.</div>
-        )}
-        {loading && <div>Loading…</div>}
-      </div>
+        </div>
 
-      {/* Desktop table */}
-      <div className="hidden sm:block">
-        <div className="-mx-4 sm:mx-0 table-scroll">
-          <table className="min-w-full border border-gray-300 rounded text-sm">
-            <thead className="bg-gray-50 sticky top-0">
-              <tr>
-                <th
-                  className="text-left p-2 border-b border-r border-gray-200 cursor-pointer select-none"
-                  onClick={() => handleSort("code")}
-                  title="Sort by code"
-                >
-                  Code {sortKey === "code" ? (sortDir === "asc" ? "▲" : "▼") : ""}
-                </th>
-                <th
-                  className="text-left p-2 border-b border-r border-gray-200 cursor-pointer select-none"
-                  onClick={() => handleSort("name")}
-                  title="Sort by account"
-                >
-                  Account {sortKey === "name" ? (sortDir === "asc" ? "▲" : "▼") : ""}
-                </th>
-                <th
-                  className="text-right p-2 border-b border-r border-gray-200 cursor-pointer select-none"
-                  onClick={() => handleSort("debit")}
-                  title="Sort by debit"
-                >
-                  Debit {sortKey === "debit" ? (sortDir === "asc" ? "▲" : "▼") : ""}
-                </th>
-                <th
-                  className="text-right p-2 border-b cursor-pointer select-none"
-                  onClick={() => handleSort("credit")}
-                  title="Sort by credit"
-                >
-                  Credit {sortKey === "credit" ? (sortDir === "asc" ? "▲" : "▼") : ""}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className="odd:bg-white even:bg-gray-50">
-                  <td className="p-2 border-b border-r border-gray-200">{r.code}</td>
-                  <td className="p-2 border-b border-r border-gray-200">{r.name}</td>
-                  <td className="p-2 border-b border-r border-gray-200 text-right">
-                    {r.debit ? fmt(r.debit) : ""}
-                  </td>
-                  <td className="p-2 border-b text-right">{r.credit ? fmt(r.credit) : ""}</td>
-                </tr>
-              ))}
-              <tr className="font-bold bg-gray-100">
-                <td colSpan={2} className="p-2 border-t text-right">
-                  Totals:
-                </td>
-                <td className="p-2 border-t border-r border-gray-200 text-right">
-                  {fmt(totals.debit)}
-                </td>
-                <td className="p-2 border-t text-right">{fmt(totals.credit)}</td>
-              </tr>
-              {!isBalanced && (
-                <tr className="bg-red-100 text-red-700 font-semibold">
-                  <td colSpan={2} className="p-2 border-t text-right">
-                    Difference:
-                  </td>
-                  <td colSpan={2} className="p-2 border-t text-right">
-                    {fmt(diff)}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+        <div className="mt-3 text-sm">
+          {isBalanced ? (
+            <span className="text-green-700 font-semibold">✅ Balanced</span>
+          ) : (
+            <span className="text-rose-700 font-semibold">⚠️ Out of balance</span>
+          )}
         </div>
       </div>
-
-      <div className="mt-3 text-sm">
-        {isBalanced ? (
-          <span className="text-green-700 font-semibold">✅ Balanced</span>
-        ) : (
-          <span className="text-rose-700 font-semibold">⚠️ Out of balance</span>
-        )}
-      </div>
+      {/* === /CONTENT TO SNAPSHOT === */}
     </div>
   );
 }

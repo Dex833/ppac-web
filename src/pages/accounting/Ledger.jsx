@@ -1,7 +1,16 @@
 // src/pages/accounting/Ledger.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { db } from "../../lib/firebase";
-import { collection, query, orderBy, onSnapshot } from "firebase/firestore";
+import {
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+  addDoc,
+  serverTimestamp,
+} from "firebase/firestore";
+import { useNavigate } from "react-router-dom";
+import useUserProfile from "../../hooks/useUserProfile";
 
 /* ----------------- helpers ----------------- */
 const fmtMoney = (n) =>
@@ -48,6 +57,29 @@ function useAccounts() {
   return accounts;
 }
 
+/* ---------- save to /financialReports (type: 'ledger') ---------- */
+async function saveLedgerReport({
+  html,
+  periodStart = null,
+  periodEnd = null,
+  label = "Ledger",
+  createdByName = "",
+  createdById = "",
+}) {
+  const ref = await addDoc(collection(db, "financialReports"), {
+    type: "ledger",
+    status: "generated",
+    label,
+    periodStart,
+    periodEnd,
+    createdAt: serverTimestamp(),
+    createdByName,
+    createdById,
+    payload: { html },
+  });
+  return ref.id;
+}
+
 export default function Ledger() {
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -61,6 +93,14 @@ export default function Ledger() {
   });
 
   const accounts = useAccounts();
+  const { profile } = useUserProfile();
+  const nav = useNavigate();
+
+  const isAdmin =
+    profile?.roles?.includes("admin") || profile?.role === "admin";
+
+  const snapshotRef = useRef(null);
+  const [saving, setSaving] = useState(false);
 
   // Load journal entries ordered by accounting date then refNumber
   useEffect(() => {
@@ -272,7 +312,7 @@ export default function Ledger() {
     setTimeout(() => URL.revokeObjectURL(url), 300);
   }
 
-  /* -------- Print/PDF helpers -------- */
+  /* -------- Print helpers -------- */
   function printHtmlDocument({ title = "Ledger", html = "" }) {
     const w = window.open("", "_blank", "noopener,noreferrer");
     if (!w) return;
@@ -336,6 +376,64 @@ thead{background:#f7f7f7}
 
   function printWholePage() {
     window.print();
+  }
+
+  /* -------- Save to Reports -------- */
+  const suggestedLabel = () => {
+    const acc = accounts.find((a) => a.id === filter.accountId);
+    const base = acc ? `Ledger — ${labelForAccount(acc)}` : "Ledger — All Accounts";
+    const range =
+      filter.from || filter.to ? ` (${filter.from || "—"} – ${filter.to || "—"})` : "";
+    return base + range;
+  };
+
+  async function doSave(labelText) {
+    if (!snapshotRef.current) return;
+    setSaving(true);
+    try {
+      const style = `
+        <style>
+          body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial;padding:16px}
+          h1,h2{margin:0 0 12px}
+          .muted{color:#666;margin-bottom:12px}
+          table{width:100%;border-collapse:collapse;font-size:12px}
+          th,td{border:1px solid #e5e7eb;padding:6px 8px;text-align:left}
+          thead{background:#f7f7f7}
+        </style>`;
+      const headerHtml = `
+        <h1>Ledger</h1>
+        <div class="muted">
+          Account: ${filter.accountId ? (labelForAccount(accounts.find(a=>a.id===filter.accountId)) || "—") : "All Accounts"}
+          <br/>Period: ${filter.from || "—"} – ${filter.to || "—"}
+        </div>`;
+      const html = `<!doctype html><meta charset="utf-8" />${style}${headerHtml}<div>${snapshotRef.current.innerHTML}</div>`;
+
+      const id = await saveLedgerReport({
+        html,
+        periodStart: filter.from || null,
+        periodEnd: filter.to || null,
+        label: labelText || suggestedLabel(),
+        createdByName: profile?.displayName || profile?.email || "Unknown",
+        createdById: profile?.uid || "",
+      });
+
+      alert("Saved to Reports ✅");
+      nav(`/reports/${id}?src=financialReports`);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to save: " + (e?.message || e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSave() {
+    await doSave(suggestedLabel());
+  }
+  async function handleSaveAs() {
+    const name = window.prompt("Name this ledger report:", suggestedLabel());
+    if (name === null) return;
+    await doSave((name || "").trim() || suggestedLabel());
   }
 
   /* -------- Modal (per-account) -------- */
@@ -416,7 +514,7 @@ thead{background:#f7f7f7}
                     <td colSpan={3} className="p-2 border-b border-r border-gray-200">Period totals</td>
                     <td className="p-2 border-b border-r border-gray-200 text-right">{fmtMoney(data.totals.debit)}</td>
                     <td className="p-2 border-b border-r border-gray-200 text-right">{fmtMoney(data.totals.credit)}</td>
-                    <td className="p-2 border-b border-r border-gray-200 text-right">{fmtMoney(data.ending)}</td>
+                    <td className="p-2 border-b border-r border-gray-200 text-right">{fmtMoney(accountPeriodData[accId]?.ending || 0)}</td>
                     <td className="p-2 border-b">—</td>
                   </tr>
                 )}
@@ -452,186 +550,214 @@ thead{background:#f7f7f7}
           <button type="button" className="px-3 py-1 border rounded text-sm" onClick={printWholePage}>
             Print / PDF (page)
           </button>
-        </div>
-      </div>
 
-      {/* Filters – responsive grid */}
-      <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 items-end">
-        <label className="block">
-          <span className="block text-xs text-gray-600">Account</span>
-          <select
-            className="border rounded px-2 py-2 w-full"
-            value={filter.accountId}
-            onChange={(e) => setFilter((f) => ({ ...f, accountId: e.target.value }))}
-          >
-            <option value="">All accounts</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {labelForAccount(a)}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="block">
-          <span className="block text-xs text-gray-600">Find</span>
-          <input
-            className="border rounded px-2 py-2 w-full"
-            placeholder="Search account name/code"
-            value={filter.search}
-            onChange={(e) => setFilter((f) => ({ ...f, search: e.target.value }))}
-            disabled={!!filter.accountId}
-            title={filter.accountId ? "Clear Account to use text search." : "Type to filter by account label."}
-          />
-        </label>
-
-        <label className="block">
-          <span className="block text-xs text-gray-600">From</span>
-          <input
-            className="border rounded px-2 py-2 w-full"
-            type="date"
-            value={filter.from}
-            onChange={(e) => setFilter((f) => ({ ...f, from: e.target.value }))}
-          />
-        </label>
-
-        <div className="flex gap-2">
-          <label className="block flex-1">
-            <span className="block text-xs text-gray-600">To</span>
-            <input
-              className="border rounded px-2 py-2 w-full"
-              type="date"
-              value={filter.to}
-              onChange={(e) => setFilter((f) => ({ ...f, to: e.target.value }))}
-            />
-          </label>
-          {(filter.from || filter.to || filter.accountId || filter.search) && (
-            <button
-              type="button"
-              className="self-end px-2 py-2 border rounded text-sm"
-              onClick={() => setFilter({ accountId: "", search: "", from: "", to: "" })}
-            >
-              Clear
-            </button>
+          {/* Save buttons (admin only) */}
+          {isAdmin && (
+            <>
+              <button
+                type="button"
+                className="px-3 py-1 rounded text-sm bg-emerald-600 text-white disabled:opacity-60"
+                onClick={handleSave}
+                disabled={saving || loading}
+                title="Save a read-only snapshot to /financialReports"
+              >
+                {saving ? "Saving…" : "Save to Reports"}
+              </button>
+              <button
+                type="button"
+                className="px-3 py-1 rounded text-sm bg-emerald-700 text-white disabled:opacity-60"
+                onClick={handleSaveAs}
+                disabled={saving || loading}
+                title="Save with a custom name"
+              >
+                Save As…
+              </button>
+            </>
           )}
         </div>
       </div>
 
-      {/* Content */}
-      {loading ? (
-        <div>Loading…</div>
-      ) : Object.keys(groups).length === 0 ? (
-        <div className="text-gray-500">No accounts found.</div>
-      ) : (
-        Object.keys(groups).map((mainName) => {
-          const accIds = groups[mainName] || [];
-          const groupEnding = accIds.reduce((sum, id) => sum + (accountPeriodData[id]?.ending || 0), 0);
+      {/* === CONTENT WE SNAPSHOT === */}
+      <div ref={snapshotRef}>
+        {/* Filters – responsive grid */}
+        <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 items-end">
+          <label className="block">
+            <span className="block text-xs text-gray-600">Account</span>
+            <select
+              className="border rounded px-2 py-2 w-full"
+              value={filter.accountId}
+              onChange={(e) => setFilter((f) => ({ ...f, accountId: e.target.value }))}
+            >
+              <option value="">All accounts</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {labelForAccount(a)}
+                </option>
+              ))}
+            </select>
+          </label>
 
-          return (
-            <div key={mainName} className="mb-6 border rounded">
-              <div
-                className="flex items-center justify-between bg-blue-50 px-3 py-2 cursor-pointer"
-                onClick={() => setExpanded((e) => ({ ...e, [mainName]: !e[mainName] }))}
+          <label className="block">
+            <span className="block text-xs text-gray-600">Find</span>
+            <input
+              className="border rounded px-2 py-2 w-full"
+              placeholder="Search account name/code"
+              value={filter.search}
+              onChange={(e) => setFilter((f) => ({ ...f, search: e.target.value }))}
+              disabled={!!filter.accountId}
+              title={filter.accountId ? "Clear Account to use text search." : "Type to filter by account label."}
+            />
+          </label>
+
+          <label className="block">
+            <span className="block text-xs text-gray-600">From</span>
+            <input
+              className="border rounded px-2 py-2 w-full"
+              type="date"
+              value={filter.from}
+              onChange={(e) => setFilter((f) => ({ ...f, from: e.target.value }))}
+            />
+          </label>
+
+          <div className="flex gap-2">
+            <label className="block flex-1">
+              <span className="block text-xs text-gray-600">To</span>
+              <input
+                className="border rounded px-2 py-2 w-full"
+                type="date"
+                value={filter.to}
+                onChange={(e) => setFilter((f) => ({ ...f, to: e.target.value }))}
+              />
+            </label>
+            {(filter.from || filter.to || filter.accountId || filter.search) && (
+              <button
+                type="button"
+                className="self-end px-2 py-2 border rounded text-sm"
+                onClick={() => setFilter({ accountId: "", search: "", from: "", to: "" })}
               >
-                <div className="font-semibold">
-                  {expanded[mainName] ? "▾" : "▸"} {mainName}
-                  <span className="ml-3 text-gray-600 font-normal">Ending Balance — {fmtMoney(groupEnding)}</span>
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Content */}
+        {loading ? (
+          <div>Loading…</div>
+        ) : Object.keys(groups).length === 0 ? (
+          <div className="text-gray-500">No accounts found.</div>
+        ) : (
+          Object.keys(groups).map((mainName) => {
+            const accIds = groups[mainName] || [];
+            const groupEnding = accIds.reduce((sum, id) => sum + (accountPeriodData[id]?.ending || 0), 0);
+
+            return (
+              <div key={mainName} className="mb-6 border rounded">
+                <div
+                  className="flex items-center justify-between bg-blue-50 px-3 py-2 cursor-pointer"
+                  onClick={() => setExpanded((e) => ({ ...e, [mainName]: !e[mainName] }))}
+                >
+                  <div className="font-semibold">
+                    {expanded[mainName] ? "▾" : "▸"} {mainName}
+                    <span className="ml-3 text-gray-600 font-normal">Ending Balance — {fmtMoney(groupEnding)}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      className="px-2 py-1 border rounded text-xs"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        exportGroupCsv(mainName);
+                      }}
+                    >
+                      CSV
+                    </button>
+                  </div>
                 </div>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    className="px-2 py-1 border rounded text-xs"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      exportGroupCsv(mainName);
-                    }}
-                  >
-                    CSV
-                  </button>
-                </div>
+
+                {expanded[mainName] && (
+                  <div className="p-3">
+                    {/* Desktop table */}
+                    <div className="hidden sm:block overflow-x-auto">
+                      <table className="min-w-full border border-gray-300 rounded text-sm">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="text-left p-2 border-b border-r border-gray-200">Code</th>
+                            <th className="text-left p-2 border-b border-r border-gray-200">Account</th>
+                            <th className="text-left p-2 border-b border-r border-gray-200">Ending Balance</th>
+                            <th className="text-left p-2 border-b">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {accIds.map((accId) => {
+                            const acc = accounts.find((a) => a.id === accId);
+                            const data = accountPeriodData[accId];
+                            return (
+                              <tr key={accId} className="odd:bg-white even:bg-gray-50">
+                                <td className="p-2 border-b border-r border-gray-200 font-mono">{acc?.code}</td>
+                                <td className="p-2 border-b border-r border-gray-200">{labelForAccount(acc)}</td>
+                                <td className="p-2 border-b border-r border-gray-200">{fmtMoney(data?.ending || 0)}</td>
+                                <td className="p-2 border-b">
+                                  <div className="flex gap-2">
+                                    <button type="button" className="px-2 py-1 border rounded text-xs" onClick={() => setModalAccId(accId)}>
+                                      View
+                                    </button>
+                                    <button type="button" className="px-2 py-1 border rounded text-xs" onClick={() => exportAccountCsv(accId)}>
+                                      CSV
+                                    </button>
+                                    <button type="button" className="px-2 py-1 border rounded text-xs" onClick={() => printAccount(accId)}>
+                                      Print / PDF
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Mobile cards */}
+                    <div className="sm:hidden space-y-3">
+                      {accIds.map((accId) => {
+                        const acc = accounts.find((a) => a.id === accId);
+                        const data = accountPeriodData[accId];
+                        return (
+                          <div key={accId} className="card p-3">
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <div className="text-xs text-ink/50">Code</div>
+                                <div className="font-mono">{acc?.code}</div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-xs text-ink/50">Ending</div>
+                                <div className="font-mono font-semibold">{fmtMoney(data?.ending || 0)}</div>
+                              </div>
+                            </div>
+                            <div className="mt-2 font-medium">{labelForAccount(acc)}</div>
+                            <div className="mt-3 flex justify-end gap-2">
+                              <button className="btn btn-sm btn-outline" onClick={() => setModalAccId(accId)}>
+                                View
+                              </button>
+                              <button className="btn btn-sm btn-outline" onClick={() => exportAccountCsv(accId)}>
+                                CSV
+                              </button>
+                              <button className="btn btn-sm btn-outline" onClick={() => printAccount(accId)}>
+                                Print
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
-
-              {expanded[mainName] && (
-                <div className="p-3">
-                  {/* Desktop table */}
-                  <div className="hidden sm:block overflow-x-auto">
-                    <table className="min-w-full border border-gray-300 rounded text-sm">
-                      <thead className="bg-gray-50">
-                        <tr>
-                          <th className="text-left p-2 border-b border-r border-gray-200">Code</th>
-                          <th className="text-left p-2 border-b border-r border-gray-200">Account</th>
-                          <th className="text-left p-2 border-b border-r border-gray-200">Ending Balance</th>
-                          <th className="text-left p-2 border-b">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {accIds.map((accId) => {
-                          const acc = accounts.find((a) => a.id === accId);
-                          const data = accountPeriodData[accId];
-                          return (
-                            <tr key={accId} className="odd:bg-white even:bg-gray-50">
-                              <td className="p-2 border-b border-r border-gray-200 font-mono">{acc?.code}</td>
-                              <td className="p-2 border-b border-r border-gray-200">{labelForAccount(acc)}</td>
-                              <td className="p-2 border-b border-r border-gray-200">{fmtMoney(data?.ending || 0)}</td>
-                              <td className="p-2 border-b">
-                                <div className="flex gap-2">
-                                  <button type="button" className="px-2 py-1 border rounded text-xs" onClick={() => setModalAccId(accId)}>
-                                    View
-                                  </button>
-                                  <button type="button" className="px-2 py-1 border rounded text-xs" onClick={() => exportAccountCsv(accId)}>
-                                    CSV
-                                  </button>
-                                  <button type="button" className="px-2 py-1 border rounded text-xs" onClick={() => printAccount(accId)}>
-                                    Print / PDF
-                                  </button>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* Mobile cards */}
-                  <div className="sm:hidden space-y-3">
-                    {accIds.map((accId) => {
-                      const acc = accounts.find((a) => a.id === accId);
-                      const data = accountPeriodData[accId];
-                      return (
-                        <div key={accId} className="card p-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <div className="text-xs text-ink/50">Code</div>
-                              <div className="font-mono">{acc?.code}</div>
-                            </div>
-                            <div className="text-right">
-                              <div className="text-xs text-ink/50">Ending</div>
-                              <div className="font-mono font-semibold">{fmtMoney(data?.ending || 0)}</div>
-                            </div>
-                          </div>
-                          <div className="mt-2 font-medium">{labelForAccount(acc)}</div>
-                          <div className="mt-3 flex justify-end gap-2">
-                            <button className="btn btn-sm btn-outline" onClick={() => setModalAccId(accId)}>
-                              View
-                            </button>
-                            <button className="btn btn-sm btn-outline" onClick={() => exportAccountCsv(accId)}>
-                              CSV
-                            </button>
-                            <button className="btn btn-sm btn-outline" onClick={() => printAccount(accId)}>
-                              Print
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })
-      )}
+            );
+          })
+        )}
+      </div>
+      {/* === /CONTENT WE SNAPSHOT === */}
 
       {/* Modal */}
       {modalAccId && <AccountModal accId={modalAccId} onClose={() => setModalAccId(null)} />}
