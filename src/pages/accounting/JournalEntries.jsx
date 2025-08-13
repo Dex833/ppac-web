@@ -132,11 +132,13 @@ export default function JournalEntries() {
   useEffect(() => {
     initialForm.current = JSON.stringify(form);
   }, []); // init only
+
   useEffect(() => {
     if (initialForm.current && JSON.stringify(form) !== initialForm.current) {
       setIsDirty(true);
     }
   }, [form]);
+
   useEffect(() => {
     const handleBeforeUnload = (e) => {
       if (isDirty) {
@@ -207,7 +209,7 @@ export default function JournalEntries() {
         })),
         createdAt: serverTimestamp(),
         createdById: user?.uid || "",
-        createdBy: createdByName,
+        createdBy: createdByName, // human-friendly
       });
 
       setForm({
@@ -248,6 +250,7 @@ export default function JournalEntries() {
       comments: entry.comments || "",
     });
   }
+
   async function saveEdit() {
     if (!editEntryId) return;
     try {
@@ -271,6 +274,7 @@ export default function JournalEntries() {
       setTimeout(() => setNotif({ show: false, type: "", message: "" }), 2000);
     }
   }
+
   async function deleteEntry(id) {
     if (!id) return;
     if (!window.confirm("Delete this journal entry?")) return;
@@ -308,7 +312,9 @@ export default function JournalEntries() {
   // ----- Admin: backfill creators -----
   async function backfillCreatedBy() {
     if (!isAdmin) return;
-    if (!window.confirm("Backfill 'Created By' on entries that are missing it?"))
+    if (
+      !window.confirm("Backfill 'Created By' on entries that are missing it?")
+    )
       return;
 
     try {
@@ -333,7 +339,7 @@ export default function JournalEntries() {
 
       all.forEach((docSnap) => {
         const e = docSnap.data();
-        if (e.createdBy || e.createdById || e.createdByName) return;
+        if (e.createdBy || e.createdById || e.createdByName) return; // already has something
 
         let candidate =
           e.createdByEmail ||
@@ -386,6 +392,7 @@ export default function JournalEntries() {
     try {
       await updateDoc(doc(db, "journalEntries", assignEntry.id), {
         createdBy: assignName.trim() || "Unknown",
+        // leave createdById empty unless you add a UID picker:
         createdById: assignEntry.createdById || "",
         updatedAt: serverTimestamp(),
         updatedById: user?.uid || "",
@@ -405,7 +412,7 @@ export default function JournalEntries() {
   }
 
   return (
-    <div className="max-w-4xl">
+    <div>
       <h3 className="text-xl font-semibold mb-4">New Journal Entry</h3>
 
       {notif.show && (
@@ -422,13 +429,13 @@ export default function JournalEntries() {
 
       <form
         id="journal-form"
-        className="space-y-4 bg-white p-4 rounded shadow mb-8"
+        className="space-y-4 bg-white p-4 rounded shadow max-w-3xl mb-8"
         onSubmit={handleSubmit}
       >
         {error && <div className="text-red-600 font-medium">{error}</div>}
 
         <div className="flex flex-wrap gap-4">
-          <div className="flex-1 min-w-[140px]">
+          <div className="flex-1 min-w-[120px]">
             <label className="block text-sm font-medium">Ref#</label>
             <input
               className="border rounded px-2 py-1 w-full font-mono bg-gray-100"
@@ -436,13 +443,15 @@ export default function JournalEntries() {
               readOnly
             />
           </div>
-          <div className="flex-1 min-w-[140px]">
+          <div className="flex-1 min-w-[120px]">
             <label className="block text-sm font-medium">Date</label>
             <input
               className="border rounded px-2 py-1 w-full"
               type="date"
               value={form.date}
-              onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, date: e.target.value }))
+              }
               required
             />
           </div>
@@ -471,116 +480,25 @@ export default function JournalEntries() {
           />
         </div>
 
-        {/* -------- Lines: no horizontal scroll -------- */}
         <div>
           <label className="block text-sm font-medium mb-2">Lines</label>
-
-          {/* Mobile / small: stacked cards (no table, no scroll) */}
-          <div className="md:hidden space-y-3">
-            {form.lines.map((line, idx) => (
-              <div
-                key={idx}
-                className="rounded border border-gray-200 bg-white p-3"
-              >
-                <div className="mb-2">
-                  <label className="block text-xs text-gray-600">Account</label>
-                  <select
-                    className="w-full border rounded px-2 py-2 text-sm"
-                    value={line.accountId}
-                    onChange={(e) =>
-                      handleLineChange(idx, "accountId", e.target.value)
-                    }
-                    required
-                  >
-                    <option value="">Select Account</option>
-                    {accounts.map((acc) => (
-                      <option key={acc.id} value={acc.id}>
-                        {acc.code} - {acc.main}
-                        {acc.individual ? " / " + acc.individual : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-gray-600">Debit</label>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      step="0.01"
-                      className="w-full border rounded px-2 py-2 text-right font-mono text-sm"
-                      value={line.debit}
-                      onChange={(e) =>
-                        handleLineChange(idx, "debit", e.target.value)
-                      }
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-600">Credit</label>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      step="0.01"
-                      className="w-full border rounded px-2 py-2 text-right font-mono text-sm"
-                      value={line.credit}
-                      onChange={(e) =>
-                        handleLineChange(idx, "credit", e.target.value)
-                      }
-                    />
-                  </div>
-                </div>
-
-                <div className="mt-2">
-                  <label className="block text-xs text-gray-600">Memo</label>
-                  <input
-                    className="w-full border rounded px-2 py-2 text-sm"
-                    value={line.memo}
-                    onChange={(e) =>
-                      handleLineChange(idx, "memo", e.target.value)
-                    }
-                  />
-                </div>
-
-                <div className="mt-2 text-right">
-                  <button
-                    type="button"
-                    className="text-red-600 px-2"
-                    onClick={() => removeLine(idx)}
-                    disabled={form.lines.length === 1}
-                  >
-                    Remove
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* md+ : compact table that fits container (no -mx, no min-w) */}
-          <div className="hidden md:block">
-            <table className="w-full table-fixed border rounded text-sm">
-              <colgroup>
-                <col className="w-[40%]" />
-                <col className="w-[15%]" />
-                <col className="w-[15%]" />
-                <col className="w-[25%]" />
-                <col className="w-[5%]" />
-              </colgroup>
+          <div className="-mx-4 sm:mx-0 table-scroll">
+            <table className="min-w-[680px] w-full border rounded text-sm">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="p-2 border-b text-left">Account</th>
+                  <th className="p-2 border-b">Account</th>
                   <th className="p-2 border-b text-right">Debit</th>
                   <th className="p-2 border-b text-right">Credit</th>
-                  <th className="p-2 border-b text-left">Memo</th>
+                  <th className="p-2 border-b">Memo</th>
                   <th className="p-2 border-b"></th>
                 </tr>
               </thead>
               <tbody>
                 {form.lines.map((line, idx) => (
-                  <tr key={idx} className="odd:bg-white even:bg-gray-50">
+                  <tr key={idx}>
                     <td className="p-2 border-b">
                       <select
-                        className="w-full border rounded px-2 py-2 text-sm"
+                        className="w-full min-w-0 border rounded px-2 py-2 text-sm"
                         value={line.accountId}
                         onChange={(e) =>
                           handleLineChange(idx, "accountId", e.target.value)
@@ -601,7 +519,7 @@ export default function JournalEntries() {
                         type="number"
                         inputMode="decimal"
                         step="0.01"
-                        className="w-full border rounded px-2 py-2 text-right font-mono text-sm"
+                        className="w-full min-w-0 border rounded px-2 py-2 text-right font-mono text-sm"
                         value={line.debit}
                         onChange={(e) =>
                           handleLineChange(idx, "debit", e.target.value)
@@ -613,7 +531,7 @@ export default function JournalEntries() {
                         type="number"
                         inputMode="decimal"
                         step="0.01"
-                        className="w-full border rounded px-2 py-2 text-right font-mono text-sm"
+                        className="w-full min-w-0 border rounded px-2 py-2 text-right font-mono text-sm"
                         value={line.credit}
                         onChange={(e) =>
                           handleLineChange(idx, "credit", e.target.value)
@@ -622,7 +540,7 @@ export default function JournalEntries() {
                     </td>
                     <td className="p-2 border-b">
                       <input
-                        className="w-full border rounded px-2 py-2 text-sm"
+                        className="w-full min-w-0 border rounded px-2 py-2 text-sm"
                         value={line.memo}
                         onChange={(e) =>
                           handleLineChange(idx, "memo", e.target.value)
@@ -632,10 +550,9 @@ export default function JournalEntries() {
                     <td className="p-2 border-b text-center">
                       <button
                         type="button"
-                        className="text-red-600 px-2"
+                        className="text-red-500 px-2"
                         onClick={() => removeLine(idx)}
                         disabled={form.lines.length === 1}
-                        title="Remove line"
                       >
                         ×
                       </button>
@@ -645,10 +562,9 @@ export default function JournalEntries() {
               </tbody>
             </table>
           </div>
-
           <button
             type="button"
-            className="mt-2 px-3 py-2 bg-gray-200 rounded w-full md:w-auto"
+            className="mt-2 px-3 py-2 bg-gray-200 rounded w-full sm:w-auto"
             onClick={addLine}
           >
             + Add Line
@@ -676,10 +592,22 @@ export default function JournalEntries() {
           </div>
         </div>
 
-        <div>
+        {/* Mobile save (just below totals) */}
+        <div className="mt-3 sm:hidden">
           <button
             type="submit"
-            className="bg-green-600 text-white px-6 py-2 rounded font-semibold hidden sm:inline-block"
+            className="w-full bg-green-600 text-white px-6 py-3 rounded font-semibold"
+            disabled={saving}
+          >
+            {saving ? "Saving..." : "Save Entry"}
+          </button>
+        </div>
+
+        {/* Desktop save */}
+        <div className="hidden sm:block">
+          <button
+            type="submit"
+            className="bg-green-600 text-white px-6 py-2 rounded font-semibold"
             disabled={saving}
           >
             {saving ? "Saving..." : "Save Entry"}
@@ -687,20 +615,10 @@ export default function JournalEntries() {
         </div>
       </form>
 
-      {/* Mobile sticky save */}
-      <div className="sm:hidden fixed inset-x-0 bottom-0 z-40 bg-white/95 backdrop-blur border-t p-3">
-        <button
-          type="submit"
-          form="journal-form"
-          className="btn btn-primary w-full"
-          disabled={saving}
-        >
-          {saving ? "Saving…" : "Save Entry"}
-        </button>
-      </div>
-
       <div className="flex items-center justify-between mt-10 mb-4">
-        <h3 className="text-xl font-semibold">Journal Entry History (latest 10)</h3>
+        <h3 className="text-xl font-semibold">
+          Journal Entry History (latest 10)
+        </h3>
         {isAdmin && (
           <button
             className="btn btn-sm btn-outline"
@@ -730,7 +648,9 @@ export default function JournalEntries() {
           className="border rounded px-2 py-1"
           placeholder="Filter by Account"
           value={filter.account}
-          onChange={(e) => setFilter((f) => ({ ...f, account: e.target.value }))}
+          onChange={(e) =>
+            setFilter((f) => ({ ...f, account: e.target.value }))
+          }
         />
       </div>
 
@@ -742,16 +662,24 @@ export default function JournalEntries() {
           <div className="sm:hidden space-y-3">
             {visibleEntries.map((entry) => {
               const debit =
-                entry.lines?.reduce((s, l) => s + (+l.debit || 0), 0) || 0;
+                entry.lines?.reduce(
+                  (s, l) => s + (+l.debit || 0),
+                  0
+                ) || 0;
               const credit =
-                entry.lines?.reduce((s, l) => s + (+l.credit || 0), 0) || 0;
+                entry.lines?.reduce(
+                  (s, l) => s + (+l.credit || 0),
+                  0
+                ) || 0;
               return (
                 <div
                   key={entry.id}
                   className="rounded border border-gray-200 bg-white p-3"
                 >
                   <div className="flex items-center justify-between">
-                    <div className="font-mono text-sm">Ref {entry.refNumber}</div>
+                    <div className="font-mono text-sm">
+                      Ref {entry.refNumber}
+                    </div>
                     <div className="text-xs text-ink/60">{entry.date}</div>
                   </div>
                   <div className="mt-1 text-sm">{entry.description}</div>
@@ -797,107 +725,110 @@ export default function JournalEntries() {
             })}
           </div>
 
-          {/* Desktop table (no negative margins, no min-w) */}
+          {/* Desktop table */}
           <div className="hidden sm:block">
-            <table className="w-full table-fixed border rounded text-sm">
-              <colgroup>
-                <col className="w-[12%]" />
-                <col className="w-[12%]" />
-                <col className="w-[32%]" />
-                <col className="w-[14%]" />
-                <col className="w-[14%]" />
-                <col className="w-[12%]" />
-                <col className="w-[14%]" />
-              </colgroup>
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="text-left p-2 border-b">Ref#</th>
-                  <th className="text-left p-2 border-b">Date</th>
-                  <th className="text-left p-2 border-b">Description</th>
-                  <th className="text-left p-2 border-b">Total Debit</th>
-                  <th className="text-left p-2 border-b">Total Credit</th>
-                  <th className="text-left p-2 border-b">Created By</th>
-                  <th className="text-left p-2 border-b">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleEntries.map((entry) => {
-                  const friendlyCreator =
-                    entry.createdBy ??
-                    entry.createdByName ??
-                    entry.updatedBy ??
-                    "Unknown";
-                  const totalD = (entry.lines || []).reduce(
-                    (s, l) => s + (parseFloat(l.debit) || 0),
-                    0
-                  );
-                  const totalC = (entry.lines || []).reduce(
-                    (s, l) => s + (parseFloat(l.credit) || 0),
-                    0
-                  );
+            <div className="-mx-4 sm:mx-0 table-scroll">
+              <table className="min-w-[780px] w-full border rounded text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="text-left p-2 border-b">Ref#</th>
+                    <th className="text-left p-2 border-b">Date</th>
+                    <th className="text-left p-2 border-b">Description</th>
+                    <th className="text-left p-2 border-b">Total Debit</th>
+                    <th className="text-left p-2 border-b">Total Credit</th>
+                    <th className="text-left p-2 border-b">Created By</th>
+                    <th className="text-left p-2 border-b">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleEntries.map((entry) => {
+                    const friendlyCreator =
+                      entry.createdBy ??
+                      entry.createdByName ??
+                      entry.updatedBy ??
+                      "Unknown";
+                    const totalD = (entry.lines || []).reduce(
+                      (s, l) => s + (parseFloat(l.debit) || 0),
+                      0
+                    );
+                    const totalC = (entry.lines || []).reduce(
+                      (s, l) => s + (parseFloat(l.credit) || 0),
+                      0
+                    );
 
-                  return (
-                    <tr key={entry.id} className="odd:bg-white even:bg-gray-50">
-                      <td className="p-2 border-b font-mono">{entry.refNumber}</td>
-                      <td className="p-2 border-b">{entry.date}</td>
-                      <td className="p-2 border-b">{entry.description}</td>
-                      <td className="p-2 border-b">
-                        {totalD.toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
-                      </td>
-                      <td className="p-2 border-b">
-                        {totalC.toLocaleString(undefined, {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
-                      </td>
-                      <td className="p-2 border-b">{friendlyCreator}</td>
-                      <td className="p-2 border-b">
-                        <button
-                          className="btn btn-sm btn-outline mr-1"
-                          onClick={() => startEdit(entry)}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          className="btn btn-sm btn-outline"
-                          onClick={() => deleteEntry(entry.id)}
-                        >
-                          Delete
-                        </button>
-                        {isAdmin && (
+                    return (
+                      <tr
+                        key={entry.id}
+                        className="odd:bg-white even:bg-gray-50"
+                      >
+                        <td className="p-2 border-b font-mono">
+                          {entry.refNumber}
+                        </td>
+                        <td className="p-2 border-b">{entry.date}</td>
+                        <td className="p-2 border-b">{entry.description}</td>
+                        <td className="p-2 border-b">
+                          {totalD.toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </td>
+                        <td className="p-2 border-b">
+                          {totalC.toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </td>
+                        <td className="p-2 border-b">{friendlyCreator}</td>
+                        <td className="p-2 border-b">
                           <button
-                            className="btn btn-sm btn-outline ml-1"
-                            onClick={() => openAssignCreator(entry)}
-                            title="Admin: set/override creator"
+                            className="btn btn-sm btn-outline mr-1"
+                            onClick={() => startEdit(entry)}
                           >
-                            Set Creator
+                            Edit
                           </button>
-                        )}
+                          <button
+                            className="btn btn-sm btn-outline"
+                            onClick={() => deleteEntry(entry.id)}
+                          >
+                            Delete
+                          </button>
+                          {isAdmin && (
+                            <button
+                              className="btn btn-sm btn-outline ml-1"
+                              onClick={() => openAssignCreator(entry)}
+                              title="Admin: set/override creator"
+                            >
+                              Set Creator
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {visibleEntries.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={7}
+                        className="p-4 text-gray-500 text-center"
+                      >
+                        No journal entries found.
                       </td>
                     </tr>
-                  );
-                })}
-                {visibleEntries.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="p-4 text-gray-500 text-center">
-                      No journal entries found.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>
       )}
 
       {/* Edit Modal */}
       {editEntryId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3">
-          <div className="bg-white rounded-xl shadow-lg w-[min(480px,94vw)] p-4">
-            <div className="text-lg font-semibold mb-3">Edit Journal Entry</div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-lg w-[420px] p-4">
+            <div className="text-lg font-semibold mb-3">
+              Edit Journal Entry
+            </div>
             <div className="space-y-3">
               <div>
                 <label className="block text-sm font-medium">Date</label>
@@ -906,18 +837,26 @@ export default function JournalEntries() {
                   className="border rounded px-2 py-1 w-full"
                   value={editEntryForm.date}
                   onChange={(e) =>
-                    setEditEntryForm((f) => ({ ...f, date: e.target.value }))
+                    setEditEntryForm((f) => ({
+                      ...f,
+                      date: e.target.value,
+                    }))
                   }
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium">Description</label>
+                <label className="block text-sm font-medium">
+                  Description
+                </label>
                 <input
                   type="text"
                   className="border rounded px-2 py-1 w-full"
                   value={editEntryForm.description}
                   onChange={(e) =>
-                    setEditEntryForm((f) => ({ ...f, description: e.target.value }))
+                    setEditEntryForm((f) => ({
+                      ...f,
+                      description: e.target.value,
+                    }))
                   }
                   placeholder="Short description"
                   maxLength={120}
@@ -930,7 +869,10 @@ export default function JournalEntries() {
                   className="border rounded px-2 py-1 w-full"
                   value={editEntryForm.comments}
                   onChange={(e) =>
-                    setEditEntryForm((f) => ({ ...f, comments: e.target.value }))
+                    setEditEntryForm((f) => ({
+                      ...f,
+                      comments: e.target.value,
+                    }))
                   }
                   maxLength={200}
                 />
@@ -957,8 +899,8 @@ export default function JournalEntries() {
 
       {/* Assign Creator Modal (admin) */}
       {assignOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3">
-          <div className="bg-white rounded-xl shadow-lg w-[min(480px,94vw)] p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-lg w-[420px] p-4">
             <div className="text-lg font-semibold mb-3">Set Creator</div>
             <label className="block text-sm mb-2">Name or email</label>
             <input
