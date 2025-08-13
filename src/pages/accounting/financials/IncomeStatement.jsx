@@ -1,9 +1,18 @@
 // src/pages/accounting/financials/IncomeStatement.jsx
 import React, { useEffect, useState, useRef } from "react";
 import { db } from "../../../lib/firebase";
-import { collection, query, orderBy, onSnapshot, deleteDoc, doc } from "firebase/firestore";
-import { saveIncomeStatementReport, getRecentIncomeStatementReports } from "./isReports";
+import {
+  collection,
+  query,
+  where,
+  orderBy,
+  limit,
+  onSnapshot,
+  deleteDoc,
+  doc,
+} from "firebase/firestore";
 import useUserProfile from "../../../hooks/useUserProfile";
+import { saveFinancialSnapshot } from "../../reports/saveSnapshot";
 import IncomeStatementChart from "./IncomeStatementChart";
 import jsPDF from "jspdf";
 
@@ -41,7 +50,7 @@ function isCOGSAccount(acc) {
   return ((acc.main || "").trim().toLowerCase() === "cogs");
 }
 
-/* Extract MAIN from "Main / Individual" */
+/* Extract MAIN from "Main / Individual" (for legacy saved docs) */
 function mainFromRenderedName(name = "") {
   return name.split(" / ")[0].trim().toLowerCase();
 }
@@ -89,7 +98,7 @@ export default function IncomeStatement() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [notes, setNotes] = useState("");
-  const [recentReports, setRecentReports] = useState([]);
+  const [recentReports, setRecentReports] = useState([]); // unified (financialReports)
   const [showReport, setShowReport] = useState(null); // {id?, from, to, report}
   const [generating, setGenerating] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -115,10 +124,19 @@ export default function IncomeStatement() {
     return () => unsub();
   }, []);
 
-  /* ---- load saved IS reports ---- */
+  /* ---- load recent unified IS reports ---- */
   useEffect(() => {
-    getRecentIncomeStatementReports().then(setRecentReports);
-  }, [generating]);
+    const q = query(
+      collection(db, "financialReports"),
+      where("type", "==", "incomeStatement"),
+      orderBy("createdAt", "desc"),
+      limit(25)
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      setRecentReports(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
+    return () => unsub();
+  }, []);
 
   /* ---- group accounts ---- */
   const revenueAccounts = accounts.filter((a) => isRevenueType(a.type));
@@ -174,14 +192,14 @@ export default function IncomeStatement() {
   const totalExpense = expenses.reduce((s, a) => s + a.amount, 0);
   const netIncome = grossProfit - totalExpense;
 
-  /* -------------------- actions -------------------- */
+  /* -------------------- actions (UNIFIED) -------------------- */
   async function handleGenerate() {
     setGenerating(true);
     const now = new Date();
 
     const report = {
       revenues,
-      cogs, // saved separately
+      cogs,
       expenses,
       totalRevenue,
       totalCOGS,
@@ -194,19 +212,30 @@ export default function IncomeStatement() {
       generatedAt: now.toISOString(),
     };
 
-    await saveIncomeStatementReport({ from, to, report });
-    setGenerating(false);
-    setShowReport({ from, to, report });
-    setNotes("");
-    getRecentIncomeStatementReports().then(setRecentReports);
+    try {
+      await saveFinancialSnapshot({
+        type: "incomeStatement",
+        label: "Income Statement",
+        from,
+        to,
+        report,
+        createdBy: userName,
+        createdById: userId,
+      });
+      setShowReport({ from, to, report });
+      setNotes("");
+    } catch (e) {
+      alert("Failed to save report: " + (e?.message || e));
+    } finally {
+      setGenerating(false);
+    }
   }
 
   async function handleDeleteReport(id) {
     if (!id) return;
     if (!canDeleteReports) return;
     if (!window.confirm("Delete this saved report?")) return;
-    await deleteDoc(doc(db, "incomeStatementReports", id));
-    getRecentIncomeStatementReports().then(setRecentReports);
+    await deleteDoc(doc(db, "financialReports", id));
     setShowReport(null);
   }
 
@@ -307,9 +336,9 @@ export default function IncomeStatement() {
       16, y
     );
     docPDF.setFont(undefined, "normal");
-    y += 8;
 
     if (reportObj.report.notes) {
+      y += 8;
       docPDF.text("Notes:", 14, y); y += 6;
       docPDF.text(String(reportObj.report.notes), 16, y);
     }
@@ -731,7 +760,7 @@ export default function IncomeStatement() {
               onClick={handleGenerate}
               disabled={generating || loading}
             >
-              {generating ? "Generating..." : "Generate Report"}
+              {generating ? "Generating..." : "Generate & Save"}
             </button>
             {showReport && (
               <button className="btn btn-outline" onClick={handleBackToCurrent}>
@@ -758,7 +787,7 @@ export default function IncomeStatement() {
         {loading ? <div>Loading…</div> : renderReport(activeReportObj)}
       </div>
 
-      {/* Sidebar (Recent Reports) */}
+      {/* Sidebar (Recent Reports - unified) */}
       <aside className="w-full lg:w-80 shrink-0">
         <h4 className="text-lg font-semibold mb-2">Recent Reports</h4>
         <ul className="space-y-2">

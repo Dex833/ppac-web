@@ -1,58 +1,20 @@
 // src/pages/accounting/financials/CashFlowStatement.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { db } from "../../../lib/firebase";
-import { collection, query, orderBy, onSnapshot } from "firebase/firestore";
-import useUserProfile from "../../../hooks/useUserProfile";
 import {
-  saveCashFlowStatementReport,
-  getRecentCashFlowStatementReports,
-  deleteCashFlowStatementReport,
-} from "./cfsReports";
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+  where,
+  limit,
+  deleteDoc,
+  doc,
+} from "firebase/firestore";
 import jsPDF from "jspdf";
-// at top of CashFlowStatement.jsx
+
 import useUserProfile from "../../../hooks/useUserProfile";
 import { saveFinancialSnapshot } from "../../reports/saveSnapshot";
-
-// inside component:
-const { profile } = useUserProfile();
-const createdBy = profile?.displayName || profile?.email || "Unknown";
-const createdById = profile?.uid || "";
-const [saving, setSaving] = React.useState(false);
-
-// You already compute these in the page:
-/// const operating = [...];   // { label, amount }
-/// const investing = [...];
-/// const financing = [...];
-/// const totalOperating, totalInvesting, totalFinancing;
-/// const netChange, beginningCash, endingCash;
-/// const from, to;
-
-async function handleSaveCashFlow() {
-  try {
-    setSaving(true);
-    await saveFinancialSnapshot({
-      type: "cashFlow",
-      label: "Cash Flow",
-      from,
-      to,
-      report: {
-        operating, investing, financing,
-        totalOperating, totalInvesting, totalFinancing,
-        netChange, beginningCash, endingCash,
-      },
-      createdBy, createdById,
-    });
-    alert("Cash Flow saved to Reports.");
-  } catch (e) {
-    alert("Save failed: " + (e?.message || e));
-  } finally {
-    setSaving(false);
-  }
-}
-
-<button className="btn btn-primary" onClick={handleSaveCashFlow} disabled={saving}>
-  {saving ? "Saving…" : "Save to Reports"}
-</button>
 
 /* ======================= small utils ======================= */
 const fmt = (n) =>
@@ -203,6 +165,8 @@ export default function CashFlowStatement() {
   const isTreasurer =
     profile?.role === "treasurer" ||
     (profile?.roles || []).includes("treasurer");
+  const createdBy = profile?.displayName || profile?.email || "Unknown";
+  const createdById = profile?.uid || "";
 
   const accounts = useAccounts();
   const entries = useJournalEntries();
@@ -238,9 +202,19 @@ export default function CashFlowStatement() {
     return computeVBAStyle(beginReport, endReport, endNetIncome);
   }, [startReportDoc, endReportDoc]);
 
+  /* ---------- load recent unified snapshots for Cash Flow ---------- */
   useEffect(() => {
-    getRecentCashFlowStatementReports().then(setRecentReports);
-  }, [saving]);
+    const qCF = query(
+      collection(db, "financialReports"),
+      where("type", "==", "cashFlow"),
+      orderBy("createdAt", "desc"),
+      limit(20)
+    );
+    const unsub = onSnapshot(qCF, (snap) => {
+      setRecentReports(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
+    return () => unsub();
+  }, []);
 
   /* ---------- drilldown ---------- */
   const idsFor = (key) => {
@@ -334,7 +308,7 @@ export default function CashFlowStatement() {
     );
   }
 
-  /* ---------- save / delete / open ---------- */
+  /* ---------- save / delete / open (UNIFIED) ---------- */
   async function handleGenerateAndSave() {
     if (!endReportDoc || !(isAdmin || isTreasurer)) return;
     setSaving(true);
@@ -349,28 +323,30 @@ export default function CashFlowStatement() {
       const fromLabel = startId === "first" ? "first period (all 0)" : `as of ${fromAsOf}`;
       const toLabel = `as of ${toAsOf}`;
 
-      const report = {
-        method: "vbaStyle",
-        inputs: calc.inputs,
-        deltas: calc.deltas,
-        sections: calc.sections,
-        summary: calc.summary,
-        createdAt: new Date().toISOString(),
-      };
-
-      await saveCashFlowStatementReport({
+      await saveFinancialSnapshot({
+        type: "cashFlow",
+        label: "Cash Flow",
         fromId: startId,
         fromLabel,
         fromAsOf,
         toId: endId,
         toLabel,
         toAsOf,
-        report,
+        report: {
+          method: "vbaStyle",
+          inputs: calc.inputs,
+          deltas: calc.deltas,
+          sections: calc.sections,
+          summary: calc.summary,
+        },
+        createdBy,
+        createdById,
       });
 
       setStartId("first");
       setEndId("");
       setShowReport(null);
+      alert("Cash Flow saved to Reports.");
     } catch (e) {
       console.error(e);
       alert("Failed to save Cash Flow Statement.");
@@ -378,13 +354,14 @@ export default function CashFlowStatement() {
       setSaving(false);
     }
   }
-  async function handleDeleteCFS(id) {
+
+  async function handleDeleteSnapshot(id) {
     if (!id || !(isAdmin || isTreasurer)) return;
     if (!window.confirm("Delete this saved Cash Flow Statement?")) return;
-    await deleteCashFlowStatementReport(id);
-    setRecentReports((prev) => prev.filter((r) => r.id !== id));
+    await deleteDoc(doc(db, "financialReports", id));
   }
-  function handleShowSavedCFS(r) {
+
+  function handleShowSaved(r) {
     setShowReport(r);
     setStartId("first");
     setEndId("");
@@ -733,7 +710,7 @@ export default function CashFlowStatement() {
         )}
       </div>
 
-      {/* Sidebar (Recent) */}
+      {/* Sidebar (Recent, unified) */}
       <aside className="w-full lg:w-80 shrink-0">
         <h4 className="text-lg font-semibold mb-2">Recent Reports</h4>
         <ul className="space-y-2">
@@ -744,7 +721,7 @@ export default function CashFlowStatement() {
             >
               <button
                 className="text-left truncate"
-                onClick={() => handleShowSavedCFS(r)}
+                onClick={() => handleShowSaved(r)}
                 title={`${periodLabelSafe(r)}`}
               >
                 {periodLabelSafe(r)}
@@ -754,7 +731,7 @@ export default function CashFlowStatement() {
                   className="ml-2 px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-800 text-xs font-semibold"
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleDeleteCFS(r.id);
+                    handleDeleteSnapshot(r.id);
                   }}
                 >
                   Delete

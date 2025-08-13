@@ -6,10 +6,10 @@ import {
   query,
   orderBy,
   onSnapshot,
-  addDoc,
+  where,
+  limit,
   deleteDoc,
   doc,
-  serverTimestamp,
 } from "firebase/firestore";
 import useUserProfile from "../../../hooks/useUserProfile";
 import {
@@ -25,48 +25,7 @@ import {
   Bar,
 } from "recharts";
 import jsPDF from "jspdf";
-// at top of BalanceSheet.jsx
-import useUserProfile from "../../../hooks/useUserProfile";
 import { saveFinancialSnapshot } from "../../reports/saveSnapshot";
-
-// inside component:
-const { profile } = useUserProfile();
-const createdBy = profile?.displayName || profile?.email || "Unknown";
-const createdById = profile?.uid || "";
-const [saving, setSaving] = React.useState(false);
-
-async function handleSaveBalanceSheet() {
-  try {
-    setSaving(true);
-
-    const totalAssets      = (assets || []).reduce((s,a)=> s + (+a.amount || +a.value || 0), 0);
-    const totalLiabilities = (liabilities || []).reduce((s,a)=> s + (+a.amount || +a.value || 0), 0);
-    const totalEquity      = (equity || []).reduce((s,a)=> s + (+a.amount || +a.value || 0), 0);
-
-    await saveFinancialSnapshot({
-      type: "balanceSheet",
-      label: "Balance Sheet",
-      from,                   // if you use "asOf", set both from/to = asOf
-      to,
-      report: {
-        assets, liabilities, equity,
-        totalAssets, totalLiabilities, totalEquity,
-      },
-      createdBy, createdById,
-    });
-
-    alert("Balance Sheet saved to Reports.");
-  } catch (e) {
-    alert("Save failed: " + (e?.message || e));
-  } finally {
-    setSaving(false);
-  }
-}
-
-// Add a button in your actions toolbar:
-<button className="btn btn-primary" onClick={handleSaveBalanceSheet} disabled={saving}>
-  {saving ? "Saving…" : "Save to Reports"}
-</button>
 
 /* --------------------------- helpers --------------------------- */
 const CHART_COLORS = [
@@ -126,6 +85,8 @@ export default function BalanceSheet() {
   const isTreasurer =
     profile?.role === "treasurer" ||
     (profile?.roles || []).includes("treasurer");
+  const createdBy = profile?.displayName || profile?.email || "Unknown";
+  const createdById = profile?.uid || "";
 
   const accounts = useAccounts();
 
@@ -134,10 +95,7 @@ export default function BalanceSheet() {
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     setLoading(true);
-    const qJE = query(
-      collection(db, "journalEntries"),
-      orderBy("createdAt", "asc")
-    );
+    const qJE = query(collection(db, "journalEntries"), orderBy("createdAt", "asc"));
     const unsub = onSnapshot(qJE, (snap) => {
       setEntries(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       setLoading(false);
@@ -145,17 +103,14 @@ export default function BalanceSheet() {
     return () => unsub();
   }, []);
 
-  // saved income statements
+  // income statements (legacy) used to pick the "as of" date
   const [isReports, setIsReports] = useState([]);
   const [selectedISId, setSelectedISId] = useState("");
   useEffect(() => {
-    const qIS = query(
-      collection(db, "incomeStatementReports"),
-      orderBy("from", "desc")
+    const qIS = query(collection(db, "incomeStatementReports"), orderBy("from", "desc"));
+    const unsub = onSnapshot(qIS, (snap) =>
+      setIsReports(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
     );
-    const unsub = onSnapshot(qIS, (snap) => {
-      setIsReports(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
     return () => unsub();
   }, []);
   const selectedIS = useMemo(
@@ -164,29 +119,20 @@ export default function BalanceSheet() {
   );
   const asOf = selectedIS?.to || "";
 
-  // saved balance sheets
-  const [bsReports, setBsReports] = useState([]);
+  // recent (UNIFIED) balance sheets
+  const [recentBS, setRecentBS] = useState([]);
   useEffect(() => {
-    const qBS = query(
-      collection(db, "balanceSheetReports"),
-      orderBy("asOf", "desc")
+    const q = query(
+      collection(db, "financialReports"),
+      where("type", "==", "balanceSheet"),
+      orderBy("createdAt", "desc"),
+      limit(20)
     );
-    const unsub = onSnapshot(qBS, (snap) => {
-      setBsReports(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    const unsub = onSnapshot(q, (snap) =>
+      setRecentBS(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    );
     return () => unsub();
   }, []);
-
-  // previous BS before current asOf
-  const previousBS = useMemo(() => {
-    if (!asOf) return null;
-    return (
-      bsReports
-        .filter((r) => r.asOf && r.asOf < asOf)
-        .sort((a, b) => a.asOf.localeCompare(b.asOf))
-        .pop() || null
-    );
-  }, [bsReports, asOf]);
 
   // entries up to asOf
   const entriesUpTo = useMemo(() => {
@@ -248,7 +194,27 @@ export default function BalanceSheet() {
     [equityRows]
   );
 
-  // retained = prior retained + current IS net income
+  // retained = (prior retained from most recent saved BS before asOf) + current IS net income
+  const [previousBS, setPreviousBS] = useState(null);
+  useEffect(() => {
+    // find most recent unified BS strictly before the selected asOf
+    if (!asOf) {
+      setPreviousBS(null);
+      return;
+    }
+    const q = query(
+      collection(db, "financialReports"),
+      where("type", "==", "balanceSheet"),
+      orderBy("toAsOf", "asc")
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const prior = all.filter((r) => r.toAsOf && r.toAsOf < asOf).pop() || null;
+      setPreviousBS(prior);
+    });
+    return () => unsub();
+  }, [asOf]);
+
   const prevRetained =
     previousBS?.report?.retainedIncomeEnding != null
       ? Number(previousBS.report.retainedIncomeEnding) || 0
@@ -256,17 +222,17 @@ export default function BalanceSheet() {
   const isNetIncome = selectedIS?.report?.netIncome ?? 0;
   const retainedIncomeEnding = prevRetained + isNetIncome;
 
-  const totalEquity =
-    totalEquityExRetained + (selectedIS ? retainedIncomeEnding : 0);
+  const totalEquity = totalEquityExRetained + (selectedIS ? retainedIncomeEnding : 0);
   const totalLiabEquity = totalLiabilities + totalEquity;
 
   const isBalanced =
     Math.abs(Number(totalAssets) - Number(totalLiabEquity)) < 0.005;
 
-  // charts / notes / print
+  // charts / notes / print / saving
   const [notes, setNotes] = useState("");
   const [downloading, setDownloading] = useState(false);
   const [printing, setPrinting] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const barChartData = useMemo(
     () => [
@@ -280,9 +246,7 @@ export default function BalanceSheet() {
       assetRows
         .filter((r) => r.amount !== 0)
         .map(({ acc, amount }) => ({
-          name: `${acc.code} - ${acc.main}${
-            acc.individual ? " / " + acc.individual : ""
-          }`,
+          name: `${acc.code} - ${acc.main}${acc.individual ? " / " + acc.individual : ""}`,
           value: Math.abs(amount),
         })),
     [assetRows]
@@ -305,25 +269,12 @@ export default function BalanceSheet() {
     }));
   }
 
-  // save / delete / view
-  const [saving, setSaving] = useState(false);
-  const [showReport, setShowReport] = useState(null);
-  const showSaved = Boolean(showReport?.report);
-  const view = showSaved ? showReport.report : null;
-  const viewAsOf = showSaved ? showReport.asOf : null;
-
+  // save (UNIFIED)
   async function handleGenerateAndSave() {
     if (!selectedIS || !(isAdmin || isTreasurer)) return;
     setSaving(true);
     try {
       const report = {
-        asOf,
-        sourceIS: {
-          id: selectedIS.id,
-          from: selectedIS.from || "",
-          to: selectedIS.to || "",
-          netIncome: isNetIncome,
-        },
         notes,
         prevRetained,
         retainedIncomeEnding,
@@ -337,30 +288,48 @@ export default function BalanceSheet() {
         assets: viewRowMap(assetRows),
         liabilities: viewRowMap(liabilityRows),
         equity: viewRowMap(equityRows),
-        createdAt: serverTimestamp(),
+        sourceIS: {
+          id: selectedIS.id,
+          from: selectedIS.from || "",
+          to: selectedIS.to || "",
+          netIncome: isNetIncome,
+        },
       };
 
-      await addDoc(collection(db, "balanceSheetReports"), {
-        asOf,
+      // Save to unified collection; we also store asOf on the doc
+      await saveFinancialSnapshot({
+        type: "balanceSheet",
+        label: "Balance Sheet",
+        from: asOf,                 // to keep ReportView period label happy
+        to: asOf,
+        fromAsOf: asOf,
+        toAsOf: asOf,               // explicit "as of" for both ends
+        asOf,                       // convenience field for this page
         report,
+        createdBy,
+        createdById,
       });
 
-      alert("Balance Sheet saved.");
+      alert("Balance Sheet saved to Reports.");
       setNotes("");
     } catch (e) {
       console.error(e);
-      alert("Failed to save Balance Sheet.");
+      alert("Failed to save Balance Sheet: " + (e?.message || e));
     } finally {
       setSaving(false);
     }
   }
 
+  // delete & view (UNIFIED)
   async function handleDeleteBS(id) {
     if (!id || !(isAdmin || isTreasurer)) return;
     if (!window.confirm("Delete this saved Balance Sheet?")) return;
-    await deleteDoc(doc(db, "balanceSheetReports", id));
+    await deleteDoc(doc(db, "financialReports", id));
   }
-
+  const [showReport, setShowReport] = useState(null);
+  const showSaved = Boolean(showReport?.report);
+  const view = showSaved ? showReport.report : null;
+  const viewAsOf = showSaved ? (showReport.asOf || showReport.toAsOf || "") : null;
   function handleShowSavedBS(r) {
     setShowReport(r);
     setSelectedISId("");
@@ -581,9 +550,9 @@ export default function BalanceSheet() {
   const prevNotice = useMemo(() => {
     if (!selectedIS) return "";
     if (!previousBS)
-      return "No prior Balance Sheet, this will be your first period. Beginning balances are 0. Ending balances are as of the selected IS end date.";
-    if (previousBS?.asOf && previousBS.asOf === asOf) return "";
-    return `Prior saved Balance Sheet is as of ${previousBS?.asOf || "—"}.`;
+      return "No prior Balance Sheet (unified). Beginning balances are 0. Ending balances are as of the selected IS end date.";
+    if (previousBS?.toAsOf && previousBS.toAsOf === asOf) return "";
+    return `Prior saved Balance Sheet is as of ${previousBS?.toAsOf || "—"}.`;
   }, [selectedIS, previousBS, asOf]);
 
   const showAsOf = showSaved ? viewAsOf : asOf;
@@ -599,18 +568,10 @@ export default function BalanceSheet() {
 
         {(selectedIS || showSaved) && (
           <div className="mb-3 flex flex-wrap gap-2 items-start sm:items-center">
-            <button
-              className="btn btn-primary"
-              onClick={handleExportCSV}
-              disabled={downloading}
-            >
+            <button className="btn btn-primary" onClick={handleExportCSV} disabled={downloading}>
               Export CSV
             </button>
-            <button
-              className="btn btn-primary"
-              onClick={handleExportPDF}
-              disabled={downloading}
-            >
+            <button className="btn btn-primary" onClick={handleExportPDF} disabled={downloading}>
               Export PDF
             </button>
             <button className="btn btn-outline" onClick={handlePrint}>
@@ -623,9 +584,7 @@ export default function BalanceSheet() {
               onChange={(e) => setNotes(e.target.value)}
               maxLength={500}
             />
-            {!isBalanced && (
-              <span className="text-red-600 font-semibold">⚠️ Out of balance!</span>
-            )}
+            {!isBalanced && <span className="text-red-600 font-semibold">⚠️ Out of balance!</span>}
           </div>
         )}
 
@@ -678,8 +637,8 @@ export default function BalanceSheet() {
 
           {!selectedIS && !showSaved && (
             <p className="mt-2 text-xs text-gray-600">
-              Pick an Income Statement to generate a Balance Sheet as of that
-              end date, then click <em>Generate &amp; Save</em>.
+              Pick an Income Statement to generate a Balance Sheet as of that end
+              date, then click <em>Generate &amp; Save</em>.
             </p>
           )}
         </div>
@@ -699,7 +658,7 @@ export default function BalanceSheet() {
             <div className="mb-3 text-sm text-gray-700">
               <div>
                 <span className="font-semibold">Retained Income/Loss:</span>{" "}
-                {viewRetained.toLocaleString(undefined, {
+                {Number(viewRetained).toLocaleString(undefined, {
                   minimumFractionDigits: 2,
                   maximumFractionDigits: 2,
                 })}
@@ -707,12 +666,12 @@ export default function BalanceSheet() {
                   <span className="text-gray-500">
                     {" "}
                     (Prior retained{" "}
-                    {(previousBS?.report?.retainedIncomeEnding || 0).toLocaleString(
+                    {Number(previousBS?.report?.retainedIncomeEnding || 0).toLocaleString(
                       undefined,
                       { minimumFractionDigits: 2, maximumFractionDigits: 2 }
                     )}
                     {" + "}Net income{" "}
-                    {(isNetIncome || 0).toLocaleString(undefined, {
+                    {Number(isNetIncome || 0).toLocaleString(undefined, {
                       minimumFractionDigits: 2,
                       maximumFractionDigits: 2,
                     })}
@@ -738,10 +697,7 @@ export default function BalanceSheet() {
                       label
                     >
                       {assetChartData.map((entry, idx) => (
-                        <Cell
-                          key={`cell-${idx}`}
-                          fill={CHART_COLORS[idx % CHART_COLORS.length]}
-                        />
+                        <Cell key={`cell-${idx}`} fill={CHART_COLORS[idx % CHART_COLORS.length]} />
                       ))}
                     </Pie>
                     <Tooltip
@@ -759,10 +715,7 @@ export default function BalanceSheet() {
               <div className="min-w-[240px] flex-1">
                 <h4 className="font-semibold mb-1">Liabilities vs Equity</h4>
                 <ResponsiveContainer width="100%" height={180}>
-                  <BarChart
-                    data={barChartData}
-                    margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
-                  >
+                  <BarChart data={barChartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                     <XAxis dataKey="name" />
                     <YAxis />
                     <Tooltip
@@ -813,10 +766,10 @@ export default function BalanceSheet() {
                       <tr className="font-bold bg-gray-100">
                         <td className="p-2 border-t text-right">Total Assets</td>
                         <td className="p-2 border-t text-right">
-                          {Number(viewTotals.assets || 0).toLocaleString(
-                            undefined,
-                            { minimumFractionDigits: 2, maximumFractionDigits: 2 }
-                          )}
+                          {Number(viewTotals.assets || 0).toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
                         </td>
                       </tr>
                     </tbody>
@@ -830,9 +783,7 @@ export default function BalanceSheet() {
                   <table className="min-w-full border border-gray-300 rounded text-sm mb-6">
                     <thead className="bg-gray-50">
                       <tr>
-                        <th className="text-left p-2 border-b">
-                          Liabilities &amp; Equity
-                        </th>
+                        <th className="text-left p-2 border-b">Liabilities &amp; Equity</th>
                         <th className="text-right p-2 border-b">Amount</th>
                       </tr>
                     </thead>
@@ -865,10 +816,10 @@ export default function BalanceSheet() {
                           Total Liabilities
                         </td>
                         <td className="p-2 border-t text-right">
-                          {Number(viewTotals.liabilities || 0).toLocaleString(
-                            undefined,
-                            { minimumFractionDigits: 2, maximumFractionDigits: 2 }
-                          )}
+                          {Number(viewTotals.liabilities || 0).toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
                         </td>
                       </tr>
 
@@ -913,10 +864,10 @@ export default function BalanceSheet() {
                           Total Equity
                         </td>
                         <td className="p-2 border-t text-right">
-                          {Number(viewTotals.equity || 0).toLocaleString(
-                            undefined,
-                            { minimumFractionDigits: 2, maximumFractionDigits: 2 }
-                          )}
+                          {Number(viewTotals.equity || 0).toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
                         </td>
                       </tr>
 
@@ -925,10 +876,10 @@ export default function BalanceSheet() {
                           Total Liabilities &amp; Equity
                         </td>
                         <td className="p-2 border-t text-right">
-                          {Number(viewTotals.liabPlusEquity || 0).toLocaleString(
-                            undefined,
-                            { minimumFractionDigits: 2, maximumFractionDigits: 2 }
-                          )}
+                          {Number(viewTotals.liabPlusEquity || 0).toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
                         </td>
                       </tr>
                     </tbody>
@@ -949,9 +900,14 @@ export default function BalanceSheet() {
                       onClick={() => openDrilldown(row)}
                       className="w-full text-left card px-3 py-2 active:opacity-80"
                     >
-                      <div className="text-sm">{row.code} - {row.name}</div>
+                      <div className="text-sm">
+                        {row.code} - {row.name}
+                      </div>
                       <div className="font-mono text-right">
-                        {Number(row.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {Number(row.amount || 0).toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
                       </div>
                     </button>
                   ))}
@@ -959,7 +915,10 @@ export default function BalanceSheet() {
                 <div className="mt-2 flex justify-between font-semibold">
                   <span>Total Assets</span>
                   <span className="font-mono">
-                    {Number(viewTotals.assets || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {Number(viewTotals.assets || 0).toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
                   </span>
                 </div>
               </div>
@@ -974,9 +933,14 @@ export default function BalanceSheet() {
                       onClick={() => openDrilldown(row)}
                       className="w-full text-left card px-3 py-2 active:opacity-80"
                     >
-                      <div className="text-sm">{row.code} - {row.name}</div>
+                      <div className="text-sm">
+                        {row.code} - {row.name}
+                      </div>
                       <div className="font-mono text-right">
-                        {Number(row.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {Number(row.amount || 0).toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
                       </div>
                     </button>
                   ))}
@@ -984,7 +948,10 @@ export default function BalanceSheet() {
                 <div className="mt-2 flex justify-between font-semibold">
                   <span>Total Liabilities</span>
                   <span className="font-mono">
-                    {Number(viewTotals.liabilities || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {Number(viewTotals.liabilities || 0).toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
                   </span>
                 </div>
               </div>
@@ -999,9 +966,14 @@ export default function BalanceSheet() {
                       onClick={() => openDrilldown(row)}
                       className="w-full text-left card px-3 py-2 active:opacity-80"
                     >
-                      <div className="text-sm">{row.code} - {row.name}</div>
+                      <div className="text-sm">
+                        {row.code} - {row.name}
+                      </div>
                       <div className="font-mono text-right">
-                        {Number(row.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {Number(row.amount || 0).toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
                       </div>
                     </button>
                   ))}
@@ -1011,13 +983,19 @@ export default function BalanceSheet() {
                   <div className="card px-3 py-2">
                     <div className="text-xs text-ink/70">Retained Income/Loss</div>
                     <div className="font-mono">
-                      {Number(viewRetained || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {Number(viewRetained || 0).toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
                     </div>
                   </div>
                   <div className="card px-3 py-2">
                     <div className="text-xs text-ink/70">Total Equity</div>
                     <div className="font-mono">
-                      {Number(viewTotals.equity || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {Number(viewTotals.equity || 0).toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
                     </div>
                   </div>
                 </div>
@@ -1025,7 +1003,10 @@ export default function BalanceSheet() {
                 <div className="mt-3 py-2 px-3 bg-gray-100 rounded font-bold flex justify-between">
                   <span>Total Liabilities & Equity</span>
                   <span className="font-mono">
-                    {Number(viewTotals.liabPlusEquity || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {Number(viewTotals.liabPlusEquity || 0).toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
                   </span>
                 </div>
               </div>
@@ -1034,11 +1015,11 @@ export default function BalanceSheet() {
         )}
       </div>
 
-      {/* Right sidebar (Recent Reports) */}
+      {/* Right sidebar (Recent Reports - UNIFIED) */}
       <aside className="w-full lg:w-80 shrink-0">
         <h4 className="text-lg font-semibold mb-2">Recent Reports</h4>
         <ul className="space-y-2">
-          {bsReports.map((r) => (
+          {recentBS.map((r) => (
             <li
               key={r.id}
               className="flex items-center justify-between border border-gray-200 rounded px-3 py-2"
@@ -1046,9 +1027,9 @@ export default function BalanceSheet() {
               <button
                 className="text-left truncate"
                 onClick={() => handleShowSavedBS(r)}
-                title={`as of ${r.asOf}`}
+                title={`as of ${r.asOf || r.toAsOf || "—"}`}
               >
-                as of {r.asOf}
+                as of {r.asOf || r.toAsOf || "—"}
               </button>
               {(isAdmin || isTreasurer) && (
                 <button
@@ -1063,10 +1044,8 @@ export default function BalanceSheet() {
               )}
             </li>
           ))}
-          {bsReports.length === 0 && (
-            <li className="text-sm text-gray-500">
-              No saved balance sheets yet.
-            </li>
+          {recentBS.length === 0 && (
+            <li className="text-sm text-gray-500">No saved balance sheets yet.</li>
           )}
         </ul>
       </aside>
