@@ -1,13 +1,14 @@
 // src/pages/accounting/index.jsx
 import React from "react";
 import { NavLink, Outlet } from "react-router-dom";
+import { createPortal } from "react-dom";
 import AccountingNav from "./AccountingNav";            // desktop nav
 import PageBackground from "../../components/PageBackground";
 
 const accountingBg =
   "https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80";
 
-/* ---------- Mobile drawer (unchanged) ---------- */
+/* ---------- Mobile drawer (ported to <body>) ---------- */
 function MobileAccountingMenu({ open, onClose }) {
   // lock scroll while open
   React.useEffect(() => {
@@ -31,8 +32,8 @@ function MobileAccountingMenu({ open, onClose }) {
   const linkBase =
     "block px-3 py-2 rounded-lg text-sm font-medium transition hover:bg-brand-50";
 
-  return (
-    <div className="fixed inset-0 z-[100] md:hidden" role="dialog" aria-modal="true">
+  return createPortal(
+    <div className="fixed inset-0 z-[1000] md:hidden" role="dialog" aria-modal="true">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" onClick={onClose} />
 
@@ -123,7 +124,8 @@ function MobileAccountingMenu({ open, onClose }) {
           </ul>
         </nav>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -166,7 +168,7 @@ export default function Accounting() {
         <AccountingNav />
       </div>
 
-      {/* Mobile drawer */}
+      {/* Mobile drawer (now portaled to body) */}
       <MobileAccountingMenu open={menuOpen} onClose={() => setMenuOpen(false)} />
 
       {/* Child routes */}
