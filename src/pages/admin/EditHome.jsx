@@ -42,6 +42,24 @@ export default function EditHome() {
   const [resources, setResources] = useState("");
   const [news, setNews] = useState(["", "", "", ""]);
 
+  // Editable image slider array
+  const [sliderImages, setSliderImages] = useState([]); // [{url, link, label}]
+
+  function addSliderImage() {
+    setSliderImages((arr) => [...arr, { url: "", link: "", label: "" }]);
+  }
+  function updateSliderImage(idx, field, value) {
+    setSliderImages((arr) => arr.map((img, i) => i === idx ? { ...img, [field]: value } : img));
+  }
+  function removeSliderImage(idx) {
+    setSliderImages((arr) => arr.filter((_, i) => i !== idx));
+  }
+
+  function createNewPage(link) {
+    // Placeholder: you can implement page creation logic here
+    alert(`Create new page for: ${link}`);
+  }
+
   const successTimer = React.useRef(null);
 
   useEffect(() => {
@@ -56,6 +74,7 @@ export default function EditHome() {
           setFeaturedEvent(d.featuredEvent || "");
           setResources(d.resources || "");
           setNews(Array.isArray(d.news) ? d.news.slice(0, 4).concat(Array(4).fill("")).slice(0, 4) : ["", "", "", ""]);
+          setSliderImages(Array.isArray(d.sliderImages) ? d.sliderImages : []);
         }
       } catch (e) {
         setErr("Failed to load: " + (e?.message || String(e)));
@@ -82,13 +101,14 @@ export default function EditHome() {
           featuredEvent,
           resources,
           news,
+          sliderImages,
           updatedAt: serverTimestamp(),
         },
         { merge: true }
       );
       setSuccess("Saved!");
       if (successTimer.current) clearTimeout(successTimer.current);
-      successTimer.current = setTimeout(() => setSuccess(""), 2000); // <-- fixed syntax
+      successTimer.current = setTimeout(() => setSuccess(""), 2000);
     } catch (e) {
       setErr("Failed to save: " + (e?.message || String(e)));
     } finally {
@@ -113,6 +133,46 @@ export default function EditHome() {
           }}
           className="space-y-4"
         >
+          {/* Image Slider Editor */}
+          <div>
+            <label className="block font-semibold mb-1">Image Slider</label>
+            {sliderImages.map((img, idx) => (
+              <div key={idx} className="border rounded p-3 mb-2 flex flex-col gap-2 bg-gray-50">
+                <div className="flex gap-2">
+                  <input
+                    className="border rounded px-2 py-1 w-1/2"
+                    placeholder="Image URL"
+                    value={img.url}
+                    onChange={e => updateSliderImage(idx, "url", e.target.value)}
+                  />
+                  <input
+                    className="border rounded px-2 py-1 w-1/2"
+                    placeholder="Link (e.g. /becomemember)"
+                    value={img.link}
+                    onChange={e => updateSliderImage(idx, "link", e.target.value)}
+                  />
+                </div>
+                <input
+                  className="border rounded px-2 py-1 w-full"
+                  placeholder="Label/Description"
+                  value={img.label}
+                  onChange={e => updateSliderImage(idx, "label", e.target.value)}
+                />
+                <div className="flex gap-2">
+                  <button type="button" className="btn btn-outline" onClick={() => createNewPage(img.link)}>
+                    Create Page for Link
+                  </button>
+                  <button type="button" className="btn btn-danger" onClick={() => removeSliderImage(idx)}>
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+            <button type="button" className="btn btn-primary" onClick={addSliderImage}>
+              + Add Image
+            </button>
+          </div>
+
           <RichTextEditor label="Announcement" value={announcement} onChange={setAnnouncement} />
           <RichTextEditor label="Main Body" value={body} onChange={setBody} />
           <RichTextEditor label="Featured Event" value={featuredEvent} onChange={setFeaturedEvent} />
