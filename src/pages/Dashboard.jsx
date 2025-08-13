@@ -262,7 +262,7 @@ export default function Dashboard() {
     <PageBackground
       image={dashboardBg}
       boxed
-      boxedWidth="max-w-7xl"            // feel free to tweak (max-w-5xl, -6xl, -7xl)
+      boxedWidth="max-w-7xl"
       overlayClass="bg-white/85 backdrop-blur"
       className="page-gutter"
     >

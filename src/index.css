@@ -1,3 +1,25 @@
+/* Subtle fade at the left/right edges while horizontally scrolling tables */
+.table-scroll {
+  position: relative;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: smooth;
+  background: linear-gradient(to right, rgba(0,0,0,0.06), rgba(0,0,0,0) 20%) left,
+              linear-gradient(to left,  rgba(0,0,0,0.06), rgba(0,0,0,0) 20%) right;
+  background-size: 20px 100%, 20px 100%;
+  background-repeat: no-repeat;
+  background-attachment: local, local;
+}
+
+/* Optional: thinner mobile scrollbar (WebKit) */
+.table-scroll::-webkit-scrollbar { height: 10px; }
+.table-scroll::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,.15);
+  border-radius: 999px;
+}
+
+/* Better spacing for tap targets on small screens */
+.touch-gap > * { margin-bottom: .5rem; }
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

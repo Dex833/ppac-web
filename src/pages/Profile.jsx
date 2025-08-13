@@ -169,9 +169,10 @@ export default function Profile() {
       boxed
       boxedWidth="max-w-7xl"
       overlayClass="bg-white/85 backdrop-blur"
+      className="page-gutter"
     >
       <div className="mx-auto max-w-3xl">
-        <div className="card p-6">
+        <div className="card p-6 flex flex-col gap-6">
           <div className="mb-4">
             <h2 className="text-2xl font-bold">Complete Your Member Profile</h2>
             <div className="mt-3">

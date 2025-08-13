@@ -291,77 +291,96 @@ export default function TrialBalance() {
         </div>
       </div>
 
-      {!loading && rows.length === 0 ? (
-        <div className="text-sm text-ink/60">No matching accounts for the selected filters.</div>
-      ) : loading ? (
-        <div>Loading…</div>
-      ) : (
-        <table className="min-w-full border border-gray-300 rounded text-sm">
-          <thead className="bg-gray-50 sticky top-0">
-            <tr>
-              <th
-                className="text-left p-2 border-b border-r border-gray-200 cursor-pointer select-none"
-                onClick={() => handleSort("code")}
-                title="Sort by code"
-              >
-                Code {sortKey === "code" ? (sortDir === "asc" ? "▲" : "▼") : ""}
-              </th>
-              <th
-                className="text-left p-2 border-b border-r border-gray-200 cursor-pointer select-none"
-                onClick={() => handleSort("name")}
-                title="Sort by account"
-              >
-                Account {sortKey === "name" ? (sortDir === "asc" ? "▲" : "▼") : ""}
-              </th>
-              <th
-                className="text-right p-2 border-b border-r border-gray-200 cursor-pointer select-none"
-                onClick={() => handleSort("debit")}
-                title="Sort by debit"
-              >
-                Debit {sortKey === "debit" ? (sortDir === "asc" ? "▲" : "▼") : ""}
-              </th>
-              <th
-                className="text-right p-2 border-b cursor-pointer select-none"
-                onClick={() => handleSort("credit")}
-                title="Sort by credit"
-              >
-                Credit {sortKey === "credit" ? (sortDir === "asc" ? "▲" : "▼") : ""}
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.id} className="odd:bg-white even:bg-gray-50">
-                <td className="p-2 border-b border-r border-gray-200">{r.code}</td>
-                <td className="p-2 border-b border-r border-gray-200">{r.name}</td>
-                <td className="p-2 border-b border-r border-gray-200 text-right">
-                  {r.debit ? fmt(r.debit) : ""}
-                </td>
-                <td className="p-2 border-b text-right">{r.credit ? fmt(r.credit) : ""}</td>
+      {/* Mobile cards */}
+      <div className="sm:hidden space-y-3">
+        {rows.map((r) => (
+          <div key={r.id} className="rounded border border-gray-200 bg-white p-3">
+            <div className="flex items-center justify-between">
+              <div className="font-mono text-sm">{r.code}</div>
+              <div className="text-xs text-ink/60">{r.name}</div>
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+              <div>Debit: <span className="font-mono">{r.debit ? fmt(r.debit) : "0.00"}</span></div>
+              <div>Credit: <span className="font-mono">{r.credit ? fmt(r.credit) : "0.00"}</span></div>
+            </div>
+          </div>
+        ))}
+        {rows.length === 0 && !loading && (
+          <div className="text-sm text-ink/60">No matching accounts for the selected filters.</div>
+        )}
+        {loading && <div>Loading…</div>}
+      </div>
+
+      {/* Desktop table */}
+      <div className="hidden sm:block">
+        <div className="-mx-4 sm:mx-0 table-scroll">
+          <table className="min-w-full border border-gray-300 rounded text-sm">
+            <thead className="bg-gray-50 sticky top-0">
+              <tr>
+                <th
+                  className="text-left p-2 border-b border-r border-gray-200 cursor-pointer select-none"
+                  onClick={() => handleSort("code")}
+                  title="Sort by code"
+                >
+                  Code {sortKey === "code" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                </th>
+                <th
+                  className="text-left p-2 border-b border-r border-gray-200 cursor-pointer select-none"
+                  onClick={() => handleSort("name")}
+                  title="Sort by account"
+                >
+                  Account {sortKey === "name" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                </th>
+                <th
+                  className="text-right p-2 border-b border-r border-gray-200 cursor-pointer select-none"
+                  onClick={() => handleSort("debit")}
+                  title="Sort by debit"
+                >
+                  Debit {sortKey === "debit" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                </th>
+                <th
+                  className="text-right p-2 border-b cursor-pointer select-none"
+                  onClick={() => handleSort("credit")}
+                  title="Sort by credit"
+                >
+                  Credit {sortKey === "credit" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                </th>
               </tr>
-            ))}
-            <tr className="font-bold bg-gray-100">
-              <td colSpan={2} className="p-2 border-t text-right">
-                Totals:
-              </td>
-              <td className="p-2 border-t border-r border-gray-200 text-right">
-                {fmt(totals.debit)}
-              </td>
-              <td className="p-2 border-t text-right">{fmt(totals.credit)}</td>
-            </tr>
-            {!isBalanced && (
-              <tr className="bg-red-100 text-red-700 font-semibold">
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="odd:bg-white even:bg-gray-50">
+                  <td className="p-2 border-b border-r border-gray-200">{r.code}</td>
+                  <td className="p-2 border-b border-r border-gray-200">{r.name}</td>
+                  <td className="p-2 border-b border-r border-gray-200 text-right">
+                    {r.debit ? fmt(r.debit) : ""}
+                  </td>
+                  <td className="p-2 border-b text-right">{r.credit ? fmt(r.credit) : ""}</td>
+                </tr>
+              ))}
+              <tr className="font-bold bg-gray-100">
                 <td colSpan={2} className="p-2 border-t text-right">
-                  Difference:
+                  Totals:
                 </td>
-                <td colSpan={2} className="p-2 border-t text-right">
-                  {fmt(diff)}
+                <td className="p-2 border-t border-r border-gray-200 text-right">
+                  {fmt(totals.debit)}
                 </td>
+                <td className="p-2 border-t text-right">{fmt(totals.credit)}</td>
               </tr>
-            )}
-          </tbody>
-        </table>
-      )}
+              {!isBalanced && (
+                <tr className="bg-red-100 text-red-700 font-semibold">
+                  <td colSpan={2} className="p-2 border-t text-right">
+                    Difference:
+                  </td>
+                  <td colSpan={2} className="p-2 border-t text-right">
+                    {fmt(diff)}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       <div className="mt-3 text-sm">
         {isBalanced ? (

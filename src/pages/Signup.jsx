@@ -145,9 +145,10 @@ export default function Signup({ openLoginModal }) {
       boxed
       boxedWidth="max-w-7xl"
       overlayClass="bg-white/85 backdrop-blur"
+      className="page-gutter"
     >
       <div className="max-w-md mx-auto">
-        <div className="card p-6">
+        <div className="card p-6 flex flex-col gap-6">
           <h2 className="text-xl font-bold mb-4">Create your account</h2>
 
           {err && (
