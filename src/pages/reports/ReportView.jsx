@@ -1,432 +1,549 @@
 // src/pages/reports/ReportView.jsx
 import React, { useEffect, useMemo, useState } from "react";
-import { useParams, useSearchParams, Link, useNavigate } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { db } from "../../lib/firebase";
-import { doc, getDoc, deleteDoc } from "firebase/firestore";
-import useUserProfile from "../../hooks/useUserProfile";
+import { doc, getDoc } from "firebase/firestore";
 
-/* ---------------- constants / helpers ---------------- */
-const KNOWN_SOURCES = [
-  "financialReports",           // unified snapshots (trial_balance, ledger, etc.)
-  "incomeStatementReports",     // legacy Income Statement
-  "balanceSheetReports",        // legacy Balance Sheet
-  "balanceSheets",              // older/alternate collection name for Balance Sheet
-  "cashFlowStatementReports",   // legacy Cash Flow
-];
+const fmt = (n) =>
+  Number(n || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 
-function toDate(v) {
-  if (!v) return null;
-  if (typeof v?.toDate === "function") return v.toDate();
-  const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-function fmtDateTime(v) {
-  const d = toDate(v);
-  return d ? d.toLocaleString() : "—";
-}
-function n2(v) {
-  const n = Number(v) || 0;
-  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-function asArray(v) {
-  return Array.isArray(v) ? v : [];
-}
-function getPeriod(data) {
-  const from = data?.from ?? data?.periodStart ?? data?.startDate ?? data?.period?.from ?? "";
-  const to   = data?.to   ?? data?.periodEnd   ?? data?.endDate   ?? data?.period?.to   ?? "";
-  return { from, to };
-}
-function getMeta(data) {
-  const createdAt = data?.createdAt ?? data?.generatedAt ?? data?.savedAt ?? data?.created ?? null;
-  const createdBy = data?.createdByName ?? data?.generatedBy ?? data?.createdBy ?? data?.user ?? "";
-  const label =
-    data?.label ||
-    data?.title ||
-    (data?.type === "trial_balance" ? "Trial Balance" :
-     data?.type === "ledger"        ? "Ledger" :
-     "Report");
-  return { createdAt, createdBy, label };
-}
-function roleFlags(profile) {
-  const list = Array.isArray(profile?.roles) ? profile.roles : (profile?.role ? [profile.role] : []);
-  return {
-    isAdmin: list.includes("admin"),
-    isTreasurer: list.includes("treasurer"),
-    isManager: list.includes("manager"),
-    suspended: profile?.suspended === true,
-  };
+const safeStr = (v) => String(v ?? "—");
+
+function PeriodBadge({ from, to, asOf }) {
+  if (asOf) return <span className="text-sm text-ink/70">as of <strong>{asOf}</strong></span>;
+  if (!from && !to) return <span className="text-sm text-ink/70">—</span>;
+  return (
+    <span className="text-sm text-ink/70">
+      <strong>{from || "—"}</strong> → <strong>{to || "—"}</strong>
+    </span>
+  );
 }
 
-/* ---------------- fetcher ---------------- */
-async function fetchFromKnownSources(id, prefer) {
-  // If source hint provided, try that first, then fall back.
-  const order = prefer && KNOWN_SOURCES.includes(prefer) ? [prefer, ...KNOWN_SOURCES.filter(s => s !== prefer)] : KNOWN_SOURCES;
-  for (const src of order) {
-    try {
-      const snap = await getDoc(doc(db, src, id));
-      if (snap.exists()) return { source: src, id: snap.id, data: snap.data() };
-    } catch (e) {
-      // ignore errors for non-existent collections
-      // console.warn(`Read failed for ${src}/${id}:`, e?.message || e);
-    }
-  }
-  return null;
-}
-
-/* ---------------- CSV helpers ---------------- */
-const csvEscape = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-
-function downloadCSV(name, rows) {
-  const csv = rows.map(r => r.map(csvEscape).join(",")).join("\n");
-  const blob = new Blob([csv], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${name}.csv`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 300);
-}
-
-/* ===================================================== */
-/*                      Component                         */
-/* ===================================================== */
-export default function ReportView() {
-  const { id } = useParams();
-  const [sp] = useSearchParams();
-  const nav = useNavigate();
-  const { profile } = useUserProfile();
-  const { isAdmin, isTreasurer, suspended } = roleFlags(profile);
-
-  const hintSrc = sp.get("src") || undefined;
-
-  const [state, setState] = useState({ loading: true, found: null, error: "" });
-
+function useReportDoc(id) {
+  const [item, setItem] = useState(null);
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
-    let alive = true;
-    setState((s) => ({ ...s, loading: true, error: "" }));
-    fetchFromKnownSources(id, hintSrc).then((res) => {
-      if (!alive) return;
-      if (!res) {
-        setState({ loading: false, found: null, error: "Report not found." });
-      } else {
-        setState({ loading: false, found: res, error: "" });
+    let cancelled = false;
+    async function run() {
+      setLoading(true);
+      const snap = await getDoc(doc(db, "reports", id));
+      if (!cancelled) {
+        setItem(snap.exists() ? { id: snap.id, ...snap.data() } : null);
+        setLoading(false);
       }
-    });
-    return () => { alive = false; };
-  }, [id, hintSrc]);
-
-  const source = state.found?.source;
-  const data = state.found?.data || {};
-
-  const type =
-    data?.type ||
-    (source === "incomeStatementReports" ? "incomeStatement" :
-     source === "balanceSheetReports" || source === "balanceSheets" ? "balanceSheet" :
-     source === "cashFlowStatementReports" ? "cashFlow" : "report");
-
-  const period = getPeriod(data);
-  const meta = getMeta(data);
-
-  const canDelete =
-    !suspended &&
-    (
-      source === "financialReports" ? isAdmin :
-      ["incomeStatementReports", "balanceSheetReports", "balanceSheets", "cashFlowStatementReports"].includes(source)
-        ? (isAdmin || isTreasurer)
-        : false
-    );
-
-  async function handleDelete() {
-    if (!canDelete) return;
-    if (!window.confirm(`Delete "${meta.label}"? This cannot be undone.`)) return;
-    try {
-      await deleteDoc(doc(db, source, id));
-      nav("/reports", { replace: true });
-    } catch (e) {
-      alert("Delete failed: " + (e?.message || e));
     }
-  }
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+  return { item, loading };
+}
 
-  function exportCurrentCSV() {
-    // Minimal CSV exports for known types.
-    if (type === "trial_balance") {
-      const rows = data?.rows || data?.report?.rows || [];
-      const body = rows.map(r => [r.code, r.name, r.debit ?? 0, r.credit ?? 0]);
-      downloadCSV(`TrialBalance_${period.from || "start"}_${period.to || "end"}`, [
-        ["Trial Balance"],
-        ["From", period.from || "—", "To", period.to || "—"],
-        [],
-        ["Code", "Account", "Debit", "Credit"],
-        ...body,
-        [],
-        ["Totals", "", Number(data?.totals?.debit ?? rows.reduce((s, r) => s + (+r.debit || 0), 0)),
-                     Number(data?.totals?.credit ?? rows.reduce((s, r) => s + (+r.credit || 0), 0))],
-      ]);
-      return;
-    }
-    if (type === "incomeStatement") {
-      const r = data?.report || data;
-      const rows = [
-        ["Income Statement"],
-        ["Period", `${period.from || "—"} — ${period.to || "—"}`],
-        [],
-        ["Revenues"],
-        ...asArray(r?.revenues).map(a => [`${a.code} - ${a.name}`, a.amount ?? 0]),
-        ["Total Revenue", r?.totalRevenue ?? asArray(r?.revenues).reduce((s,a)=>s+(+a.amount||0),0)],
-        [],
-        ["COGS"],
-        ...asArray(r?.cogs).map(a => [`${a.code} - ${a.name}`, a.amount ?? 0]),
-        ["Total COGS", r?.totalCOGS ?? asArray(r?.cogs).reduce((s,a)=>s+(+a.amount||0),0)],
-        ["Gross Profit", r?.grossProfit ?? 0],
-        [],
-        ["Expenses"],
-        ...asArray(r?.expenses).map(a => [`${a.code} - ${a.name}`, a.amount ?? 0]),
-        ["Total Expenses", r?.totalExpense ?? asArray(r?.expenses).reduce((s,a)=>s+(+a.amount||0),0)],
-        [],
-        ["Net Income", r?.netIncome ?? 0],
-      ];
-      downloadCSV(`IncomeStatement_${period.from || ""}_${period.to || ""}`, rows);
-      return;
-    }
-    // Fallback: dump JSON
-    downloadCSV("report_raw", [["json"], [JSON.stringify(data)]]);
-  }
+// ---------- BALANCE SHEET RENDERER (fixed) ----------
+function BalanceSheetView({ item }) {
+  const rep = item?.report || {};
+  // Rows may have .amount or .value; normalize
+  const normalizeRows = (rows = []) =>
+    rows.map((r) => ({
+      code: r.code ?? "",
+      name: r.name ?? "",
+      amount: Number(r.amount ?? r.value ?? 0),
+    }));
 
-  /* ---------------- Render helpers ---------------- */
-  const header = (
-    <div className="flex items-center justify-between gap-2 mb-4">
-      <div>
-        <div className="text-xs text-ink/60">{source || "—"}</div>
-        <h2 className="text-2xl font-bold">{meta.label || "Report"}</h2>
-        <div className="text-sm text-ink/70">
-          <span className="inline-block mr-3"><strong>Type:</strong> {type}</span>
-          <span className="inline-block mr-3">
-            <strong>Period:</strong> {(period.from || "—")} — {(period.to || "—")}
+  const assets = normalizeRows(rep.assets || []);
+  const liabilities = normalizeRows(rep.liabilities || []);
+  const equityCore = normalizeRows(rep.equity || []);
+
+  // New docs may store this; legacy docs might not.
+  const retained = Number(
+    rep.retainedIncomeEnding ??
+      rep.retainedEarnings ??
+      rep.retained ??
+      0
+  );
+
+  // Compute totals if missing; ALWAYS include retained in equity totals.
+  const totals = useMemo(() => {
+    const tA =
+      rep.totals?.assets ??
+      assets.reduce((s, r) => s + Number(r.amount || 0), 0);
+
+    const tL =
+      rep.totals?.liabilities ??
+      liabilities.reduce((s, r) => s + Number(r.amount || 0), 0);
+
+    const tEqExRet =
+      rep.totals?.equityExRetained ??
+      equityCore.reduce((s, r) => s + Number(r.amount || 0), 0);
+
+    const tEq =
+      rep.totals?.equity ?? tEqExRet + retained;
+
+    const tLE =
+      rep.totals?.liabPlusEquity ?? tL + tEq;
+
+    return {
+      assets: Number(tA),
+      liabilities: Number(tL),
+      equityExRetained: Number(tEqExRet),
+      equity: Number(tEq),
+      liabPlusEquity: Number(tLE),
+    };
+  }, [rep.totals, assets, liabilities, equityCore, retained]);
+
+  const outOfBalance = Math.abs(totals.assets - totals.liabPlusEquity) > 0.005;
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="text-sm">
+          <strong>Period:</strong>{" "}
+          <PeriodBadge from={item.from} to={item.to} asOf={item.asOf || rep.asOf} />
+        </div>
+        {outOfBalance && (
+          <span className="ml-auto text-rose-700 font-semibold">
+            ⚠️ Out of balance: {fmt(totals.assets)} vs {fmt(totals.liabPlusEquity)}
           </span>
-          <span className="inline-block mr-3"><strong>Created:</strong> {fmtDateTime(meta.createdAt)}</span>
-          <span className="inline-block"><strong>By:</strong> {meta.createdBy || "—"}</span>
+        )}
+      </div>
+
+      {/* Desktop tables */}
+      <div className="hidden sm:flex flex-wrap gap-8">
+        {/* Assets */}
+        <div className="flex-1 min-w-[300px]">
+          <div className="overflow-x-auto">
+            <table className="min-w-full border border-gray-300 rounded text-sm mb-6">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="text-left p-2 border-b">Assets</th>
+                  <th className="text-right p-2 border-b">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {assets.map((row, i) => (
+                  <tr key={row.code + i} className="odd:bg-white even:bg-gray-50">
+                    <td className="p-2 border-b border-r border-gray-200">
+                      {row.code} - {row.name}
+                    </td>
+                    <td className="p-2 border-b text-right">{fmt(row.amount)}</td>
+                  </tr>
+                ))}
+                <tr className="font-bold bg-gray-100">
+                  <td className="p-2 border-t text-right">Total Assets</td>
+                  <td className="p-2 border-t text-right">{fmt(totals.assets)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Liabilities & Equity */}
+        <div className="flex-1 min-w-[300px]">
+          <div className="overflow-x-auto">
+            <table className="min-w-full border border-gray-300 rounded text-sm mb-6">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="text-left p-2 border-b">Liabilities &amp; Equity</th>
+                  <th className="text-right p-2 border-b">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {/* Liabilities */}
+                <tr>
+                  <td colSpan={2} className="font-bold p-2">
+                    Liabilities
+                  </td>
+                </tr>
+                {liabilities.map((row, i) => (
+                  <tr key={row.code + i} className="odd:bg-white even:bg-gray-50">
+                    <td className="p-2 border-b border-r border-gray-200">
+                      {row.code} - {row.name}
+                    </td>
+                    <td className="p-2 border-b text-right">{fmt(row.amount)}</td>
+                  </tr>
+                ))}
+                <tr className="font-semibold">
+                  <td className="p-2 border-t border-r border-gray-200 text-right">
+                    Total Liabilities
+                  </td>
+                  <td className="p-2 border-t text-right">{fmt(totals.liabilities)}</td>
+                </tr>
+
+                {/* Equity */}
+                <tr>
+                  <td colSpan={2} className="font-bold p-2">
+                    Equity
+                  </td>
+                </tr>
+                {equityCore.map((row, i) => (
+                  <tr key={row.code + i} className="odd:bg-white even:bg-gray-50">
+                    <td className="p-2 border-b border-r border-gray-200">
+                      {row.code} - {row.name}
+                    </td>
+                    <td className="p-2 border-b text-right">{fmt(row.amount)}</td>
+                  </tr>
+                ))}
+
+                {/* Retained row (this was missing before) */}
+                <tr className="bg-gray-50">
+                  <td className="p-2 border-b border-r border-gray-200">
+                    Retained Income/Loss
+                  </td>
+                  <td className="p-2 border-b text-right">{fmt(retained)}</td>
+                </tr>
+
+                <tr className="font-semibold">
+                  <td className="p-2 border-t border-r border-gray-200 text-right">
+                    Total Equity
+                  </td>
+                  <td className="p-2 border-t text-right">{fmt(totals.equity)}</td>
+                </tr>
+
+                <tr className="font-bold bg-gray-100">
+                  <td className="p-2 border-t border-r border-gray-200 text-right">
+                    Total Liabilities &amp; Equity
+                  </td>
+                  <td className="p-2 border-t text-right">{fmt(totals.liabPlusEquity)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
-      <div className="flex flex-wrap gap-2">
-        <Link className="px-3 py-2 border rounded text-sm" to="/reports">Back</Link>
-        <button className="px-3 py-2 border rounded text-sm" onClick={() => window.print()}>Print / PDF</button>
-        <button className="px-3 py-2 border rounded text-sm" onClick={exportCurrentCSV}>Export CSV</button>
-        {canDelete && (
-          <button className="px-3 py-2 border rounded text-sm text-rose-700" onClick={handleDelete}>
-            Delete
-          </button>
-        )}
+
+      {/* Mobile (≤ sm) */}
+      <div className="sm:hidden space-y-6">
+        <div>
+          <div className="font-semibold mb-1">Assets</div>
+          <div className="space-y-2">
+            {assets.map((row, i) => (
+              <div key={row.code + i} className="card px-3 py-2">
+                <div className="text-sm">
+                  {row.code} - {row.name}
+                </div>
+                <div className="font-mono text-right">{fmt(row.amount)}</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 flex justify-between font-semibold">
+            <span>Total Assets</span>
+            <span className="font-mono">{fmt(totals.assets)}</span>
+          </div>
+        </div>
+
+        <div>
+          <div className="font-semibold mb-1">Liabilities</div>
+          <div className="space-y-2">
+            {liabilities.map((row, i) => (
+              <div key={row.code + i} className="card px-3 py-2">
+                <div className="text-sm">
+                  {row.code} - {row.name}
+                </div>
+                <div className="font-mono text-right">{fmt(row.amount)}</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 flex justify-between font-semibold">
+            <span>Total Liabilities</span>
+            <span className="font-mono">{fmt(totals.liabilities)}</span>
+          </div>
+        </div>
+
+        <div>
+          <div className="font-semibold mb-1">Equity</div>
+          <div className="space-y-2">
+            {equityCore.map((row, i) => (
+              <div key={row.code + i} className="card px-3 py-2">
+                <div className="text-sm">
+                  {row.code} - {row.name}
+                </div>
+                <div className="font-mono text-right">{fmt(row.amount)}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <div className="card px-3 py-2">
+              <div className="text-xs text-ink/70">Retained Income/Loss</div>
+              <div className="font-mono">{fmt(retained)}</div>
+            </div>
+            <div className="card px-3 py-2">
+              <div className="text-xs text-ink/70">Total Equity</div>
+              <div className="font-mono">{fmt(totals.equity)}</div>
+            </div>
+          </div>
+
+          <div className="mt-3 py-2 px-3 bg-gray-100 rounded font-bold flex justify-between">
+            <span>Total Liabilities &amp; Equity</span>
+            <span className="font-mono">{fmt(totals.liabPlusEquity)}</span>
+          </div>
+        </div>
       </div>
     </div>
   );
+}
 
-  function Section({ title, children }) {
-    return (
-      <div className="mb-6">
-        <h3 className="font-semibold mb-2">{title}</h3>
-        {children}
+// ---------- STUB RENDERERS FOR OTHER TYPES (unchanged) ----------
+function TrialBalanceView({ item }) {
+  const rep = item?.report || {};
+  const rows = (rep.rows || []).map((r) => ({
+    code: r.code ?? "",
+    name: r.name ?? "",
+    debit: Number(r.debit ?? 0),
+    credit: Number(r.credit ?? 0),
+  }));
+  const totals = rows.reduce(
+    (t, r) => ({ debit: t.debit + r.debit, credit: t.credit + r.credit }),
+    { debit: 0, credit: 0 }
+  );
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full border border-gray-300 rounded text-sm">
+        <thead className="bg-gray-50">
+          <tr>
+            <th className="p-2 text-left border-b">Account</th>
+            <th className="p-2 text-right border-b">Debit</th>
+            <th className="p-2 text-right border-b">Credit</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={r.code + i} className="odd:bg-white even:bg-gray-50">
+              <td className="p-2 border-b">{r.code} - {r.name}</td>
+              <td className="p-2 border-b text-right">{fmt(r.debit)}</td>
+              <td className="p-2 border-b text-right">{fmt(r.credit)}</td>
+            </tr>
+          ))}
+          <tr className="font-bold bg-gray-100">
+            <td className="p-2 border-t text-right">Total</td>
+            <td className="p-2 border-t text-right">{fmt(totals.debit)}</td>
+            <td className="p-2 border-t text-right">{fmt(totals.credit)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function IncomeStatementView({ item }) {
+  const rep = item?.report || {};
+  const rows = (arr = []) =>
+    (arr || []).map((r) => ({
+      code: r.code ?? "",
+      name: r.name ?? "",
+      amount: Number(r.amount ?? 0),
+    }));
+
+  const revenues = rows(rep.revenues);
+  const cogs = rows(rep.cogs);
+  const expenses = rows(rep.expenses);
+
+  const totalRevenue = rep.totalRevenue ?? revenues.reduce((s, r) => s + r.amount, 0);
+  const totalCOGS = rep.totalCOGS ?? cogs.reduce((s, r) => s + r.amount, 0);
+  const grossProfit = rep.grossProfit ?? (totalRevenue - totalCOGS);
+  const totalExpense = rep.totalExpense ?? expenses.reduce((s, r) => s + r.amount, 0);
+  const netIncome = rep.netIncome ?? (grossProfit - totalExpense);
+
+  return (
+    <div className="space-y-6">
+      <div className="text-sm">
+        <strong>Period:</strong>{" "}
+        <PeriodBadge from={item.from} to={item.to} />
       </div>
-    );
-  }
 
-  function Table({ rows, headers = [] }) {
-    return (
       <div className="overflow-x-auto">
         <table className="min-w-full border border-gray-300 rounded text-sm">
-          {headers.length > 0 && (
-            <thead className="bg-gray-50">
-              <tr>
-                {headers.map((h, i) => (
-                  <th key={i} className={"p-2 border-b " + (i < headers.length - 1 ? "border-r" : "") + (i === headers.length - 1 ? " text-right" : " text-left")}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-          )}
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="p-2 text-left border-b">Account</th>
+              <th className="p-2 text-right border-b">Amount</th>
+            </tr>
+          </thead>
           <tbody>
-            {rows.length === 0 ? (
-              <tr><td className="p-3 text-ink/60 text-center" colSpan={headers.length || 1}>No data.</td></tr>
-            ) : (
-              rows.map((r, idx) => (
-                <tr key={idx} className="odd:bg-white even:bg-gray-50">
-                  {r.map((c, i) => (
-                    <td key={i} className={"p-2 border-b " + (i < r.length - 1 ? "border-r" : "") + (i === r.length - 1 ? " text-right" : "")}>
-                      {c}
-                    </td>
-                  ))}
-                </tr>
-              ))
+            <tr><td colSpan={2} className="font-bold p-2">Revenues</td></tr>
+            {revenues.map((r, i) => (
+              <tr key={r.code + i} className="odd:bg-white even:bg-gray-50">
+                <td className="p-2 border-b">{r.code} - {r.name}</td>
+                <td className="p-2 border-b text-right">{fmt(r.amount)}</td>
+              </tr>
+            ))}
+            <tr className="font-semibold">
+              <td className="p-2 border-t text-right">Total Revenue</td>
+              <td className="p-2 border-t text-right">{fmt(totalRevenue)}</td>
+            </tr>
+
+            {cogs.length > 0 && <tr><td colSpan={2} className="font-bold p-2">Less: COGS</td></tr>}
+            {cogs.map((r, i) => (
+              <tr key={r.code + i} className="odd:bg-white even:bg-gray-50">
+                <td className="p-2 border-b">{r.code} - {r.name}</td>
+                <td className="p-2 border-b text-right">{fmt(r.amount)}</td>
+              </tr>
+            ))}
+            {cogs.length > 0 && (
+              <tr className="font-semibold">
+                <td className="p-2 border-t text-right">Total COGS</td>
+                <td className="p-2 border-t text-right">{fmt(totalCOGS)}</td>
+              </tr>
             )}
+
+            <tr className="font-bold bg-gray-50">
+              <td className="p-2 border-t text-right">Gross Profit</td>
+              <td className="p-2 border-t text-right">{fmt(grossProfit)}</td>
+            </tr>
+
+            <tr><td colSpan={2} className="font-bold p-2">Expenses</td></tr>
+            {expenses.map((r, i) => (
+              <tr key={r.code + i} className="odd:bg-white even:bg-gray-50">
+                <td className="p-2 border-b">{r.code} - {r.name}</td>
+                <td className="p-2 border-b text-right">{fmt(r.amount)}</td>
+              </tr>
+            ))}
+            <tr className="font-semibold">
+              <td className="p-2 border-t text-right">Total Expenses</td>
+              <td className="p-2 border-t text-right">{fmt(totalExpense)}</td>
+            </tr>
+
+            <tr className="font-bold bg-gray-100">
+              <td className="p-2 border-t text-right">Net Income</td>
+              <td className="p-2 border-t text-right">{fmt(netIncome)}</td>
+            </tr>
           </tbody>
         </table>
       </div>
-    );
-  }
+    </div>
+  );
+}
 
-  /* ---------------- Type-specific renderers ---------------- */
-  function renderIncomeStatement() {
-    const r = data?.report || data;
-    const revRows = asArray(r?.revenues).map(a => [`${a.code} - ${a.name}`, n2(a.amount)]);
-    const cogsRows = asArray(r?.cogs).map(a => [`${a.code} - ${a.name}`, n2(a.amount)]);
-    const expRows = asArray(r?.expenses).map(a => [`${a.code} - ${a.name}`, n2(a.amount)]);
+function CashFlowView({ item }) {
+  const rep = item?.report || {};
+  const o = rep.sections?.operating || {};
+  const f = rep.sections?.financing || {};
+  const s = rep.summary || {};
+  const d = rep.deltas || {};
 
-    return (
-      <>
-        <Section title="Revenues">
-          <Table headers={["Account", "Amount"]} rows={revRows} />
-          <div className="mt-2 text-right font-semibold">Total Revenue: {n2(r?.totalRevenue ?? asArray(r?.revenues).reduce((s,a)=>s+(+a.amount||0),0))}</div>
-        </Section>
-
-        {cogsRows.length > 0 && (
-          <>
-            <Section title="Less: Cost of Goods Sold (COGS)">
-              <Table headers={["Account", "Amount"]} rows={cogsRows} />
-              <div className="mt-2 text-right font-semibold">Total COGS: {n2(r?.totalCOGS ?? asArray(r?.cogs).reduce((s,a)=>s+(+a.amount||0),0))}</div>
-            </Section>
-            <div className="mb-6 text-right font-bold">Gross Profit: {n2(r?.grossProfit ?? 0)}</div>
-          </>
-        )}
-
-        <Section title="Expenses">
-          <Table headers={["Account", "Amount"]} rows={expRows} />
-          <div className="mt-2 text-right font-semibold">Total Expenses: {n2(r?.totalExpense ?? asArray(r?.expenses).reduce((s,a)=>s+(+a.amount||0),0))}</div>
-        </Section>
-
-        <div className="text-right text-lg font-bold">Net Income: {n2(r?.netIncome ?? 0)}</div>
-
-        {r?.notes && <div className="mt-6 text-sm"><span className="font-semibold">Notes:</span> {String(r.notes)}</div>}
-      </>
-    );
-  }
-
-  function renderTrialBalance() {
-    const rows = data?.rows || data?.report?.rows || [];
-    const totals = data?.totals || {
-      debit: rows.reduce((s, r) => s + (+r.debit || 0), 0),
-      credit: rows.reduce((s, r) => s + (+r.credit || 0), 0),
-    };
-
-    const tableRows = rows.map(r => [r.code, r.name, r.debit ? n2(r.debit) : "", r.credit ? n2(r.credit) : ""]);
-    return (
-      <>
-        <Table headers={["Code", "Account", "Debit", "Credit"]} rows={tableRows} />
-        <div className="mt-2 grid grid-cols-2 gap-2 justify-items-end text-sm font-semibold">
-          <div>Totals: {n2(totals.debit)}</div>
-          <div>Totals: {n2(totals.credit)}</div>
-        </div>
-        {Math.abs((totals.debit || 0) - (totals.credit || 0)) > 0.004 && (
-          <div className="mt-2 text-rose-700 font-semibold">⚠️ Out of balance: {n2((totals.debit || 0) - (totals.credit || 0))}</div>
-        )}
-      </>
-    );
-  }
-
-  function renderBalanceSheet() {
-    // Best-effort renderer; supports shapes:
-    //   data.report = { assets:[], liabilities:[], equity:[], totals? }
-    const r = data?.report || data;
-    const assets = asArray(r?.assets);
-    const liab   = asArray(r?.liabilities);
-    const equity = asArray(r?.equity);
-
-    function rowsFrom(list) { return list.map(a => [`${a.code ? a.code + " - " : ""}${a.name ?? a.title ?? ""}`, n2(a.amount ?? a.value ?? 0)]); }
-
-    const A = rowsFrom(assets);
-    const L = rowsFrom(liab);
-    const E = rowsFrom(equity);
-
-    const totA = r?.totalAssets ?? assets.reduce((s,a)=>s+(+a.amount||+a.value||0),0);
-    const totL = r?.totalLiabilities ?? liab.reduce((s,a)=>s+(+a.amount||+a.value||0),0);
-    const totE = r?.totalEquity ?? equity.reduce((s,a)=>s+(+a.amount||+a.value||0),0);
-
-    return (
-      <>
-        <Section title="Assets">
-          <Table headers={["Account", "Amount"]} rows={A} />
-          <div className="mt-2 text-right font-semibold">Total Assets: {n2(totA)}</div>
-        </Section>
-        <Section title="Liabilities">
-          <Table headers={["Account", "Amount"]} rows={L} />
-          <div className="mt-2 text-right font-semibold">Total Liabilities: {n2(totL)}</div>
-        </Section>
-        <Section title="Equity">
-          <Table headers={["Account", "Amount"]} rows={E} />
-          <div className="mt-2 text-right font-semibold">Total Equity: {n2(totE)}</div>
-        </Section>
-
-        <div className="text-right text-lg font-bold">
-          Liabilities + Equity: {n2(totL + totE)} &nbsp; {totA === (totL + totE) ? "✅" : "⚠️"}
-        </div>
-      </>
-    );
-  }
-
-  function renderCashFlow() {
-    const r = data?.report || data;
-    function sec(name, list) {
-      const rows = asArray(list).map(a => [a.name ?? a.title ?? "", n2(a.amount ?? a.value ?? 0)]);
-      return (
-        <Section title={name}>
-          <Table headers={["Item", "Amount"]} rows={rows} />
-        </Section>
-      );
-    }
-    return (
-      <>
-        {sec("Operating Activities", r?.operating)}
-        {sec("Investing Activities", r?.investing)}
-        {sec("Financing Activities", r?.financing)}
-        <div className="text-right text-lg font-bold mt-4">
-          Net Change in Cash: {n2(r?.netChange ?? 0)}
-        </div>
-      </>
-    );
-  }
-
-  function renderUnknown() {
-    return (
-      <div className="rounded border p-3 bg-gray-50 overflow-x-auto">
-        <pre className="text-xs whitespace-pre-wrap">
-{JSON.stringify(data, null, 2)}
-        </pre>
+  return (
+    <div className="space-y-6">
+      <div className="text-sm">
+        <strong>Period:</strong>{" "}
+        <PeriodBadge from={item.from} to={item.to} asOf={item.toAsOf} />
       </div>
-    );
-  }
 
-  const body = useMemo(() => {
-    switch (type) {
-      case "incomeStatement": return renderIncomeStatement();
-      case "trial_balance":   return renderTrialBalance();
-      case "balanceSheet":    return renderBalanceSheet();
-      case "cashFlow":        return renderCashFlow();
-      default:                return renderUnknown();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(data), type]);
+      <div className="text-sm leading-7 space-y-6">
+        <div>
+          <div className="font-semibold underline">Cash Flow From Operating Activities:</div>
+          <div className="grid grid-cols-[1fr,12rem] sm:grid-cols-[1fr,1fr,12rem] gap-x-2 sm:pl-8 pl-4 mt-2">
+            <div className="col-span-1 sm:col-span-2">Net Profit/Loss</div>
+            <div className="text-right">{fmt(o.netIncome)}</div>
 
-  /* ---------------- render ---------------- */
-  if (state.loading) {
-    return (
-      <div>
-        <div className="mb-3"><Link className="px-3 py-2 border rounded text-sm" to="/reports">Back</Link></div>
-        <div>Loading…</div>
+            <div className="col-span-2 sm:col-span-3 font-semibold mt-3">Changes In Working Capital:</div>
+            <div>Changes in Loan Receivable</div>
+            <div className="hidden sm:block">Loan Receivable</div>
+            <div className="text-right">{fmt(d.loanReceivable)}</div>
+
+            <div>Changes in Rice Inventory</div>
+            <div className="hidden sm:block">Rice Inventory</div>
+            <div className="text-right">{fmt(d.inventory)}</div>
+
+            <div className="italic">Net Changes on Working Capital</div>
+            <div className="hidden sm:block"></div>
+            <div className="text-right italic">{fmt(d.workingCapital)}</div>
+
+            <div className="col-span-1 sm:col-span-2 font-semibold mt-3">
+              Net Cash Flow From Operating Activities
+            </div>
+            <div className="text-right font-semibold">{fmt(o.net)}</div>
+          </div>
+        </div>
+
+        <div>
+          <div className="font-semibold underline">Cash Flow from Investing Activities:</div>
+          <div className="grid grid-cols-[1fr,12rem] sm:grid-cols-[1fr,1fr,12rem] gap-x-2 sm:pl-8 pl-4 mt-2">
+            <div>None</div>
+            <div className="hidden sm:block"></div>
+            <div className="text-right">{fmt(0)}</div>
+
+            <div className="col-span-1 sm:col-span-2 font-semibold mt-3">
+              Net Cash Flow From Investing Activities
+            </div>
+            <div className="text-right font-semibold">{fmt(0)}</div>
+          </div>
+        </div>
+
+        <div>
+          <div className="font-semibold underline">Cash Flow From Financing Activities:</div>
+          <div className="grid grid-cols-[1fr,12rem] sm:grid-cols-[1fr,1fr,12rem] gap-x-2 sm:pl-8 pl-4 mt-2">
+            <div>Share Capital</div>
+            <div className="hidden sm:block">Share Capital</div>
+            <div className="text-right">{fmt(d.shareCapital)}</div>
+
+            <div className="col-span-1 sm:col-span-2 font-semibold mt-3">
+              Net Cash Flow From Financing Activities
+            </div>
+            <div className="text-right font-semibold">{fmt(f.net)}</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-[1fr,12rem] gap-x-2 sm:pl-8 pl-4">
+          <div className="font-semibold">Net Increase In Cash:</div>
+          <div className="text-right font-semibold">{fmt(s.netChangeCash)}</div>
+
+          <div>Beginning Cash Balance:</div>
+          <div className="text-right">{fmt(s.startCash)}</div>
+
+          <div>Ending Balance Of Cash</div>
+          <div className="text-right">{fmt(s.endCash)}</div>
+        </div>
       </div>
-    );
-  }
-  if (state.error || !state.found) {
+    </div>
+  );
+}
+
+// ---------- MAIN ----------
+export default function ReportView() {
+  const { id } = useParams();
+  const nav = useNavigate();
+  const { item, loading } = useReportDoc(id);
+
+  if (loading) return <div className="p-6">Loading…</div>;
+  if (!item) {
     return (
-      <div>
-        <div className="mb-3"><Link className="px-3 py-2 border rounded text-sm" to="/reports">Back</Link></div>
-        <div className="text-rose-700">{state.error || "Not found."}</div>
+      <div className="p-6">
+        <div className="mb-3">
+          <Link to="/reports" className="text-blue-700 hover:underline">← Back to Reports</Link>
+        </div>
+        <div className="text-gray-600">Report not found.</div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
-      {header}
-      <div className="print:mt-6">{body}</div>
+    <div className="p-3 sm:p-6">
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <div>
+          <h2 className="text-xl font-semibold">{safeStr(item.label) || "Report"}</h2>
+          <div className="text-xs text-ink/60">
+            Type: <span className="px-2 py-0.5 rounded bg-gray-100 border text-ink/70">{safeStr(item.type)}</span>
+            {item.createdAt && (
+              <span className="ml-2">• Created {new Date(item.createdAt).toLocaleString()}</span>
+            )}
+            {item.createdBy && <span className="ml-2">• By {safeStr(item.createdBy)}</span>}
+          </div>
+        </div>
+        <button className="btn btn-outline" onClick={() => nav("/reports")}>Back</button>
+      </div>
+
+      {item.type === "balanceSheet" && <BalanceSheetView item={item} />}
+      {item.type === "trial_balance" && <TrialBalanceView item={item} />}
+      {item.type === "incomeStatement" && <IncomeStatementView item={item} />}
+      {item.type === "cashFlow" && <CashFlowView item={item} />}
+
+      {!["balanceSheet","trial_balance","incomeStatement","cashFlow"].includes(item.type) && (
+        <div className="text-gray-600">This report type is not supported yet.</div>
+      )}
     </div>
   );
 }
