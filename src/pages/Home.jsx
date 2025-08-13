@@ -17,6 +17,7 @@ export default function Home() {
     featuredEvent: "",
     resources: "",
     news: ["", "", "", ""],
+    sliderImages: [],
   });
   const [loading, setLoading] = useState(true);
   const [showWhatYouHave, setShowWhatYouHave] = useState(false);
@@ -34,6 +35,7 @@ export default function Home() {
             featuredEvent: d.featuredEvent || "",
             resources: d.resources || "",
             news: Array.isArray(d.news) ? d.news.slice(0, 4) : ["", "", "", ""],
+            sliderImages: Array.isArray(d.sliderImages) ? d.sliderImages : [],
           });
         }
       } finally {
@@ -46,8 +48,28 @@ export default function Home() {
     <PageBackground image={homeBg} boxed overlayClass="bg-white/85 backdrop-blur" className="page-gutter">
       <div className="flex flex-col items-center gap-6 py-8">
         {/* Image Banner / Photo Slider - always on top, full width */}
-        <div className="w-full h-48 sm:h-64 bg-gray-200 rounded-xl flex items-center justify-center mb-2">
-          <span className="text-ink/60 text-lg">[Photo Slider Placeholder]</span>
+        <div className="w-full h-48 sm:h-64 bg-gray-200 rounded-xl flex items-center justify-center mb-2 overflow-hidden">
+          {content.sliderImages && content.sliderImages.length > 0 ? (
+            <div className="w-full h-full flex items-center justify-center gap-2 overflow-x-auto">
+              {content.sliderImages.map((img, idx) =>
+                img.url ? (
+                  img.link ? (
+                    <a key={idx} href={img.link} className="block h-full" style={{ minWidth: 180 }}>
+                      <img src={img.url} alt={img.label || `Slide ${idx + 1}`} className="h-full object-cover rounded-xl shadow" />
+                      {img.label && <div className="text-center text-xs mt-1 text-ink/70">{img.label}</div>}
+                    </a>
+                  ) : (
+                    <div key={idx} className="block h-full" style={{ minWidth: 180 }}>
+                      <img src={img.url} alt={img.label || `Slide ${idx + 1}`} className="h-full object-cover rounded-xl shadow" />
+                      {img.label && <div className="text-center text-xs mt-1 text-ink/70">{img.label}</div>}
+                    </div>
+                  )
+                ) : null
+              )}
+            </div>
+          ) : (
+            <span className="text-ink/60 text-lg">[Photo Slider Placeholder]</span>
+          )}
         </div>
         {/* Welcome and Name + Buttons */}
         <div className="w-full max-w-xl mx-auto flex flex-col items-center gap-3">
