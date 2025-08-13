@@ -1,12 +1,17 @@
+// src/pages/accounting/financials/CashFlowStatement.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { db } from "../../../lib/firebase";
-import { collection, query, orderBy, onSnapshot } from "firebase/firestore";
-import useUserProfile from "../../../hooks/useUserProfile";
 import {
-  saveCashFlowStatementReport,
-  getRecentCashFlowStatementReports,
-  deleteCashFlowStatementReport,
-} from "./cfsReports";
+  collection,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  deleteDoc,
+  doc,
+} from "firebase/firestore";
+import useUserProfile from "../../../hooks/useUserProfile";
+import { saveFinancialSnapshot } from "../../reports/saveSnapshot";
 import jsPDF from "jspdf";
 
 /* ======================= small utils ======================= */
@@ -28,86 +33,122 @@ function longDate(ymd) {
   });
 }
 
-/* ---- SAFE period label (handles legacy docs) ---- */
 function periodLabelSafe(obj) {
-  const left =
-    obj?.fromLabel ??
-    (obj?.fromId === "first"
-      ? "first period (all 0)"
-      : obj?.fromAsOf
-      ? `as of ${obj.fromAsOf}`
-      : "—");
-
-  const right = obj?.toLabel ?? (obj?.toAsOf ? `as of ${obj.toAsOf}` : "—");
+  const left = obj?.from ? obj.from : obj?.fromLabel || "—";
+  const right = obj?.to ? obj.to : obj?.toLabel || "—";
   return `${left} → ${right}`;
 }
-function bestToAsOf(obj) {
-  if (obj?.toAsOf) return obj.toAsOf;
-  const lbl = obj?.toLabel || "";
-  const m = lbl.match(/as of\s+([0-9]{4}-[0-9]{2}-[0-9]{2})/i);
-  return m ? m[1] : "";
-}
-function bestFromAsOf(obj) {
-  if (obj?.fromAsOf) return obj.fromAsOf;
-  if (obj?.fromId === "first") return "first";
-  const lbl = obj?.fromLabel || "";
-  const m = lbl.match(/as of\s+([0-9]{4}-[0-9]{2}-[0-9]{2})/i);
-  return m ? m[1] : "unknown";
+
+function getAsOfFromBSDoc(r) {
+  // Our unified BS snapshot uses { from, to }; both are the same "as-of"
+  return r?.to || r?.from || r?.asOf || r?.report?.asOf || "";
 }
 
-/* ======================= ID-first mapping ======================= */
-function makeCategoryIdSets(accounts = []) {
-  const L = (s) => String(s || "").toLowerCase();
-
-  const cashIds = accounts
-    .filter((a) => L(a.type) === "asset" && /cash/.test(L(a.main)))
-    .map((a) => a.id);
-
-  const loanRecvIds = accounts
-    .filter((a) => L(a.type) === "asset" && /loan\s*receiv/.test(L(a.main)))
-    .map((a) => a.id);
-
-  const inventoryIds = accounts
-    .filter((a) => L(a.type) === "asset" && /inventory/.test(L(a.main)))
-    .map((a) => a.id);
-
-  const shareCapIds = accounts
-    .filter((a) => L(a.type) === "equity" && /share\s*capital/.test(L(a.main)))
-    .map((a) => a.id);
-
-  return { cashIds, loanRecvIds, inventoryIds, shareCapIds };
+/* ======================= data hooks ======================= */
+function useAccounts() {
+  const [accounts, setAccounts] = useState([]);
+  useEffect(() => {
+    const qAcc = query(collection(db, "accounts"), orderBy("code"));
+    const unsub = onSnapshot(qAcc, (snap) =>
+      setAccounts(
+        snap.docs
+          .filter((d) => !d.data().archived)
+          .map((d) => ({ id: d.id, ...d.data() }))
+      )
+    );
+    return () => unsub();
+  }, []);
+  return accounts;
 }
 
-function balancesFromBS(report, idSets) {
-  const rowsA = Array.isArray(report?.assets) ? report.assets : [];
-  const rowsE = Array.isArray(report?.equity) ? report.equity : [];
-  const L = (s) => String(s || "").toLowerCase();
+function useJournalEntries() {
+  const [entries, setEntries] = useState([]);
+  useEffect(() => {
+    const qJE = query(collection(db, "journalEntries"), orderBy("createdAt", "asc"));
+    const unsub = onSnapshot(qJE, (snap) =>
+      setEntries(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    );
+    return () => unsub();
+  }, []);
+  return entries;
+}
 
-  const sumByIds = (rows, ids) =>
-    rows.reduce((s, r) => (r.id && ids.includes(r.id) ? s + Number(r.amount || 0) : s), 0);
+// Unified: read Balance Sheets from financialReports
+function useBalanceSheetSnapshots() {
+  const [bs, setBS] = useState([]);
+  useEffect(() => {
+    const qBS = query(
+      collection(db, "financialReports"),
+      where("type", "==", "balanceSheet"),
+      orderBy("to", "asc")
+    );
+    const unsub = onSnapshot(qBS, (snap) =>
+      setBS(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    );
+    return () => unsub();
+  }, []);
+  return bs;
+}
 
-  const fuzzySum = (rows, needles) =>
-    rows.reduce((s, r) => {
-      const nm = L(r.name);
-      return s + (needles.some((n) => nm.includes(n)) ? Number(r.amount || 0) : 0);
-    }, 0);
+// Unified: read Income Statements from financialReports
+function useIncomeStatementSnapshots() {
+  const [isList, setIS] = useState([]);
+  useEffect(() => {
+    const qIS = query(
+      collection(db, "financialReports"),
+      where("type", "==", "incomeStatement"),
+      orderBy("to", "asc")
+    );
+    const unsub = onSnapshot(qIS, (snap) =>
+      setIS(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    );
+    return () => unsub();
+  }, []);
+  return isList;
+}
 
-  const useIds = (rows, ids, fuzzRows, fuzzNeedles) => {
-    if (ids && ids.length && rows.some((r) => r.id)) return sumByIds(rows, ids);
-    return fuzzySum(fuzzRows, fuzzNeedles);
-  };
+// Unified: recent Cash Flow (for sidebar)
+function useRecentCashFlowSnapshots(limit = 25) {
+  const [list, setList] = useState([]);
+  useEffect(() => {
+    const qCFS = query(
+      collection(db, "financialReports"),
+      where("type", "==", "cashFlow"),
+      orderBy("createdAt", "desc")
+    );
+    const unsub = onSnapshot(qCFS, (snap) =>
+      setList(snap.docs.slice(0, limit).map((d) => ({ id: d.id, ...d.data() })))
+    );
+    return () => unsub();
+  }, [limit]);
+  return list;
+}
 
+/* ======================= calc helpers ======================= */
+function sumByName(rows = [], needles = []) {
+  const ns = needles.map((x) => x.toLowerCase());
+  return rows.reduce((sum, r) => {
+    const nm = S(r.name).toLowerCase();
+    return sum + (ns.some((n) => nm.includes(n)) ? Number(r.amount || 0) : 0);
+  }, 0);
+}
+
+function balancesFromBSReport(report) {
+  // report from unified BS snapshot: { assets: [{name, amount}], equity: [...] }
+  if (!report) return { cash: 0, loanRecv: 0, inventory: 0, shareCap: 0 };
+  const assets = report.assets || [];
+  const equity = report.equity || [];
   return {
-    cash: useIds(rowsA, idSets.cashIds, rowsA, ["cash"]),
-    loanRecv: useIds(rowsA, idSets.loanRecvIds, rowsA, ["loan receivable", "loan recv"]),
-    inventory: useIds(rowsA, idSets.inventoryIds, rowsA, ["inventory", "rice inventory"]),
-    shareCap: useIds(rowsE, idSets.shareCapIds, rowsE, ["share capital"]),
+    cash: sumByName(assets, ["cash"]),
+    loanRecv: sumByName(assets, ["loan receivable"]),
+    inventory: sumByName(assets, ["rice inventory", "inventory"]),
+    shareCap: sumByName(equity, ["share capital"]),
   };
 }
 
-function computeVBAStyle(beginReport, endReport, netIncome, idSets) {
-  const b = balancesFromBS(beginReport, idSets);
-  const e = balancesFromBS(endReport, idSets);
+function computeVBAStyle(beginReport, endReport, netIncome) {
+  const b = balancesFromBSReport(beginReport);
+  const e = balancesFromBSReport(endReport);
   const ni = Number(netIncome || 0);
 
   const dLoan = e.loanRecv - b.loanRecv;
@@ -140,43 +181,39 @@ function computeVBAStyle(beginReport, endReport, netIncome, idSets) {
   };
 }
 
-/* ======================= data hooks ======================= */
-function useBalanceSheets() {
-  const [bsReports, setBsReports] = useState([]);
-  useEffect(() => {
-    const q = query(collection(db, "balanceSheetReports"), orderBy("asOf", "asc"));
-    const unsub = onSnapshot(q, (snap) =>
-      setBsReports(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
-    );
-    return () => unsub();
-  }, []);
-  return bsReports;
+/* =========== fallback NI if we don't find an IS for the end date =========== */
+function isRevenueType(t) {
+  const v = (t || "").toLowerCase();
+  return v === "revenue" || v === "income";
 }
-function useAccounts() {
-  const [accounts, setAccounts] = useState([]);
-  useEffect(() => {
-    const qAcc = query(collection(db, "accounts"), orderBy("code"));
-    const unsub = onSnapshot(qAcc, (snap) =>
-      setAccounts(
-        snap.docs
-          .filter((d) => !d.data().archived)
-          .map((d) => ({ id: d.id, ...d.data() }))
-      )
-    );
-    return () => unsub();
-  }, []);
-  return accounts;
+function isExpenseType(t) {
+  return (t || "").toLowerCase() === "expense";
 }
-function useJournalEntries() {
-  const [entries, setEntries] = useState([]);
-  useEffect(() => {
-    const qJE = query(collection(db, "journalEntries"), orderBy("createdAt", "asc"));
-    const unsub = onSnapshot(qJE, (snap) =>
-      setEntries(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
-    );
-    return () => unsub();
-  }, []);
-  return entries;
+function computeNetIncomeFromEntries(entries, accounts, from, to) {
+  const inRange = (d) => (!from || d > from) && (!to || d <= to);
+
+  const acctMap = new Map(accounts.map((a) => [a.id, a]));
+  let revenue = 0;
+  let expense = 0;
+
+  (entries || []).forEach((e) => {
+    const d = S(e.date);
+    if (!inRange(d)) return;
+    (e.lines || []).forEach((l) => {
+      const acc = acctMap.get(l.accountId);
+      if (!acc) return;
+      const debit = Number(l.debit || 0);
+      const credit = Number(l.credit || 0);
+
+      if (isRevenueType(acc.type)) {
+        revenue += credit - debit;
+      } else if (isExpenseType(acc.type)) {
+        expense += debit - credit;
+      }
+    });
+  });
+
+  return revenue - expense;
 }
 
 /* ======================= component ======================= */
@@ -189,46 +226,67 @@ export default function CashFlowStatement() {
     (profile?.roles || []).includes("treasurer");
 
   const accounts = useAccounts();
-  const entries = useJournalEntries(); // used for drilldowns
-  const bsReports = useBalanceSheets();
+  const entries = useJournalEntries();
+  const bsReports = useBalanceSheetSnapshots();
+  const isReports = useIncomeStatementSnapshots();
+  const recentCFS = useRecentCashFlowSnapshots();
 
   const [startId, setStartId] = useState("first");
   const [endId, setEndId] = useState("");
   const [saving, setSaving] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [printing, setPrinting] = useState(false);
-  const [recentReports, setRecentReports] = useState([]);
   const [showReport, setShowReport] = useState(null);
-  const [drill, setDrill] = useState(null); // { key, label, from, to }
+  const [drill, setDrill] = useState(null);
 
-  const sortedBS = useMemo(
-    () => [...bsReports].sort((a, b) => S(a.asOf).localeCompare(S(b.asOf))),
-    [bsReports]
-  );
-  const startReportDoc =
-    startId === "first" ? null : sortedBS.find((r) => r.id === startId);
+  // Sort BS by as-of
+  const sortedBS = useMemo(() => {
+    const list = [...bsReports];
+    list.sort((a, b) => S(getAsOfFromBSDoc(a)).localeCompare(S(getAsOfFromBSDoc(b))));
+    return list;
+  }, [bsReports]);
+
+  const startReportDoc = startId === "first" ? null : sortedBS.find((r) => r.id === startId);
+
   const endOptions = useMemo(() => {
     if (startId === "first") return sortedBS;
-    const i = sortedBS.findIndex((r) => r.id === startId);
-    return sortedBS.slice(i + 1);
+    const idx = sortedBS.findIndex((r) => r.id === startId);
+    return idx >= 0 ? sortedBS.slice(idx + 1) : sortedBS;
   }, [sortedBS, startId]);
+
   const endReportDoc = sortedBS.find((r) => r.id === endId);
 
-  const idSets = useMemo(() => makeCategoryIdSets(accounts), [accounts]);
+  // Find the best-matching Income Statement for the end as-of
+  const netIncomeAtEnd = useMemo(() => {
+    if (!endReportDoc) return 0;
+    const endAsOf = getAsOfFromBSDoc(endReportDoc);
+
+    // 1) exact match IS.to === endAsOf
+    let isDoc =
+      isReports.find((r) => S(r.to) === S(endAsOf)) ||
+      // 2) latest IS with to <= endAsOf
+      [...isReports]
+        .filter((r) => r.to && r.to <= endAsOf)
+        .sort((a, b) => S(a.to).localeCompare(S(b.to)))
+        .pop();
+
+    if (isDoc?.report?.netIncome != null) {
+      return Number(isDoc.report.netIncome || 0);
+    }
+
+    // 3) fallback: compute NI from journal entries for (from>startAsOf, to<=endAsOf)
+    const startAsOf = startReportDoc ? getAsOfFromBSDoc(startReportDoc) : "";
+    return computeNetIncomeFromEntries(entries, accounts, startAsOf, endAsOf);
+  }, [endReportDoc, startReportDoc, isReports, entries, accounts]);
 
   const currentCalc = useMemo(() => {
     if (!endReportDoc) return null;
     const beginReport = startReportDoc?.report || null;
     const endReport = endReportDoc?.report || null;
-    const endNetIncome = Number(endReportDoc?.report?.sourceIS?.netIncome ?? 0);
-    return computeVBAStyle(beginReport, endReport, endNetIncome, idSets);
-  }, [startReportDoc, endReportDoc, idSets]);
+    return computeVBAStyle(beginReport, endReport, netIncomeAtEnd);
+  }, [startReportDoc, endReportDoc, netIncomeAtEnd]);
 
-  useEffect(() => {
-    getRecentCashFlowStatementReports().then(setRecentReports);
-  }, [saving]);
-
-  /* ---------- drilldown (by category) ---------- */
+  /* ---------- drilldown ---------- */
   const idsFor = (key) => {
     const lower = (s) => S(s).toLowerCase();
     switch (key) {
@@ -244,9 +302,13 @@ export default function CashFlowStatement() {
         return [];
     }
   };
-  function openDrill(key, label, fromAsOf, toAsOf) {
+
+  function openDrill(key, label) {
+    const fromAsOf = startReportDoc ? getAsOfFromBSDoc(startReportDoc) : "";
+    const toAsOf = endReportDoc ? getAsOfFromBSDoc(endReportDoc) : "";
     setDrill({ key, label, from: S(fromAsOf), to: S(toAsOf) });
   }
+
   function renderDrilldown() {
     if (!drill) return null;
     const ids = idsFor(drill.key);
@@ -276,7 +338,7 @@ export default function CashFlowStatement() {
 
     return (
       <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center px-3">
-        <div className="bg-white rounded-xl w-[min(720px,94vw)] max-height-[84vh] overflow-auto shadow-lg p-4">
+        <div className="bg-white rounded-xl w-[min(720px,94vw)] maxHeight-[84vh] overflow-auto shadow-lg p-4">
           <div className="flex items-center justify-between mb-3 sticky top-0 bg-white">
             <h4 className="font-semibold">{drill.label}</h4>
             <button className="px-3 py-1 rounded bg-gray-200" onClick={() => setDrill(null)}>
@@ -327,49 +389,45 @@ export default function CashFlowStatement() {
     try {
       const beginReport = startReportDoc?.report || null;
       const endReport = endReportDoc?.report || null;
-      const endNetIncome = Number(endReportDoc?.report?.sourceIS?.netIncome ?? 0);
-      const calc = computeVBAStyle(beginReport, endReport, endNetIncome, idSets);
+      const calc = computeVBAStyle(beginReport, endReport, netIncomeAtEnd);
 
-      const fromAsOf = startReportDoc?.asOf || "";
-      const toAsOf = endReportDoc?.asOf || "";
-      const fromLabel = startId === "first" ? "first period (all 0)" : `as of ${fromAsOf}`;
-      const toLabel = `as of ${toAsOf}`;
+      const fromAsOf = startReportDoc ? getAsOfFromBSDoc(startReportDoc) : "";
+      const toAsOf = endReportDoc ? getAsOfFromBSDoc(endReportDoc) : "";
 
-      const report = {
-        method: "vbaStyle",
-        inputs: calc.inputs,
-        deltas: calc.deltas,
-        sections: calc.sections,
-        summary: calc.summary,
-        createdAt: new Date().toISOString(),
-      };
-
-      await saveCashFlowStatementReport({
-        fromId: startId,
-        fromLabel,
-        fromAsOf,
-        toId: endId,
-        toLabel,
-        toAsOf,
-        report,
+      await saveFinancialSnapshot({
+        type: "cashFlow",
+        label: "Cash Flow",
+        from: fromAsOf,
+        to: toAsOf,
+        report: {
+          method: "vbaStyle",
+          inputs: calc.inputs,
+          deltas: calc.deltas,
+          sections: calc.sections,
+          summary: calc.summary,
+        },
+        createdBy: profile?.displayName || profile?.email || "Unknown",
+        createdById: profile?.uid || "",
       });
 
       setStartId("first");
       setEndId("");
       setShowReport(null);
+      alert("Cash Flow saved to Reports.");
     } catch (e) {
       console.error(e);
-      alert("Failed to save Cash Flow Statement.");
+      alert("Failed to save Cash Flow Statement: " + (e?.message || e));
     } finally {
       setSaving(false);
     }
   }
+
   async function handleDeleteCFS(id) {
     if (!id || !(isAdmin || isTreasurer)) return;
     if (!window.confirm("Delete this saved Cash Flow Statement?")) return;
-    await deleteCashFlowStatementReport(id);
-    setRecentReports((prev) => prev.filter((r) => r.id !== id));
+    await deleteDoc(doc(db, "financialReports", id));
   }
+
   function handleShowSavedCFS(r) {
     setShowReport(r);
     setStartId("first");
@@ -400,9 +458,9 @@ export default function CashFlowStatement() {
     csv += `Net Cash Flow From Financing Activities,,${f.net}\n\n`;
     csv += `Net Increase In Cash:, ,${s.netChangeCash}\n`;
     csv += `Beginning Cash Balance:, ,${s.startCash}\n`;
-    csv += `Ending Balance Of Cash As Of ${longDate(bestToAsOf(obj))}, ,${s.endCash}\n`;
+    csv += `Ending Balance Of Cash As Of ${longDate(obj.to)}, ,${s.endCash}\n`;
 
-    const name = `${bestFromAsOf(obj)}_to_${bestToAsOf(obj) || "unknown"}`;
+    const name = `${obj.from || "first"}_to_${obj.to || "unknown"}`;
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -487,10 +545,10 @@ export default function CashFlowStatement() {
     d.setFont(undefined, "normal");
     d.text("Beginning Cash Balance:", col1, y);
     d.text(fmt(s.startCash), colAmt, y, { align: "right" }); y += 8;
-    d.text(`Ending Balance Of Cash As Of ${longDate(bestToAsOf(obj))}`, col1, y);
+    d.text(`Ending Balance Of Cash As Of ${longDate(obj.to)}`, col1, y);
     d.text(fmt(s.endCash), colAmt, y, { align: "right" });
 
-    const name = `${bestFromAsOf(obj)}_to_${bestToAsOf(obj) || "unknown"}`;
+    const name = `${obj.from || "first"}_to_${obj.to || "unknown"}`;
     d.save(`CashFlow_${name}.pdf`);
     setDownloading(false);
   }
@@ -503,17 +561,13 @@ export default function CashFlowStatement() {
     }, 50);
   }
 
-  /* ---------- active view (safe for legacy docs) ---------- */
+  /* ---------- active view (works for saved or live) ---------- */
   const active = showReport
     ? showReport
     : endReportDoc
     ? {
-        fromId: startId,
-        fromLabel: startId === "first" ? "first period (all 0)" : `as of ${startReportDoc?.asOf || ""}`,
-        fromAsOf: startReportDoc?.asOf || "",
-        toId: endId,
-        toLabel: `as of ${endReportDoc?.asOf || ""}`,
-        toAsOf: endReportDoc?.asOf || "",
+        from: startReportDoc ? getAsOfFromBSDoc(startReportDoc) : "",
+        to: endReportDoc ? getAsOfFromBSDoc(endReportDoc) : "",
         report:
           currentCalc || {
             inputs: { begin: {}, end: {}, netIncome: 0 },
@@ -550,11 +604,14 @@ export default function CashFlowStatement() {
               }}
             >
               <option value="first">First period (all accounts 0)</option>
-              {sortedBS.map((r) => (
-                <option key={r.id} value={r.id}>
-                  as of {r.asOf}
-                </option>
-              ))}
+              {sortedBS.map((r) => {
+                const asOf = getAsOfFromBSDoc(r);
+                return (
+                  <option key={r.id} value={r.id}>
+                    as of {asOf}
+                  </option>
+                );
+              })}
             </select>
           </div>
           <div>
@@ -566,11 +623,14 @@ export default function CashFlowStatement() {
               disabled={!startId}
             >
               <option value="">— Select ending period —</option>
-              {endOptions.map((r) => (
-                <option key={r.id} value={r.id}>
-                  as of {r.asOf}
-                </option>
-              ))}
+              {endOptions.map((r) => {
+                const asOf = getAsOfFromBSDoc(r);
+                return (
+                  <option key={r.id} value={r.id}>
+                    as of {asOf}
+                  </option>
+                );
+              })}
             </select>
           </div>
           {(isAdmin || isTreasurer) && (
@@ -632,9 +692,7 @@ export default function CashFlowStatement() {
                   <button
                     type="button"
                     className="text-left hover:underline"
-                    onClick={() =>
-                      openDrill("LOAN", "Loan Receivable", active.fromAsOf, bestToAsOf(active))
-                    }
+                    onClick={() => openDrill("LOAN", "Loan Receivable")}
                   >
                     Changes in Loan Receivable
                   </button>
@@ -645,9 +703,7 @@ export default function CashFlowStatement() {
                   <button
                     type="button"
                     className="text-left hover:underline"
-                    onClick={() =>
-                      openDrill("INV", "Rice Inventory", active.fromAsOf, bestToAsOf(active))
-                    }
+                    onClick={() => openDrill("INV", "Rice Inventory")}
                   >
                     Changes in Rice Inventory
                   </button>
@@ -711,7 +767,7 @@ export default function CashFlowStatement() {
                 <div>Beginning Cash Balance:</div>
                 <div className="text-right">{fmt(active.report.summary.startCash)}</div>
 
-                <div>Ending Balance Of Cash As Of {longDate(bestToAsOf(active))}</div>
+                <div>Ending Balance Of Cash As Of {longDate(active.to)}</div>
                 <div className="text-right">{fmt(active.report.summary.endCash)}</div>
               </div>
             </div>
@@ -723,7 +779,7 @@ export default function CashFlowStatement() {
       <aside className="w-full lg:w-80 shrink-0">
         <h4 className="text-lg font-semibold mb-2">Recent Reports</h4>
         <ul className="space-y-2">
-          {recentReports.map((r) => (
+          {recentCFS.map((r) => (
             <li
               key={r.id}
               className="flex items-center justify-between border border-gray-200 rounded px-3 py-2"
@@ -748,7 +804,7 @@ export default function CashFlowStatement() {
               )}
             </li>
           ))}
-          {recentReports.length === 0 && (
+          {recentCFS.length === 0 && (
             <li className="text-sm text-gray-500">No saved cash flow statements yet.</li>
           )}
         </ul>
