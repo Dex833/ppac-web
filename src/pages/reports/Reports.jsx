@@ -1,7 +1,7 @@
 // src/pages/reports/Reports.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { db } from "../../lib/firebase";
-import { collection, query, orderBy, limit, onSnapshot } from "firebase/firestore";
+import { collection, onSnapshot } from "firebase/firestore";
 import { Link } from "react-router-dom";
 
 const TYPE_LABELS = {
@@ -11,48 +11,128 @@ const TYPE_LABELS = {
   cash_flow: "Cash Flow",
 };
 
-function toDate(value) {
-  if (!value) return null;
-  if (typeof value?.toDate === "function") return value.toDate();
-  if (typeof value?.seconds === "number") return new Date(value.seconds * 1000);
-  return new Date(value);
+function toDate(v) {
+  if (!v) return null;
+  if (typeof v?.toDate === "function") return v.toDate();      // Timestamp
+  if (typeof v?.seconds === "number") return new Date(v.seconds * 1000);
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d;                        // ISO/string/Date
+}
+function fmtDate(d) {
+  return d ? d.toLocaleDateString() : "—";
+}
+function formatRange(start, end) {
+  return `${fmtDate(start)} – ${fmtDate(end)}`;
+}
+
+/** Normalize any report doc (new or legacy) to one shape for listing */
+function normalizeDoc(source, id, raw) {
+  // Try the new unified shape first
+  const t0 = raw?.type;
+  const type =
+    t0 ||
+    (source === "incomeStatementReports" && "income_statement") ||
+    ((source === "balanceSheetReports" || source === "balanceSheets") && "balance_sheet") ||
+    (source === "cashFlowStatementReports" && "cash_flow") ||
+    "unknown";
+
+  const createdAt =
+    toDate(raw?.createdAt) ||
+    toDate(raw?.created_at) ||
+    toDate(raw?.report?.generatedAt) ||
+    toDate(raw?.generatedAt) ||
+    null;
+
+  const periodStart = toDate(raw?.periodStart) || toDate(raw?.from);
+  const periodEnd   = toDate(raw?.periodEnd)   || toDate(raw?.to);
+
+  const label =
+    raw?.label ||
+    raw?.title ||
+    (type !== "unknown" ? `${TYPE_LABELS[type]} (${formatRange(periodStart, periodEnd)})` : `(No label)`);
+
+  return {
+    id,
+    type,
+    label,
+    periodStart,
+    periodEnd,
+    createdAt,
+    createdByName: raw?.createdByName || raw?.generatedBy || raw?.report?.generatedBy || "",
+    // keep originals in case viewer needs them
+    _source: source,
+    _raw: raw,
+  };
 }
 
 export default function Reports() {
-  const [rows, setRows] = useState([]);
+  const [data, setData] = useState({
+    financialReports: [],
+    incomeStatementReports: [],
+    balanceSheetReports: [],
+    balanceSheets: [],
+    cashFlowStatementReports: [],
+  });
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
   const [filter, setFilter] = useState("all"); // all | trial_balance | income_statement | balance_sheet | cash_flow
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    // NOTE: no 'where' to avoid composite index requirement
-    const q = query(
-      collection(db, "financialReports"),
-      orderBy("createdAt", "desc"),
-      limit(40)
+    const sources = [
+      "financialReports",
+      "incomeStatementReports",
+      "balanceSheetReports",
+      "balanceSheets",
+      "cashFlowStatementReports",
+    ];
+
+    const unsubs = sources.map((colName) =>
+      onSnapshot(
+        collection(db, colName),
+        (snap) => {
+          const rows = snap.docs.map((d) => normalizeDoc(colName, d.id, d.data()));
+          setData((prev) => ({ ...prev, [colName]: rows }));
+          setLoading(false);
+        },
+        (err) => {
+          console.error(`Failed to read ${colName}:`, err);
+          // Note: legacy collections are admin/treasurer read-only in your rules.
+          // If the user isn't allowed, we'll just skip them silently.
+          setLoading(false);
+          // Only show a message if *none* of the collections load anything.
+          setError((e) => e || "Some report collections could not be read due to permissions.");
+        }
+      )
     );
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        setRows(list);
-        setLoading(false);
-      },
-      (err) => {
-        console.error(err);
-        setError(err?.message || "Failed to load reports.");
-        setLoading(false);
-      }
-    );
-    return () => unsub();
+
+    return () => unsubs.forEach((u) => u && u());
   }, []);
 
-  // Filter to only generated reports, then by type
-  const generated = useMemo(() => rows.filter((r) => r.status === "generated"), [rows]);
+  const merged = useMemo(() => {
+    const all = [
+      ...data.financialReports,
+      ...data.incomeStatementReports,
+      ...data.balanceSheetReports,
+      ...data.balanceSheets,
+      ...data.cashFlowStatementReports,
+    ];
+    // Dedupe by id+source (avoid accidental collisions)
+    const key = (r) => `${r._source}:${r.id}`;
+    const map = new Map(all.map((r) => [key(r), r]));
+    const arr = Array.from(map.values());
+    // Sort by createdAt desc; undefined go last
+    arr.sort((a, b) => {
+      const at = a.createdAt ? a.createdAt.getTime() : -1;
+      const bt = b.createdAt ? b.createdAt.getTime() : -1;
+      return bt - at;
+    });
+    return arr;
+  }, [data]);
+
   const filtered = useMemo(() => {
-    if (filter === "all") return generated;
-    return generated.filter((r) => r.type === filter);
-  }, [generated, filter]);
+    if (filter === "all") return merged;
+    return merged.filter((r) => r.type === filter);
+  }, [merged, filter]);
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -88,53 +168,43 @@ export default function Reports() {
 
       {loading && <div className="p-6">Loading…</div>}
 
-      {!loading && error && (
-        <div className="p-4 mb-4 border rounded-lg bg-rose-50 text-rose-700">
-          {error}
-          <div className="text-xs text-rose-600 mt-1">
-            Tip: If you keep the server-side filter later, create a composite index:
-            <code className="ml-1">financialReports — status ASC, createdAt DESC</code>.
-          </div>
+      {!loading && filtered.length === 0 && (
+        <div className="p-8 text-center text-ink/60 border rounded-lg bg-white">
+          No reports found that you have permission to view.
+          {!!error && <div className="mt-2 text-xs text-rose-600">{error}</div>}
         </div>
       )}
 
-      {!loading && !error && filtered.length === 0 && (
-        <div className="p-8 text-center text-ink/60 border rounded-lg bg-white">No reports found.</div>
-      )}
-
-      {!loading && !error && filtered.length > 0 && (
+      {!loading && filtered.length > 0 && (
         <ul className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {filtered.slice(0, 10).map((r) => {
-            const start = toDate(r.periodStart);
-            const end = toDate(r.periodEnd);
-            const created = toDate(r.createdAt);
-            return (
-              <li key={r.id} className="border rounded-xl p-4 hover:shadow-sm transition bg-white">
-                <div className="text-xs uppercase tracking-wide text-ink/60">
-                  {TYPE_LABELS[r.type] || r.type}
-                </div>
-                <div className="text-lg font-semibold mt-1">{r.label || "(No label)"}</div>
-                <div className="text-sm text-ink/60 mt-1">
-                  Period: {start ? start.toLocaleDateString() : "—"} – {end ? end.toLocaleDateString() : "—"}
-                </div>
-                <div className="text-xs text-ink/60 mt-1">
-                  Saved: {created ? created.toLocaleString() : "—"}
-                </div>
+          {filtered.slice(0, 10).map((r) => (
+            <li key={`${r._source}:${r.id}`} className="border rounded-xl p-4 hover:shadow-sm transition bg-white">
+              <div className="text-xs uppercase tracking-wide text-ink/60">
+                {TYPE_LABELS[r.type] || r.type}
+                <span className="ml-2 text-ink/50">• {r._source}</span>
+              </div>
+              <div className="text-lg font-semibold mt-1">{r.label || "(No label)"}</div>
+              <div className="text-sm text-ink/60 mt-1">
+                Period: {fmtDate(r.periodStart)} – {fmtDate(r.periodEnd)}
+              </div>
+              <div className="text-xs text-ink/60 mt-1">
+                Saved: {r.createdAt ? r.createdAt.toLocaleString() : "—"}{" "}
+                {r.createdByName ? `• by ${r.createdByName}` : ""}
+              </div>
 
-                <div className="mt-3">
-                  <Link
-                    to={`/reports/${r.id}`}
-                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm bg-brand-600 text-white hover:bg-brand-700"
-                  >
-                    Open
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                      <path d="M7 17l9-9M8 8h8v8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                    </svg>
-                  </Link>
-                </div>
-              </li>
-            );
-          })}
+              <div className="mt-3">
+                <Link
+                  to={`/reports/${encodeURIComponent(r.id)}?src=${encodeURIComponent(r._source)}`}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm bg-brand-600 text-white hover:bg-brand-700"
+                >
+                  Open
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path d="M7 17l9-9M8 8h8v8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                </Link>
+              </div>
+            </li>
+          ))}
         </ul>
       )}
     </div>
