@@ -135,7 +135,8 @@ import Dashboard from "./pages/Dashboard.jsx";
 import Verify from "./pages/Verify.jsx";
 import Reset from "./pages/Reset.jsx";
 import Profile from "./pages/Profile.jsx";
-import BecomeMember from "./pages/BecomeMember.jsx";
+
+import RequirementsMembership from "./pages/RequirementsMembership.jsx";
 
 import AdminLayout from "./pages/Admin.jsx";
 import AdminUsers from "./pages/admin/Users.jsx";
@@ -296,7 +297,8 @@ export default function App() {
           <Route path="/" element={<Home />} />
 
           {/* Standalone pages */}
-          <Route path="/become-member" element={<BecomeMember />} />
+          <Route path="/BecomeMember" element={<BecomeMember />} />
+          <Route path="/RequirementsMembership" element={<RequirementsMembership />} />
 
           {/* Guest-only */}
           <Route
