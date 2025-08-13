@@ -70,6 +70,8 @@ export default function GeneralJournal() {
     const acc = getAccount(accountId);
     return acc ? acc.type : "";
   }
+  const fmt = (n) =>
+    Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   // Sorting control
   function handleSort(field) {
@@ -81,26 +83,29 @@ export default function GeneralJournal() {
     }
   }
 
-  // Flatten + filter lines for table display
+  // --------- Filtering ----------
+  function entryMatchesFilters(e) {
+    if (filter.ref && !(e.refNumber || "").includes(filter.ref)) return false;
+    if (filter.date && e.date !== filter.date) return false;
+    if (
+      filter.account &&
+      !e.lines?.some((l) => {
+        const acc = accounts.find((a) => a.id === l.accountId);
+        return (
+          acc &&
+          `${acc.code} ${acc.main} ${acc.individual || ""}`
+            .toLowerCase()
+            .includes(filter.account.toLowerCase())
+        );
+      })
+    )
+      return false;
+    return true;
+  }
+
+  // Flatten + filter lines for DESKTOP table
   let lines = entries
-    .filter((e) => {
-      if (filter.ref && !(e.refNumber || "").includes(filter.ref)) return false;
-      if (filter.date && e.date !== filter.date) return false;
-      if (
-        filter.account &&
-        !e.lines?.some((l) => {
-          const acc = accounts.find((a) => a.id === l.accountId);
-          return (
-            acc &&
-            `${acc.code} ${acc.main} ${acc.individual || ""}`
-              .toLowerCase()
-              .includes(filter.account.toLowerCase())
-          );
-        })
-      )
-        return false;
-      return true;
-    })
+    .filter(entryMatchesFilters)
     .flatMap((entry) =>
       (entry.lines || []).map((line) => ({
         ...line,
@@ -115,7 +120,7 @@ export default function GeneralJournal() {
       }))
     );
 
-  // Sort rows
+  // Sort rows (desktop table)
   lines = lines.sort((a, b) => {
     let v1 = a[sortBy];
     let v2 = b[sortBy];
@@ -134,9 +139,12 @@ export default function GeneralJournal() {
     return 0;
   });
 
-  // Table totals
+  // Table totals (desktop)
   const totalDebit = lines.reduce((sum, l) => sum + (parseFloat(l.debit) || 0), 0);
   const totalCredit = lines.reduce((sum, l) => sum + (parseFloat(l.credit) || 0), 0);
+
+  // --------- Mobile cards: group per entry ----------
+  const mobileEntries = entries.filter(entryMatchesFilters);
 
   // ---- Full Edit (entry + lines) ----
   function openEdit(entryId) {
@@ -240,11 +248,11 @@ export default function GeneralJournal() {
     }
   }
 
-  // Only show action buttons once per entry (first visible row)
+  // Only show action buttons once per entry (first visible row in desktop table)
   const seen = new Set();
 
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-hidden">
       <h2 className="text-2xl font-bold mb-6">General Journal</h2>
 
       {notif.show && (
@@ -259,22 +267,23 @@ export default function GeneralJournal() {
         </div>
       )}
 
-      <div className="mb-4 flex gap-2 flex-wrap">
+      {/* Filters */}
+      <div className="mb-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
         <input
-          className="border rounded px-2 py-1"
+          className="border rounded px-2 py-2"
           placeholder="Filter by Ref#"
           value={filter.ref}
           onChange={(e) => setFilter((f) => ({ ...f, ref: e.target.value }))}
         />
         <input
-          className="border rounded px-2 py-1"
+          className="border rounded px-2 py-2"
           type="date"
           placeholder="Filter by Date"
           value={filter.date}
           onChange={(e) => setFilter((f) => ({ ...f, date: e.target.value }))}
         />
         <input
-          className="border rounded px-2 py-1"
+          className="border rounded px-2 py-2"
           placeholder="Filter by Account"
           value={filter.account}
           onChange={(e) => setFilter((f) => ({ ...f, account: e.target.value }))}
@@ -284,115 +293,212 @@ export default function GeneralJournal() {
       {loading ? (
         <div>Loading entries…</div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="min-w-full border rounded text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("refNumber")}>
-                  Ref# {sortBy === "refNumber" ? (sortDir === "asc" ? "▲" : "▼") : ""}
-                </th>
-                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("date")}>
-                  Date {sortBy === "date" ? (sortDir === "asc" ? "▲" : "▼") : ""}
-                </th>
-                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("description")}>
-                  Description {sortBy === "description" ? (sortDir === "asc" ? "▲" : "▼") : ""}
-                </th>
-                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("account")}>
-                  Account {sortBy === "account" ? (sortDir === "asc" ? "▲" : "▼") : ""}
-                </th>
-                <th className="text-left p-2 border-b">Type</th>
-                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("debit")}>
-                  Debit {sortBy === "debit" ? (sortDir === "asc" ? "▲" : "▼") : ""}
-                </th>
-                <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("credit")}>
-                  Credit {sortBy === "credit" ? (sortDir === "asc" ? "▲" : "▼") : ""}
-                </th>
-                <th className="text-left p-2 border-b">Memo</th>
-                <th className="text-left p-2 border-b">Created By</th>
-                <th className="text-left p-2 border-b">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((line, idx) => {
-                const firstForEntry = !seen.has(line.entryId);
-                if (firstForEntry) seen.add(line.entryId);
+        <>
+          {/* Desktop table */}
+          <div className="hidden sm:block overflow-x-auto">
+            <table className="min-w-full border rounded text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th
+                    className="text-left p-2 border-b cursor-pointer"
+                    onClick={() => handleSort("refNumber")}
+                  >
+                    Ref# {sortBy === "refNumber" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                  </th>
+                  <th
+                    className="text-left p-2 border-b cursor-pointer whitespace-nowrap"
+                    onClick={() => handleSort("date")}
+                  >
+                    Date {sortBy === "date" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                  </th>
+                  <th
+                    className="text-left p-2 border-b cursor-pointer"
+                    onClick={() => handleSort("description")}
+                  >
+                    Description {sortBy === "description" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                  </th>
+                  <th
+                    className="text-left p-2 border-b cursor-pointer"
+                    onClick={() => handleSort("account")}
+                  >
+                    Account {sortBy === "account" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                  </th>
+                  <th className="text-left p-2 border-b">Type</th>
+                  <th
+                    className="text-right p-2 border-b cursor-pointer"
+                    onClick={() => handleSort("debit")}
+                  >
+                    Debit {sortBy === "debit" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                  </th>
+                  <th
+                    className="text-right p-2 border-b cursor-pointer"
+                    onClick={() => handleSort("credit")}
+                  >
+                    Credit {sortBy === "credit" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                  </th>
+                  <th className="text-left p-2 border-b">Memo</th>
+                  <th className="text-left p-2 border-b">Created By</th>
+                  <th className="text-left p-2 border-b">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lines.map((line, idx) => {
+                  const firstForEntry = !seen.has(line.entryId);
+                  if (firstForEntry) seen.add(line.entryId);
 
-                return (
-                  <tr key={line.entryId + "-" + idx} className="odd:bg-white even:bg-gray-50">
-                    <td className="p-2 border-b font-mono">{line.refNumber}</td>
-                    <td className="p-2 border-b">{line.date}</td>
-                    <td className="p-2 border-b">{line.description}</td>
-                    <td className="p-2 border-b">{getAccountName(line.accountId)}</td>
-                    <td className="p-2 border-b">{getAccountType(line.accountId)}</td>
-                    <td className="p-2 border-b text-right">
-                      {line.debit
-                        ? Number(line.debit).toLocaleString(undefined, {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })
-                        : ""}
-                    </td>
-                    <td className="p-2 border-b text-right">
-                      {line.credit
-                        ? Number(line.credit).toLocaleString(undefined, {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })
-                        : ""}
-                    </td>
-                    <td className="p-2 border-b">{line.memo || ""}</td>
-                    <td className="p-2 border-b">{line.createdBy || "-"}</td>
-                    <td className="p-2 border-b">
-                      {firstForEntry ? (
-                        <>
-                          <button
-                            className="btn btn-sm btn-outline mr-1"
-                            onClick={() => openEdit(line.entryId)}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            className="btn btn-sm btn-outline"
-                            onClick={() => deleteEntry(line.entryId)}
-                          >
-                            Delete
-                          </button>
-                        </>
-                      ) : (
-                        <span className="text-gray-300">—</span>
-                      )}
+                  return (
+                    <tr key={line.entryId + "-" + idx} className="odd:bg-white even:bg-gray-50">
+                      <td className="p-2 border-b font-mono">{line.refNumber}</td>
+                      <td className="p-2 border-b whitespace-nowrap">{line.date}</td>
+                      <td className="p-2 border-b">{line.description}</td>
+                      <td className="p-2 border-b">{getAccountName(line.accountId)}</td>
+                      <td className="p-2 border-b">{getAccountType(line.accountId)}</td>
+                      <td className="p-2 border-b text-right">
+                        {line.debit ? fmt(line.debit) : ""}
+                      </td>
+                      <td className="p-2 border-b text-right">
+                        {line.credit ? fmt(line.credit) : ""}
+                      </td>
+                      <td className="p-2 border-b">{line.memo || ""}</td>
+                      <td className="p-2 border-b">{line.createdBy || "-"}</td>
+                      <td className="p-2 border-b">
+                        {firstForEntry ? (
+                          <>
+                            <button
+                              className="btn btn-sm btn-outline mr-1"
+                              onClick={() => openEdit(line.entryId)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              className="btn btn-sm btn-outline"
+                              onClick={() => deleteEntry(line.entryId)}
+                            >
+                              Delete
+                            </button>
+                          </>
+                        ) : (
+                          <span className="text-gray-300">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {lines.length === 0 && (
+                  <tr>
+                    <td colSpan={10} className="p-4 text-gray-500 text-center">
+                      No journal entries found.
                     </td>
                   </tr>
-                );
-              })}
-              {lines.length === 0 && (
-                <tr>
-                  <td colSpan={10} className="p-4 text-gray-500 text-center">
-                    No journal entries found.
+                )}
+              </tbody>
+              <tfoot>
+                <tr className="font-bold bg-gray-100">
+                  <td colSpan={5} className="p-2 border-t text-right">
+                    Totals:
                   </td>
+                  <td className="p-2 border-t text-right">{fmt(totalDebit)}</td>
+                  <td className="p-2 border-t text-right">{fmt(totalCredit)}</td>
+                  <td colSpan={3} className="p-2 border-t"></td>
                 </tr>
-              )}
-            </tbody>
-            <tfoot>
-              <tr className="font-bold bg-gray-100">
-                <td colSpan={5} className="p-2 border-t text-right">Totals:</td>
-                <td className="p-2 border-t text-right">
-                  {totalDebit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </td>
-                <td className="p-2 border-t text-right">
-                  {totalCredit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </td>
-                <td colSpan={3} className="p-2 border-t"></td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
+              </tfoot>
+            </table>
+          </div>
+
+          {/* Mobile cards (per entry) */}
+          <div className="sm:hidden space-y-4">
+            {mobileEntries.length === 0 && (
+              <div className="card p-4 text-center text-ink/60">No journal entries found.</div>
+            )}
+            {mobileEntries.map((entry) => {
+              const entryTotalDebit = (entry.lines || []).reduce(
+                (s, l) => s + (parseFloat(l.debit) || 0),
+                0
+              );
+              const entryTotalCredit = (entry.lines || []).reduce(
+                (s, l) => s + (parseFloat(l.credit) || 0),
+                0
+              );
+              return (
+                <div key={entry.id} className="card p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-xs uppercase text-ink/50">Ref#</div>
+                      <div className="font-mono">{entry.refNumber}</div>
+                      <div className="text-xs uppercase text-ink/50 mt-2">Date</div>
+                      <div className="whitespace-nowrap">{entry.date}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-xs uppercase text-ink/50">Created By</div>
+                      <div>{entry.createdBy || "—"}</div>
+                    </div>
+                  </div>
+
+                  {entry.description && (
+                    <div className="mt-3">
+                      <div className="text-xs uppercase text-ink/50">Description</div>
+                      <div>{entry.description}</div>
+                    </div>
+                  )}
+                  {entry.comments && (
+                    <div className="mt-2">
+                      <div className="text-xs uppercase text-ink/50">Comments</div>
+                      <div>{entry.comments}</div>
+                    </div>
+                  )}
+
+                  <div className="mt-4 border rounded overflow-hidden">
+                    {(entry.lines || []).map((ln, i) => (
+                      <div
+                        key={i}
+                        className={`grid grid-cols-2 gap-2 p-2 text-sm ${
+                          i % 2 ? "bg-gray-50" : "bg-white"
+                        }`}
+                      >
+                        <div className="col-span-2 font-medium">{getAccountName(ln.accountId)}</div>
+                        <div>
+                          <div className="text-xs uppercase text-ink/50">Debit</div>
+                          <div className="font-mono">{ln.debit ? fmt(ln.debit) : "—"}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-xs uppercase text-ink/50">Credit</div>
+                          <div className="font-mono">{ln.credit ? fmt(ln.credit) : "—"}</div>
+                        </div>
+                        {ln.memo && (
+                          <div className="col-span-2">
+                            <div className="text-xs uppercase text-ink/50">Memo</div>
+                            <div>{ln.memo}</div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    <div className="grid grid-cols-2 gap-2 p-2 bg-gray-100 text-sm font-semibold">
+                      <div className="text-right">Totals:</div>
+                      <div className="text-right font-mono">
+                        {fmt(entryTotalDebit)} / {fmt(entryTotalCredit)}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex justify-end gap-2">
+                    <button className="btn btn-sm btn-outline" onClick={() => openEdit(entry.id)}>
+                      Edit
+                    </button>
+                    <button className="btn btn-sm btn-outline" onClick={() => deleteEntry(entry.id)}>
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
       )}
 
       {/* Full Edit Modal */}
       {editEntryId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-white rounded-xl shadow-lg w-[880px] max-h-[90vh] overflow-y-auto p-5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-3">
+          <div className="bg-white rounded-xl shadow-lg w-full max-w-[880px] max-h-[90vh] overflow-y-auto p-5">
             <div className="text-lg font-semibold mb-3">Edit Journal Entry</div>
 
             {editError && (
@@ -522,18 +628,8 @@ export default function GeneralJournal() {
               <tfoot>
                 <tr className="bg-gray-50 font-semibold">
                   <td className="p-2 border-t text-right">Totals:</td>
-                  <td className="p-2 border-t text-right">
-                    {editDebit.toLocaleString(undefined, {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
-                  </td>
-                  <td className="p-2 border-t text-right">
-                    {editCredit.toLocaleString(undefined, {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
-                  </td>
+                  <td className="p-2 border-t text-right">{fmt(editDebit)}</td>
+                  <td className="p-2 border-t text-right">{fmt(editCredit)}</td>
                   <td className="p-2 border-t" colSpan={2}>
                     {isBalanced ? (
                       <span className="text-green-700">Balanced</span>

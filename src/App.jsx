@@ -82,18 +82,11 @@ function MobileMenu({
             </li>
 
             {isAdmin && notSuspended && (
-              <>
-                <li>
-                  <a className="block px-3 py-2 rounded hover:bg-brand-50" href="/admin/users" onClick={onClose}>
-                    Admin
-                  </a>
-                </li>
-                <li>
-                  <a className="block px-3 py-2 rounded hover:bg-brand-50" href="/admin/edit-home" onClick={onClose}>
-                    Edit Home
-                  </a>
-                </li>
-              </>
+              <li>
+                <a className="block px-3 py-2 rounded hover:bg-brand-50" href="/admin/users" onClick={onClose}>
+                  Admin
+                </a>
+              </li>
             )}
 
             {(notSuspended && (isAdmin || isTreasurer || isManager)) && (
