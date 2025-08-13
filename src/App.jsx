@@ -1,3 +1,129 @@
+// MobileMenu component for mobile drawer navigation
+function MobileMenu({
+  open,
+  onClose,
+  isAdmin,
+  isTreasurer,
+  isManager,
+  notSuspended,
+  profile,
+  onLogin,
+  onSignup,
+  onSignout,
+}) {
+  React.useEffect(() => {
+    // lock scroll
+    if (open) {
+      const prev = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+      return () => { document.body.style.overflow = prev; };
+    }
+  }, [open]);
+
+  React.useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    if (open) window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[100] md:hidden" role="dialog" aria-modal="true">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" onClick={onClose} />
+
+      {/* Drawer */}
+      <div
+        className="
+          absolute right-0 top-0 h-full w-[82vw] max-w-[320px]
+          bg-white shadow-2xl
+          pt-[max(env(safe-area-inset-top),0.75rem)] pb-[max(env(safe-area-inset-bottom),0.75rem)]
+          flex flex-col
+        "
+      >
+        <div className="px-4 pb-3 flex items-center justify-between">
+          <span className="font-semibold">Menu</span>
+          <button className="p-2 rounded hover:bg-gray-100" onClick={onClose} aria-label="Close">
+            ✕
+          </button>
+        </div>
+
+        <nav className="px-2 flex-1 overflow-auto">
+          <ul className="space-y-1">
+            <li>
+              <a className="block px-3 py-2 rounded hover:bg-brand-50" href="/" onClick={onClose}>
+                Home
+              </a>
+            </li>
+
+            {!profile && (
+              <>
+                <li>
+                  <button
+                    className="block w-full text-left px-3 py-2 rounded hover:bg-brand-50"
+                    onClick={() => { onLogin(); onClose(); }}
+                  >
+                    Login
+                  </button>
+                </li>
+                <li>
+                  <a className="block px-3 py-2 rounded hover:bg-brand-50" href="/signup" onClick={onClose}>
+                    Signup
+                  </a>
+                </li>
+              </>
+            )}
+
+            <li>
+              <a className="block px-3 py-2 rounded hover:bg-brand-50" href="/dashboard" onClick={onClose}>
+                Dashboard
+              </a>
+            </li>
+
+            {isAdmin && notSuspended && (
+              <>
+                <li>
+                  <a className="block px-3 py-2 rounded hover:bg-brand-50" href="/admin/users" onClick={onClose}>
+                    Admin
+                  </a>
+                </li>
+                <li>
+                  <a className="block px-3 py-2 rounded hover:bg-brand-50" href="/admin/edit-home" onClick={onClose}>
+                    Edit Home
+                  </a>
+                </li>
+              </>
+            )}
+
+            {(notSuspended && (isAdmin || isTreasurer || isManager)) && (
+              <li>
+                <a className="block px-3 py-2 rounded hover:bg-brand-50" href="/accounting" onClick={onClose}>
+                  Accounting
+                </a>
+              </li>
+            )}
+          </ul>
+
+          {profile && (
+            <div className="mt-4 border-t pt-3 px-1">
+              <div className="px-2 text-xs text-ink/60 mb-2">
+                Signed in as<br />
+                <span className="font-medium text-ink">{profile.displayName || profile.email}</span>
+              </div>
+              <button
+                className="w-full px-3 py-2 rounded text-rose-700 hover:bg-rose-50 text-left"
+                onClick={async () => { await onSignout(); onClose(); }}
+              >
+                Sign out
+              </button>
+            </div>
+          )}
+        </nav>
+      </div>
+    </div>
+  );
+}
 // src/App.jsx
 import React, { Suspense, lazy } from "react";
 import { Routes, Route, Link, NavLink, Navigate, useNavigate } from "react-router-dom";
@@ -60,6 +186,7 @@ export default function App() {
   const isTreasurer = roles.includes("treasurer");
   const isManager = roles.includes("manager");
   const notSuspended = profile?.suspended !== true;
+
 
 
   const [menuOpen, setMenuOpen] = React.useState(false);
@@ -145,60 +272,21 @@ export default function App() {
             </svg>
           </button>
         </div>
-
-        {/* Mobile sheet */}
-        {menuOpen && (
-          <div className="fixed inset-0 z-50 md:hidden" role="dialog" aria-modal="true">
-            <div className="absolute inset-0 bg-black/30" onClick={() => setMenuOpen(false)} />
-            <div className="absolute right-0 top-0 h-full w-[82%] max-w-xs bg-white shadow-xl p-4 flex flex-col">
-              <div className="flex items-center justify-between mb-4">
-                <span className="font-semibold">Menu</span>
-                <button className="p-2 rounded hover:bg-gray-100" onClick={() => setMenuOpen(false)}>
-                  ✕
-                </button>
-              </div>
-              <div className="flex flex-col gap-2">
-                <Link className="px-3 py-2 rounded hover:bg-brand-50" to="/" onClick={() => setMenuOpen(false)}>Home</Link>
-                {!profile && (
-                  <>
-                    <button className="px-3 py-2 rounded hover:bg-brand-50 text-left" onClick={() => { setLoginOpen(true); setMenuOpen(false); }}>
-                      Login
-                    </button>
-                    <Link className="px-3 py-2 rounded hover:bg-brand-50" to="/signup" onClick={() => setMenuOpen(false)}>Signup</Link>
-                  </>
-                )}
-                <Link className="px-3 py-2 rounded hover:bg-brand-50" to="/dashboard" onClick={() => setMenuOpen(false)}>Dashboard</Link>
-                {isAdmin && notSuspended && (
-                  <>
-                    <Link className="px-3 py-2 rounded hover:bg-brand-50" to="/admin/users" onClick={() => setMenuOpen(false)}>Admin</Link>
-                    <Link className="px-3 py-2 rounded hover:bg-brand-50" to="/admin/edit-home" onClick={() => setMenuOpen(false)}>Edit Home</Link>
-                  </>
-                )}
-                {(notSuspended && (isAdmin || isTreasurer || isManager)) && (
-                  <Link className="px-3 py-2 rounded hover:bg-brand-50" to="/accounting" onClick={() => setMenuOpen(false)}>Accounting</Link>
-                )}
-                {profile && (
-                  <>
-                    <div className="px-3 py-2 text-sm text-ink/70">Signed in as<br/>{profile.displayName || profile.email}</div>
-                    <button
-                      className="px-3 py-2 rounded text-rose-700 hover:bg-rose-50 text-left"
-                      onClick={async () => {
-                        if (window.confirm("Sign out?")) {
-                          await signout();
-                          setMenuOpen(false);
-                          nav("/", { replace: true });
-                        }
-                      }}
-                    >
-                      Sign out
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
       </header>
+
+      {/* MobileMenu rendered outside header for full viewport coverage */}
+      <MobileMenu
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        isAdmin={isAdmin}
+        isTreasurer={isTreasurer}
+        isManager={isManager}
+        notSuspended={notSuspended}
+        profile={profile}
+        onLogin={() => setLoginOpen(true)}
+        onSignup={() => nav("/signup")}
+        onSignout={async () => { await signout(); nav("/", { replace: true }); }}
+      />
 
       <LoginModal
         open={loginOpen}
