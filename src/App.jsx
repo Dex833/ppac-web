@@ -118,6 +118,7 @@ function MobileMenu({
   );
 }
 // src/App.jsx
+import BecomeMember from "./pages/BecomeMember.jsx";
 import React, { Suspense, lazy } from "react";
 import { Routes, Route, Link, NavLink, Navigate, useNavigate } from "react-router-dom";
 

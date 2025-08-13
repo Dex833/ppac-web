@@ -20,11 +20,10 @@
 
 /* Better spacing for tap targets on small screens */
 .touch-gap > * { margin-bottom: .5rem; }
+@import "./styles/responsive.css";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import "./styles/responsive.css";
 
 /* Base (global) */
 @layer base {
