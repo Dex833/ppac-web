@@ -1,3 +1,4 @@
+// src/pages/accounting/financials/CashFlowStatement.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { db } from "../../../lib/firebase";
 import { collection, query, orderBy, onSnapshot } from "firebase/firestore";
@@ -30,7 +31,6 @@ function longDate(ymd) {
 
 /* ---- SAFE period label (handles legacy docs) ---- */
 function periodLabelSafe(obj) {
-  // Try explicit labels first; otherwise synthesize "as of YYYY-MM-DD"
   const left =
     obj?.fromLabel ??
     (obj?.fromId === "first"
@@ -39,14 +39,9 @@ function periodLabelSafe(obj) {
       ? `as of ${obj.fromAsOf}`
       : "—");
 
-  const right =
-    obj?.toLabel ??
-    (obj?.toAsOf ? `as of ${obj.toAsOf}` : "—");
-
+  const right = obj?.toLabel ?? (obj?.toAsOf ? `as of ${obj.toAsOf}` : "—");
   return `${left} → ${right}`;
 }
-
-// get best guess for toAsOf (for summary line and filenames)
 function bestToAsOf(obj) {
   if (obj?.toAsOf) return obj.toAsOf;
   const lbl = obj?.toLabel || "";
@@ -82,7 +77,6 @@ function balancesFromBS(report) {
   };
 }
 
-// VBA-style logic you shared
 function computeVBAStyle(beginReport, endReport, netIncome) {
   const b = balancesFromBS(beginReport);
   const e = balancesFromBS(endReport);
@@ -93,13 +87,18 @@ function computeVBAStyle(beginReport, endReport, netIncome) {
   const dWC = dLoan + dInv;
   const dSC = e.shareCap - b.shareCap;
 
-  const CFO = ni - dWC; // operating
-  const CFI = 0;        // investing (none)
-  const CFF = dSC;      // financing
+  const CFO = ni - dWC;
+  const CFI = 0;
+  const CFF = dSC;
 
   return {
     inputs: { begin: b, end: e, netIncome: ni },
-    deltas: { loanReceivable: dLoan, inventory: dInv, workingCapital: dWC, shareCapital: dSC },
+    deltas: {
+      loanReceivable: dLoan,
+      inventory: dInv,
+      workingCapital: dWC,
+      shareCapital: dSC,
+    },
     sections: {
       operating: { netIncome: ni, net: CFO },
       investing: { net: CFI },
@@ -130,7 +129,11 @@ function useAccounts() {
   useEffect(() => {
     const qAcc = query(collection(db, "accounts"), orderBy("code"));
     const unsub = onSnapshot(qAcc, (snap) =>
-      setAccounts(snap.docs.filter((d) => !d.data().archived).map((d) => ({ id: d.id, ...d.data() })))
+      setAccounts(
+        snap.docs
+          .filter((d) => !d.data().archived)
+          .map((d) => ({ id: d.id, ...d.data() }))
+      )
     );
     return () => unsub();
   }, []);
@@ -143,7 +146,7 @@ function useJournalEntries() {
     const unsub = onSnapshot(qJE, (snap) =>
       setEntries(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
     );
-  return () => unsub();
+    return () => unsub();
   }, []);
   return entries;
 }
@@ -154,7 +157,8 @@ export default function CashFlowStatement() {
   const isAdmin =
     profile?.role === "admin" || (profile?.roles || []).includes("admin");
   const isTreasurer =
-    profile?.role === "treasurer" || (profile?.roles || []).includes("treasurer");
+    profile?.role === "treasurer" ||
+    (profile?.roles || []).includes("treasurer");
 
   const accounts = useAccounts();
   const entries = useJournalEntries();
@@ -241,44 +245,46 @@ export default function CashFlowStatement() {
     );
 
     return (
-      <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center">
-        <div className="bg-white rounded-xl w-[720px] max-h-[80vh] overflow-auto shadow-lg p-4">
-          <div className="flex items-center justify-between mb-3">
+      <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center px-3">
+        <div className="bg-white rounded-xl w-[min(720px,94vw)] max-h-[84vh] overflow-auto shadow-lg p-4">
+          <div className="flex items-center justify-between mb-3 sticky top-0 bg-white">
             <h4 className="font-semibold">{drill.label}</h4>
             <button className="px-3 py-1 rounded bg-gray-200" onClick={() => setDrill(null)}>
               Close
             </button>
           </div>
-          <table className="min-w-full text-sm">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="p-2 text-left">Date</th>
-                <th className="p-2 text-left">Ref#</th>
-                <th className="p-2 text-left">Desc</th>
-                <th className="p-2 text-right">Debit</th>
-                <th className="p-2 text-right">Credit</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.length === 0 ? (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50 sticky top-10 z-10">
                 <tr>
-                  <td className="p-3 text-gray-500 text-center" colSpan={5}>
-                    No entries for this group in the selected period.
-                  </td>
+                  <th className="p-2 text-left">Date</th>
+                  <th className="p-2 text-left">Ref#</th>
+                  <th className="p-2 text-left">Desc</th>
+                  <th className="p-2 text-right">Debit</th>
+                  <th className="p-2 text-right">Credit</th>
                 </tr>
-              ) : (
-                rows.map((r, i) => (
-                  <tr key={i} className="odd:bg-white even:bg-gray-50">
-                    <td className="p-2">{r.date}</td>
-                    <td className="p-2 font-mono">{r.ref}</td>
-                    <td className="p-2">{r.desc}</td>
-                    <td className="p-2 text-right">{fmt(r.debit)}</td>
-                    <td className="p-2 text-right">{fmt(r.credit)}</td>
+              </thead>
+              <tbody>
+                {rows.length === 0 ? (
+                  <tr>
+                    <td className="p-3 text-gray-500 text-center" colSpan={5}>
+                      No entries for this group in the selected period.
+                    </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  rows.map((r, i) => (
+                    <tr key={i} className="odd:bg-white even:bg-gray-50">
+                      <td className="p-2">{r.date}</td>
+                      <td className="p-2 font-mono">{r.ref}</td>
+                      <td className="p-2">{r.desc}</td>
+                      <td className="p-2 text-right">{fmt(r.debit)}</td>
+                      <td className="p-2 text-right">{fmt(r.credit)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     );
@@ -473,8 +479,7 @@ export default function CashFlowStatement() {
     : endReportDoc
     ? {
         fromId: startId,
-        fromLabel:
-          startId === "first" ? "first period (all 0)" : `as of ${startReportDoc?.asOf || ""}`,
+        fromLabel: startId === "first" ? "first period (all 0)" : `as of ${startReportDoc?.asOf || ""}`,
         fromAsOf: startReportDoc?.asOf || "",
         toId: endId,
         toLabel: `as of ${endReportDoc?.asOf || ""}`,
@@ -495,17 +500,19 @@ export default function CashFlowStatement() {
 
   /* ======================= render ======================= */
   return (
-    <div className={`flex gap-8${printing ? " print:block" : ""}`}>
+    <div className={`flex flex-col lg:flex-row gap-6 lg:gap-8${printing ? " print:block" : ""}`}>
       {renderDrilldown()}
 
-      <div className="flex-1">
+      {/* Main column */}
+      <div className="flex-1 min-w-0">
         <h3 className="text-xl font-semibold mb-4">Cash Flow Statement</h3>
 
-        <div className="mb-4 flex gap-4 items-end">
+        {/* Period selectors */}
+        <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1fr,1fr,auto] gap-3 items-end">
           <div>
             <label className="block text-sm font-medium mb-1">Beginning Balance</label>
             <select
-              className="border rounded px-2 py-1 min-w-[220px]"
+              className="border rounded px-3 py-2 w-full"
               value={startId}
               onChange={(e) => {
                 setStartId(e.target.value);
@@ -523,7 +530,7 @@ export default function CashFlowStatement() {
           <div>
             <label className="block text-sm font-medium mb-1">Ending Balance</label>
             <select
-              className="border rounded px-2 py-1 min-w-[220px]"
+              className="border rounded px-3 py-2 w-full"
               value={endId}
               onChange={(e) => setEndId(e.target.value)}
               disabled={!startId}
@@ -538,7 +545,7 @@ export default function CashFlowStatement() {
           </div>
           {(isAdmin || isTreasurer) && (
             <button
-              className="ml-2 bg-green-600 text-white px-3 py-2 rounded font-semibold"
+              className="btn btn-primary h-10"
               onClick={handleGenerateAndSave}
               disabled={saving || !endId}
             >
@@ -551,46 +558,47 @@ export default function CashFlowStatement() {
           <div className="text-gray-500 text-sm">Select both periods to view cash flow.</div>
         ) : (
           <>
+            {/* Export / Period bar */}
             <div className="mb-3 flex flex-wrap gap-2 items-center">
               <button
-                className="bg-blue-600 text-white px-3 py-2 rounded font-semibold"
+                className="btn btn-primary"
                 onClick={() => exportCSV(active)}
                 disabled={downloading}
               >
                 Export CSV
               </button>
               <button
-                className="bg-blue-600 text-white px-3 py-2 rounded font-semibold"
+                className="btn btn-primary"
                 onClick={() => exportPDF(active)}
                 disabled={downloading}
               >
                 Export PDF
               </button>
-              <button
-                className="bg-gray-600 text-white px-3 py-2 rounded font-semibold"
-                onClick={handlePrint}
-              >
+              <button className="btn btn-outline" onClick={handlePrint}>
                 Print
               </button>
-              <div className="ml-auto text-sm text-gray-700">
+              <div className="ml-auto w-full sm:w-auto text-sm text-gray-700">
                 Period:&nbsp;<strong>{periodLabelSafe(active)}</strong>
               </div>
             </div>
 
-            {/* Styled like your sample */}
+            {/* ===== Statement (responsive grid) ===== */}
             <div className="text-sm leading-7 space-y-6">
               {/* Operating */}
               <div>
                 <div className="font-semibold underline">Cash Flow From Operating Activities:</div>
 
-                <div className="grid grid-cols-[1fr,1fr,12rem] gap-x-2 pl-8 mt-2">
-                  <div className="col-span-2">Net Profit/Loss</div>
-                  <div className="text-right">
-                    {fmt(active.report.sections.operating.netIncome)}
+                <div className="grid grid-cols-[1fr,12rem] sm:grid-cols-[1fr,1fr,12rem] gap-x-2 sm:pl-8 pl-4 mt-2">
+                  {/* Net income */}
+                  <div className="col-span-1 sm:col-span-2">Net Profit/Loss</div>
+                  <div className="text-right">{fmt(active.report.sections.operating.netIncome)}</div>
+
+                  {/* Working capital header */}
+                  <div className="col-span-2 sm:col-span-3 font-semibold mt-3">
+                    Changes In Working Capital:
                   </div>
 
-                  <div className="col-span-3 font-semibold mt-3">Changes In Working Capital:</div>
-
+                  {/* Loan receivable */}
                   <button
                     type="button"
                     className="text-left hover:underline"
@@ -600,9 +608,10 @@ export default function CashFlowStatement() {
                   >
                     Changes in Loan Receivable
                   </button>
-                  <div>Loan Receivable</div>
+                  <div className="hidden sm:block">Loan Receivable</div>
                   <div className="text-right">{fmt(active.report.deltas.loanReceivable)}</div>
 
+                  {/* Inventory */}
                   <button
                     type="button"
                     className="text-left hover:underline"
@@ -612,14 +621,16 @@ export default function CashFlowStatement() {
                   >
                     Changes in Rice Inventory
                   </button>
-                  <div>Rice Inventory</div>
+                  <div className="hidden sm:block">Rice Inventory</div>
                   <div className="text-right">{fmt(active.report.deltas.inventory)}</div>
 
+                  {/* Net change WC */}
                   <div className="italic">Net Changes on Working Capital</div>
-                  <div></div>
+                  <div className="hidden sm:block"></div>
                   <div className="text-right italic">{fmt(active.report.deltas.workingCapital)}</div>
 
-                  <div className="col-span-2 font-semibold mt-3">
+                  {/* Net CFO */}
+                  <div className="col-span-1 sm:col-span-2 font-semibold mt-3">
                     Net Cash Flow From Operating Activities
                   </div>
                   <div className="text-right font-semibold">
@@ -631,12 +642,12 @@ export default function CashFlowStatement() {
               {/* Investing */}
               <div>
                 <div className="font-semibold underline">Cash Flow from Investing Activities:</div>
-                <div className="grid grid-cols-[1fr,1fr,12rem] gap-x-2 pl-8 mt-2">
+                <div className="grid grid-cols-[1fr,12rem] sm:grid-cols-[1fr,1fr,12rem] gap-x-2 sm:pl-8 pl-4 mt-2">
                   <div>None</div>
-                  <div></div>
+                  <div className="hidden sm:block"></div>
                   <div className="text-right">{fmt(0)}</div>
 
-                  <div className="col-span-2 font-semibold mt-3">
+                  <div className="col-span-1 sm:col-span-2 font-semibold mt-3">
                     Net Cash Flow From Investing Activities
                   </div>
                   <div className="text-right font-semibold">{fmt(0)}</div>
@@ -646,12 +657,12 @@ export default function CashFlowStatement() {
               {/* Financing */}
               <div>
                 <div className="font-semibold underline">Cash Flow From Financing Activities:</div>
-                <div className="grid grid-cols-[1fr,1fr,12rem] gap-x-2 pl-8 mt-2">
+                <div className="grid grid-cols-[1fr,12rem] sm:grid-cols-[1fr,1fr,12rem] gap-x-2 sm:pl-8 pl-4 mt-2">
                   <div>Share Capital</div>
-                  <div>Share Capital</div>
+                  <div className="hidden sm:block">Share Capital</div>
                   <div className="text-right">{fmt(active.report.deltas.shareCapital)}</div>
 
-                  <div className="col-span-2 font-semibold mt-3">
+                  <div className="col-span-1 sm:col-span-2 font-semibold mt-3">
                     Net Cash Flow From Financing Activities
                   </div>
                   <div className="text-right font-semibold">
@@ -661,7 +672,7 @@ export default function CashFlowStatement() {
               </div>
 
               {/* Summary */}
-              <div className="grid grid-cols-[1fr,12rem] gap-x-2 pl-8">
+              <div className="grid grid-cols-[1fr,12rem] gap-x-2 sm:pl-8 pl-4">
                 <div className="font-semibold">Net Increase In Cash:</div>
                 <div className="text-right font-semibold">
                   {fmt(active.report.summary.netChangeCash)}
@@ -678,8 +689,8 @@ export default function CashFlowStatement() {
         )}
       </div>
 
-      {/* Sidebar */}
-      <div className="w-80">
+      {/* Sidebar (Recent) */}
+      <aside className="w-full lg:w-80 shrink-0">
         <h4 className="text-lg font-semibold mb-2">Recent Reports</h4>
         <ul className="space-y-2">
           {recentReports.map((r) => (
@@ -711,7 +722,7 @@ export default function CashFlowStatement() {
             <li className="text-sm text-gray-500">No saved cash flow statements yet.</li>
           )}
         </ul>
-      </div>
+      </aside>
     </div>
   );
 }
