@@ -15,6 +15,8 @@ import PageBackground from "../../components/PageBackground";
 import DailyReportsUpdateButton from "../../components/DailyReportsUpdateButton";
 import RebuildTrialBalanceButton from "../../components/RebuildTrialBalanceButton";
 import RebuildIncomeStatementButton from "../../components/RebuildIncomeStatementButton";
+import RebuildBalanceSheetButton from "../../components/RebuildBalanceSheetButton";
+import RebuildCashFlowButton from "../../components/RebuildCashFlowButton";
 
 /* ----------------------------- background ----------------------------- */
 const reportsBg =
@@ -308,8 +310,18 @@ export default function Reports() {
                         </Link>
 
                         {/* Admin-only rebuilders for specific daily docs */}
-                        {isAdmin && r.id === "auto_TB" && <RebuildTrialBalanceButton />}
-                        {isAdmin && r.id === "auto_IS" && <RebuildIncomeStatementButton />}
+                        {isAdmin && r.id === "auto_TB" && (
+                          <RebuildTrialBalanceButton className="rounded-lg" />
+                        )}
+                        {isAdmin && r.id === "auto_IS" && (
+                          <RebuildIncomeStatementButton className="rounded-lg" />
+                        )}
+                        {isAdmin && r.id === "auto_BS" && (
+                          <RebuildBalanceSheetButton className="rounded-lg" />
+                        )}
+                        {isAdmin && r.id === "auto_CF" && (
+                          <RebuildCashFlowButton className="rounded-lg" />
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -353,8 +365,18 @@ export default function Reports() {
                   <Link className="btn btn-outline btn-sm" to={`/reports/${r.id}`}>
                     Open
                   </Link>
-                  {isAdmin && r.id === "auto_TB" && <RebuildTrialBalanceButton />}
-                  {isAdmin && r.id === "auto_IS" && <RebuildIncomeStatementButton />}
+                  {isAdmin && r.id === "auto_TB" && (
+                    <RebuildTrialBalanceButton className="rounded-lg" />
+                  )}
+                  {isAdmin && r.id === "auto_IS" && (
+                    <RebuildIncomeStatementButton className="rounded-lg" />
+                  )}
+                  {isAdmin && r.id === "auto_BS" && (
+                    <RebuildBalanceSheetButton className="rounded-lg" />
+                  )}
+                  {isAdmin && r.id === "auto_CF" && (
+                    <RebuildCashFlowButton className="rounded-lg" />
+                  )}
                 </div>
               </div>
             ))}

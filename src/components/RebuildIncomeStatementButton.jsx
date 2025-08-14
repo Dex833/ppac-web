@@ -60,7 +60,7 @@ function fmt(n) {
 }
 
 /* ---------- Component ---------- */
-export default function RebuildIncomeStatementButton() {
+export default function RebuildIncomeStatementButton({ className = "" }) {
   const { profile, loading } = useUserProfile();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -175,10 +175,7 @@ export default function RebuildIncomeStatementButton() {
   return (
     <div className="flex items-center gap-2">
       <button
-        className={[
-          "px-3 py-2 rounded-lg text-sm font-medium shadow-sm transition",
-          busy ? "bg-gray-300 text-gray-600" : "bg-brand-700 text-white hover:bg-brand-800",
-        ].join(" ")}
+  className={["btn btn-primary", "disabled:opacity-50", className].join(" ")}
         onClick={handleRebuild}
         disabled={busy}
         title="Compute Income Statement (2025-01-01 → auto_IS.periodEnd) and save into auto_IS.payload"

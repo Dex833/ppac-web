@@ -18,7 +18,7 @@ import {
 } from "../lib/bookkeeping";
 import useUserProfile from "../hooks/useUserProfile";
 
-export default function RebuildTrialBalanceButton() {
+export default function RebuildTrialBalanceButton({ className = "" }) {
   const { profile, loading } = useUserProfile();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -131,15 +131,12 @@ export default function RebuildTrialBalanceButton() {
   return (
     <div className="flex items-center gap-2">
       <button
-        className={[
-          "px-3 py-2 rounded-lg text-sm font-medium shadow-sm transition",
-          busy ? "bg-gray-300 text-gray-600" : "bg-brand-700 text-white hover:bg-brand-800",
-        ].join(" ")}
+  className={["btn btn-primary", "disabled:opacity-50", className].join(" ")}
         onClick={handleRebuild}
         disabled={busy}
         title="Compute Trial Balance from journalEntries and save into auto_TB.payload"
       >
-        {busy ? "Rebuilding TB…" : "Rebuild Trial Balance"}
+  {busy ? "Rebuilding TB…" : "Rebuild Trial Balance"}
       </button>
       {msg && <span className="text-xs text-ink/60">{msg}</span>}
     </div>
