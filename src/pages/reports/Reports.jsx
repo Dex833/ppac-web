@@ -12,18 +12,23 @@ import {
 } from "firebase/firestore";
 import useUserProfile from "../../hooks/useUserProfile";
 import PageBackground from "../../components/PageBackground";
+import DailyReportsUpdateButton from "../../components/DailyReportsUpdateButton";
+import RebuildTrialBalanceButton from "../../components/RebuildTrialBalanceButton";
 
 /* ----------------------------- background ----------------------------- */
 const reportsBg =
   "https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80";
 
 /* ----------------------------- helpers ----------------------------- */
+/** Canonical types used in `financialReports`:
+ *  'income_statement' | 'balance_sheet' | 'cash_flow' | 'trial_balance'
+ */
 const TYPES = [
   { val: "", label: "All types" },
-  { val: "incomeStatement", label: "Income Statement" },
-  { val: "balanceSheet", label: "Balance Sheet" },
-  { val: "cashFlow", label: "Cash Flow" },
-  { val: "trial_balance", label: "Trial Balance" }, // HTML snapshot
+  { val: "income_statement", label: "Income Statement" },
+  { val: "balance_sheet", label: "Balance Sheet" },
+  { val: "cash_flow", label: "Cash Flow" },
+  { val: "trial_balance", label: "Trial Balance" },
 ];
 
 function tsToDate(v) {
@@ -49,12 +54,18 @@ function fmtPeriodDate(dateStr) {
   return `${month}/${day}/${year}`;
 }
 
+/** Unified period label:
+ *  uses periodStart/periodEnd (new), falls back to from/to (legacy)
+ *  Balance Sheet shows "as of <date>"
+ */
 function periodLabel(r) {
   if (!r) return "—";
-  const L = r.from || "—";
-  const R = r.to || "—";
-  if (r.type === "balanceSheet") {
-    const asof = r.to || r.from || "—";
+  const L = r.periodStart || r.from || "—";
+  const R = r.periodEnd || r.to || "—";
+  const t = r.type;
+
+  if (t === "balance_sheet") {
+    const asof = R || L || "—";
     return `as of ${fmtPeriodDate(asof)}`;
   }
   if (L === R) return `as of ${fmtPeriodDate(R)}`;
@@ -63,9 +74,9 @@ function periodLabel(r) {
 
 function TypeBadge({ t }) {
   const map = {
-    incomeStatement: "bg-blue-100 text-blue-800 border-blue-200",
-    balanceSheet: "bg-emerald-100 text-emerald-800 border-emerald-200",
-    cashFlow: "bg-amber-100 text-amber-800 border-amber-200",
+    income_statement: "bg-blue-100 text-blue-800 border-blue-200",
+    balance_sheet: "bg-emerald-100 text-emerald-800 border-emerald-200",
+    cash_flow: "bg-amber-100 text-amber-800 border-amber-200",
     trial_balance: "bg-violet-100 text-violet-800 border-violet-200",
   };
   const label =
@@ -86,9 +97,12 @@ function TypeBadge({ t }) {
 /* ----------------------------- component ----------------------------- */
 export default function Reports() {
   const nav = useNavigate();
-  const { profile } = useUserProfile();
+  const { profile, loading: profileLoading } = useUserProfile();
   const isAdmin =
-    profile?.roles?.includes("admin") || profile?.role === "admin";
+    !profileLoading &&
+    ((Array.isArray(profile?.roles) && profile.roles.includes("admin")) ||
+      profile?.role === "admin") &&
+    profile?.suspended !== true;
 
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -225,10 +239,13 @@ export default function Reports() {
       {/* ===================== DAILY SECTION ===================== */}
       <div className="mb-6">
         <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-semibold">
-            Daily Financial Status Update{" "}
-            <span className="text-ink/60 text-sm">(updated every 1am)</span>
-          </h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-semibold">
+              Daily Financial Status Update{" "}
+              <span className="text-ink/60 text-sm">(updated every 1am)</span>
+            </h2>
+            {isAdmin && <DailyReportsUpdateButton />}
+          </div>
           <div className="text-sm text-ink/60">
             {dailyRows.length ? `${dailyRows.length} item(s)` : "No daily reports yet"}
           </div>
@@ -253,10 +270,13 @@ export default function Reports() {
                   <tr key={r.id} className="odd:bg-white even:bg-gray-50">
                     <td className="p-2 border-b border-r">
                       <div className="font-medium">{dailyTitle(r)}</div>
-                      <div className="mt-1">
+                      <div className="mt-1 flex items-center gap-2">
                         <Link className="btn btn-outline btn-sm" to={`/reports/${r.id}`}>
                           Open
                         </Link>
+                        {isAdmin && r.id === "auto_TB" && (
+                          <RebuildTrialBalanceButton />
+                        )}
                       </div>
                     </td>
                     <td className="p-2 border-b border-r">
@@ -299,10 +319,13 @@ export default function Reports() {
                 <div className="mt-1 text-xs text-ink/60">
                   Created: <span className="font-mono">{fmtDT(r.createdAt)}</span>
                 </div>
-                <div className="mt-3">
+                <div className="mt-3 flex items-center gap-2">
                   <Link className="btn btn-outline btn-sm" to={`/reports/${r.id}`}>
                     Open
                   </Link>
+                  {isAdmin && r.id === "auto_TB" && (
+                    <RebuildTrialBalanceButton />
+                  )}
                 </div>
               </div>
             ))}
