@@ -15,12 +15,10 @@ import {
 } from "firebase/firestore";
 import useUserProfile from "../../../hooks/useUserProfile";
 import { saveFinancialSnapshot } from "../../reports/saveSnapshot";
-// NOTE: chart is dynamically imported below (no static import)
-// import IncomeStatementChart from "./IncomeStatementChart";
 import jsPDF from "jspdf";
 import { useNavigate } from "react-router-dom";
 
-/* -------------------- Error Boundary (prevents blank page) -------------------- */
+/* -------------------- Error Boundary (prevents blank screens) -------------------- */
 class ISBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -30,7 +28,6 @@ class ISBoundary extends React.Component {
     return { error };
   }
   componentDidCatch(error, info) {
-    // still logs to console if available
     // eslint-disable-next-line no-console
     console.error("IncomeStatement crashed:", error, info);
   }
@@ -53,7 +50,8 @@ class ISBoundary extends React.Component {
   }
 }
 
-/* -------------------- date helpers -------------------- */
+/* -------------------- tiny helpers -------------------- */
+const A = (v) => (Array.isArray(v) ? v : []); // force Array
 function parseYMD(ymd) {
   if (!ymd) return null;
   const [y, m, d] = ymd.split("-").map((n) => parseInt(n, 10));
@@ -74,23 +72,13 @@ function formatRange(from, to) {
   if (R === "-") return L;
   return `${L} - ${R}`;
 }
-
-/* -------------------- type helpers -------------------- */
 const isRevenueType = (t) => {
   const v = (t || "").toLowerCase();
   return v === "revenue" || v === "income";
 };
 const isExpenseType = (t) => (t || "").toLowerCase() === "expense";
-
-/* COGS detection: strictly by MAIN name === "COGS" */
-function isCOGSAccount(acc) {
-  return ((acc.main || "").trim().toLowerCase() === "cogs");
-}
-
-/* Extract MAIN from "Main / Individual" (for legacy saved docs) */
-function mainFromRenderedName(name = "") {
-  return name.split(" / ")[0].trim().toLowerCase();
-}
+const isCOGSAccount = (acc) => ((acc?.main || "").trim().toLowerCase() === "cogs");
+const mainFromRenderedName = (name = "") => name.split(" / ")[0].trim().toLowerCase();
 
 /* -------------------- accounts hook -------------------- */
 function useAccounts() {
@@ -100,8 +88,8 @@ function useAccounts() {
     const unsub = onSnapshot(qAcc, (snap) => {
       setAccounts(
         snap.docs
-          .filter((d) => !d.data().archived)
           .map((d) => ({ id: d.id, ...d.data() }))
+          .filter((a) => !a.archived)
       );
     });
     return () => unsub();
@@ -109,23 +97,23 @@ function useAccounts() {
   return accounts;
 }
 
-/* Sum helper for a single account over filtered entries */
+/* -------------------- sums -------------------- */
 function sumForAccount(acc, filteredEntries) {
   let debit = 0, credit = 0;
-  filteredEntries.forEach((entry) => {
-    (entry.lines || []).forEach((line) => {
-      if (line.accountId === acc.id) {
+  A(filteredEntries).forEach((entry) => {
+    A(entry?.lines).forEach((line) => {
+      if (line?.accountId === acc.id) {
         debit += parseFloat(line.debit) || 0;
         credit += parseFloat(line.credit) || 0;
       }
     });
   });
-  // revenues: credit - debit; expenses/COGS: debit - credit
-  const isRevenue = isRevenueType(acc.type);
-  const amount = isRevenue ? (credit - debit) : (debit - credit);
+  const isRev = isRevenueType(acc?.type);
+  const amount = isRev ? (credit - debit) : (debit - credit);
   return { amount };
 }
 
+/* -------------------- page -------------------- */
 function IncomeStatementInner() {
   const accounts = useAccounts();
   const nav = useNavigate();
@@ -136,12 +124,12 @@ function IncomeStatementInner() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [notes, setNotes] = useState("");
-  const [recentReports, setRecentReports] = useState([]); // unified (financialReports)
-  const [showReport, setShowReport] = useState(null); // {id?, from, to, report}
+  const [recentReports, setRecentReports] = useState([]); // structured saves in financialReports
+  const [showReport, setShowReport] = useState(null);      // {id?, from, to, report}
   const [generating, setGenerating] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [printing, setPrinting] = useState(false);
-  const [saving, setSaving] = useState(false); // Save to Reports (HTML snapshot)
+  const [saving, setSaving] = useState(false);
 
   const { profile } = useUserProfile();
   const isAdmin = profile?.roles?.includes("admin") || profile?.role === "admin";
@@ -150,33 +138,24 @@ function IncomeStatementInner() {
 
   const userName = profile?.displayName || profile?.email || "Unknown";
   const userId = profile?.uid || "";
-  const notesRef = useRef();
-  const viewRef = useRef(null); // content we snapshot into payload.html
+  const viewRef = useRef(null); // content snapshot
 
-  // SAFELY load chart (won’t crash if chunk fails)
-  const [Chart, setChart] = useState(null);
-  useEffect(() => {
-    let mounted = true;
-    import("./IncomeStatementChart")
-      .then((m) => mounted && setChart(() => m.default))
-      .catch(() => mounted && setChart(() => null));
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  /* ---- load journal entries ---- */
+  /* entries */
   useEffect(() => {
     setLoading(true);
     const q = query(collection(db, "journalEntries"), orderBy("createdAt", "asc"));
-    const unsub = onSnapshot(q, (snap) => {
-      setEntries(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setLoading(false);
-    });
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        setEntries(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setLoading(false);
+      },
+      () => setLoading(false)
+    );
     return () => unsub();
   }, []);
 
-  /* ---- load recent unified IS reports ---- */
+  /* recent structured IS saves */
   useEffect(() => {
     const q = query(
       collection(db, "financialReports"),
@@ -190,87 +169,62 @@ function IncomeStatementInner() {
     return () => unsub();
   }, []);
 
-  /* ---- group accounts ---- */
-  const revenueAccounts = accounts.filter((a) => isRevenueType(a.type));
-  const expenseAccounts = accounts.filter((a) => isExpenseType(a.type));
-
-  // Split expenses into COGS vs Operating (by MAIN === "COGS")
-  const cogsAccountsRaw = expenseAccounts.filter(isCOGSAccount);
-  const opExAccountsRaw = expenseAccounts.filter((a) => !isCOGSAccount(a));
-
+  /* filters */
   function filterEntriesByDate(list, fromDate, toDate) {
     if (!fromDate && !toDate) return list;
-    return list.filter((e) => {
-      const d = e.date || ""; // "YYYY-MM-DD"
+    return A(list).filter((e) => {
+      const d = e?.date || ""; // "YYYY-MM-DD"
       if (fromDate && d < fromDate) return false;
       if (toDate && d > toDate) return false;
       return true;
     });
   }
 
-  /* ---- compute current (unsaved) report numbers ---- */
   const filteredEntries = filterEntriesByDate(entries, from, to);
+
+  const revenueAccounts = A(accounts).filter((a) => isRevenueType(a.type));
+  const expenseAccounts = A(accounts).filter((a) => isExpenseType(a.type));
+  const cogsAccountsRaw = expenseAccounts.filter(isCOGSAccount);
+  const opExAccountsRaw = expenseAccounts.filter((a) => !isCOGSAccount(a));
 
   const revenues = revenueAccounts.map((acc) => {
     const { amount } = sumForAccount(acc, filteredEntries);
-    return {
-      code: acc.code,
-      name: acc.main + (acc.individual ? " / " + acc.individual : ""),
-      amount,
-    };
+    return { code: acc.code, name: acc.main + (acc.individual ? " / " + acc.individual : ""), amount };
   });
 
   const cogs = cogsAccountsRaw.map((acc) => {
     const { amount } = sumForAccount(acc, filteredEntries);
-    return {
-      code: acc.code,
-      name: acc.main + (acc.individual ? " / " + acc.individual : ""),
-      amount,
-    };
+    return { code: acc.code, name: acc.main + (acc.individual ? " / " + acc.individual : ""), amount };
   });
 
   const expenses = opExAccountsRaw.map((acc) => {
     const { amount } = sumForAccount(acc, filteredEntries);
-    return {
-      code: acc.code,
-      name: acc.main + (acc.individual ? " / " + acc.individual : ""),
-      amount,
-    };
+    return { code: acc.code, name: acc.main + (acc.individual ? " / " + acc.individual : ""), amount };
   });
 
-  const totalRevenue = revenues.reduce((s, a) => s + a.amount, 0);
-  const totalCOGS = cogs.reduce((s, a) => s + a.amount, 0);
+  const totalRevenue = revenues.reduce((s, a) => s + (a.amount || 0), 0);
+  const totalCOGS = cogs.reduce((s, a) => s + (a.amount || 0), 0);
   const grossProfit = totalRevenue - totalCOGS;
-  const totalExpense = expenses.reduce((s, a) => s + a.amount, 0);
+  const totalExpense = expenses.reduce((s, a) => s + (a.amount || 0), 0);
   const netIncome = grossProfit - totalExpense;
 
-  /* -------------------- actions (UNIFIED) -------------------- */
+  /* -------------- Save structured (“Save (structured)”) -------------- */
   async function handleGenerate() {
     setGenerating(true);
     const now = new Date();
-
     const report = {
-      revenues,
-      cogs,
-      expenses,
-      totalRevenue,
-      totalCOGS,
-      grossProfit,
-      totalExpense,
-      netIncome,
+      revenues, cogs, expenses,
+      totalRevenue, totalCOGS, grossProfit, totalExpense, netIncome,
       notes,
       generatedBy: userName,
       generatedById: userId,
       generatedAt: now.toISOString(),
     };
-
     try {
       await saveFinancialSnapshot({
         type: "incomeStatement",
         label: "Income Statement",
-        from,
-        to,
-        report,
+        from, to, report,
         createdBy: userName,
         createdById: userId,
       });
@@ -283,23 +237,7 @@ function IncomeStatementInner() {
     }
   }
 
-  async function handleDeleteReport(id) {
-    if (!id) return;
-    if (!canDeleteReports) return;
-    if (!window.confirm("Delete this saved report?")) return;
-    await deleteDoc(doc(db, "financialReports", id));
-    setShowReport(null);
-  }
-
-  function handlePrint() {
-    setPrinting(true);
-    setTimeout(() => {
-      window.print();
-      setPrinting(false);
-    }, 50);
-  }
-
-  /* -------------------- snapshot -> financialReports (payload.html) -------------------- */
+  /* -------------- Save to periodic Reports (payload.html) -------------- */
   function buildSnapshotHTML(title, reportObj) {
     return `<!doctype html><meta charset="utf-8" />
     <style>
@@ -313,14 +251,13 @@ function IncomeStatementInner() {
     <div>Period: ${formatRange(reportObj.from, reportObj.to)}</div>
     <div style="margin-top:10px">${viewRef.current ? viewRef.current.innerHTML : ""}</div>`;
   }
-
   async function handleSaveToReports(reportObj) {
     if (!viewRef.current) return;
     setSaving(true);
     try {
       const html = buildSnapshotHTML("Income Statement", reportObj);
       const ref = await addDoc(collection(db, "financialReports"), {
-        type: "incomeStatement", // periodic type
+        type: "incomeStatement",
         status: "generated",
         label:
           reportObj.from || reportObj.to
@@ -331,7 +268,7 @@ function IncomeStatementInner() {
         createdAt: serverTimestamp(),
         createdByName: userName,
         createdById: userId,
-        payload: { html }, // viewer reads this
+        payload: { html },
       });
       alert("Saved to Reports ✅");
       nav(`/reports/${ref.id}`);
@@ -343,7 +280,14 @@ function IncomeStatementInner() {
     }
   }
 
-  /* -------------------- exports -------------------- */
+  /* -------------- exports -------------- */
+  function handlePrint() {
+    setPrinting(true);
+    setTimeout(() => {
+      window.print();
+      setPrinting(false);
+    }, 50);
+  }
   function handleDownloadPDF(reportObj) {
     setDownloading(true);
     const docPDF = new jsPDF();
@@ -363,74 +307,51 @@ function IncomeStatementInner() {
     );
     let y = 44;
 
-    // Revenues
+    const revs = A(reportObj.report.revenues);
+    const cogsList = A(reportObj.report.cogs);
+    const exps = A(reportObj.report.expenses);
+
     docPDF.text("Revenues", 14, y); y += 6;
-    (reportObj.report.revenues || []).forEach((acc) => {
-      docPDF.text(acc.code + " - " + acc.name, 16, y);
+    revs.forEach((acc) => {
+      docPDF.text(`${acc.code} - ${acc.name}`, 16, y);
       docPDF.text(
-        Number(acc.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        Number(acc.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
         120, y, { align: "right" }
       );
       y += 6;
     });
-    docPDF.text(
-      "Total Revenue: " +
-        Number(reportObj.report.totalRevenue ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-      16, y
-    ); y += 8;
+    docPDF.text(`Total Revenue: ${Number(reportObj.report.totalRevenue ?? 0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`, 16, y); y += 8;
 
-    // COGS
-    const cogsList = reportObj.report.cogs || [];
     if (cogsList.length) {
       docPDF.text("Less: Cost of Goods Sold (COGS)", 14, y); y += 6;
       cogsList.forEach((acc) => {
-        docPDF.text(acc.code + " - " + acc.name, 16, y);
+        docPDF.text(`${acc.code} - ${acc.name}`, 16, y);
         docPDF.text(
-          Number(acc.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+          Number(acc.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
           120, y, { align: "right" }
         );
         y += 6;
       });
-      docPDF.text(
-        "Total COGS: " +
-          Number(reportObj.report.totalCOGS ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-        16, y
-      ); y += 8;
+      docPDF.text(`Total COGS: ${Number(reportObj.report.totalCOGS ?? 0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`, 16, y); y += 8;
+      docPDF.setFont(undefined, "bold");
+      docPDF.text(`Gross Profit: ${Number(reportObj.report.grossProfit ?? 0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`, 16, y);
+      docPDF.setFont(undefined, "normal");
+      y += 8;
     }
 
-    // Gross Profit
-    docPDF.setFont(undefined, "bold");
-    docPDF.text(
-      "Gross Profit: " +
-        Number(reportObj.report.grossProfit ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-      16, y
-    );
-    docPDF.setFont(undefined, "normal");
-    y += 8;
-
-    // Expenses
     docPDF.text("Expenses", 14, y); y += 6;
-    (reportObj.report.expenses || []).forEach((acc) => {
-      docPDF.text(acc.code + " - " + acc.name, 16, y);
+    exps.forEach((acc) => {
+      docPDF.text(`${acc.code} - ${acc.name}`, 16, y);
       docPDF.text(
-        Number(acc.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        Number(acc.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
         120, y, { align: "right" }
       );
       y += 6;
     });
-    docPDF.text(
-      "Total Expenses: " +
-        Number(reportObj.report.totalExpense ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-      16, y
-    ); y += 8;
+    docPDF.text(`Total Expenses: ${Number(reportObj.report.totalExpense ?? 0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`, 16, y); y += 8;
 
-    // Net Income
     docPDF.setFont(undefined, "bold");
-    docPDF.text(
-      "Net Income: " +
-        Number(reportObj.report.netIncome ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
-      16, y
-    );
+    docPDF.text(`Net Income: ${Number(reportObj.report.netIncome ?? 0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`, 16, y);
     docPDF.setFont(undefined, "normal");
 
     if (reportObj.report.notes) {
@@ -443,8 +364,10 @@ function IncomeStatementInner() {
     docPDF.save(fileName);
     setDownloading(false);
   }
-
   function handleDownloadCSV(reportObj) {
+    const revs = A(reportObj.report.revenues);
+    const cogsList = A(reportObj.report.cogs);
+    const exps = A(reportObj.report.expenses);
     const period = formatRange(reportObj.from, reportObj.to);
     let csv = `Income Statement\nPeriod:,${period}\n`;
     csv += `Generated by:,${reportObj.report.generatedBy || "-"}\nGenerated at:,${
@@ -452,24 +375,23 @@ function IncomeStatementInner() {
     }\n`;
 
     csv += `\nRevenues\nAccount,Amount\n`;
-    (reportObj.report.revenues || []).forEach((acc) => {
-      csv += `"${acc.code} - ${acc.name}",${acc.amount}\n`;
+    revs.forEach((acc) => {
+      csv += `"${acc.code} - ${acc.name}",${acc.amount || 0}\n`;
     });
     csv += `Total Revenue,${reportObj.report.totalRevenue ?? 0}\n`;
 
-    const cogsList = reportObj.report.cogs || [];
     if (cogsList.length) {
       csv += `\nLess: Cost of Goods Sold (COGS)\nAccount,Amount\n`;
       cogsList.forEach((acc) => {
-        csv += `"${acc.code} - ${acc.name}",${acc.amount}\n`;
+        csv += `"${acc.code} - ${acc.name}",${acc.amount || 0}\n`;
       });
       csv += `Total COGS,${reportObj.report.totalCOGS ?? 0}\n`;
       csv += `Gross Profit,${reportObj.report.grossProfit ?? 0}\n`;
     }
 
     csv += `\nExpenses\nAccount,Amount\n`;
-    (reportObj.report.expenses || []).forEach((acc) => {
-      csv += `"${acc.code} - ${acc.name}",${acc.amount}\n`;
+    exps.forEach((acc) => {
+      csv += `"${acc.code} - ${acc.name}",${acc.amount || 0}\n`;
     });
     csv += `Total Expenses,${reportObj.report.totalExpense ?? 0}\n\nNet Income,${reportObj.report.netIncome ?? 0}\n`;
 
@@ -487,24 +409,18 @@ function IncomeStatementInner() {
     URL.revokeObjectURL(url);
   }
 
-  /* -------------------- saved report open (compat) -------------------- */
+  /* saved report open (compat) */
   function handleShowReport(r) {
-    // Back-compat: if old report lacks cogs/grossProfit, split by MAIN === "COGS"
-    if (!r.report.cogs) {
-      const expenses = r.report.expenses || [];
-      const guessedCogs = expenses.filter((e) => mainFromRenderedName(e.name) === "cogs");
-      const rest = expenses.filter((e) => mainFromRenderedName(e.name) !== "cogs");
-
-      const totalCOGS = guessedCogs.reduce((s, a) => s + (a.amount || 0), 0);
-      const totalRevenue = r.report.totalRevenue ?? (r.report.revenues || []).reduce((s, a) => s + (a.amount || 0), 0);
-      const grossProfit = totalRevenue - totalCOGS;
-      const totalExpense = rest.reduce((s, a) => s + (a.amount || 0), 0);
-      const netIncome = grossProfit - totalExpense;
-
-      r = {
-        ...r,
-        report: { ...r.report, cogs: guessedCogs, expenses: rest, totalCOGS, grossProfit, totalExpense, netIncome },
-      };
+    if (!r?.report?.cogs) {
+      const expenses = A(r?.report?.expenses);
+      const guessedCogs = expenses.filter((e) => mainFromRenderedName(e?.name) === "cogs");
+      const rest = expenses.filter((e) => mainFromRenderedName(e?.name) !== "cogs");
+      const totalCOGS_ = guessedCogs.reduce((s, a) => s + (a?.amount || 0), 0);
+      const totalRevenue_ = r?.report?.totalRevenue ?? A(r?.report?.revenues).reduce((s, a) => s + (a?.amount || 0), 0);
+      const grossProfit_ = totalRevenue_ - totalCOGS_;
+      const totalExpense_ = rest.reduce((s, a) => s + (a?.amount || 0), 0);
+      const netIncome_ = grossProfit_ - totalExpense_;
+      r = { ...r, report: { ...r.report, cogs: guessedCogs, expenses: rest, totalCOGS: totalCOGS_, grossProfit: grossProfit_, totalExpense: totalExpense_, netIncome: netIncome_ } };
     }
     setShowReport(r);
   }
@@ -512,60 +428,40 @@ function IncomeStatementInner() {
     setShowReport(null);
   }
 
-  /* -------------------- drilldown modal (by account) -------------------- */
-  const [drill, setDrill] = useState(null); // { code, name, from, to }
-
+  /* drilldown modal */
+  const [drill, setDrill] = useState(null);
   function openDrilldown(row, range) {
-    setDrill({
-      code: row.code,
-      name: row.name,
-      from: range.from || "",
-      to: range.to || "",
-    });
+    setDrill({ code: row.code, name: row.name, from: range.from || "", to: range.to || "" });
   }
-
   function renderDrilldown() {
     if (!drill) return null;
-
-    // resolve Firestore account id from code
-    const acct =
-      accounts.find((a) => a.code === drill.code) ||
-      accounts.find((a) => a.id === drill.id);
-
-    // filter entries within period
+    const acct = A(accounts).find((a) => a.code === drill.code) || A(accounts).find((a) => a.id === drill.id);
     const list = filterEntriesByDate(entries, drill.from, drill.to);
-
     const rows = [];
-    (list || []).forEach((e) => {
-      (e.lines || []).forEach((l) => {
-        if (acct && l.accountId === acct.id) {
+    A(list).forEach((e) => {
+      A(e?.lines).forEach((l) => {
+        if (acct && l?.accountId === acct.id) {
           rows.push({
-            date: e.date,
-            ref: e.refNumber,
-            desc: e.description,
-            debit: Number(l.debit || 0),
-            credit: Number(l.credit || 0),
+            date: e?.date,
+            ref: e?.refNumber,
+            desc: e?.description,
+            debit: Number(l?.debit || 0),
+            credit: Number(l?.credit || 0),
           });
         }
       });
     });
-
     rows.sort(
       (a, b) =>
-        (a.date || "").localeCompare(b.date || "") ||
+        String(a.date || "").localeCompare(String(b.date || "")) ||
         String(a.ref || "").localeCompare(String(b.ref || ""))
     );
-
     return (
       <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center px-3">
         <div className="bg-white rounded-xl w-[min(720px,94vw)] max-h-[84vh] overflow-auto shadow-lg p-4">
           <div className="flex items-center justify-between mb-3">
-            <h4 className="font-semibold">
-              {drill.code} - {drill.name}
-            </h4>
-            <button className="px-3 py-1 rounded bg-gray-200" onClick={() => setDrill(null)}>
-              Close
-            </button>
+            <h4 className="font-semibold">{drill.code} - {drill.name}</h4>
+            <button className="px-3 py-1 rounded bg-gray-200" onClick={() => setDrill(null)}>Close</button>
           </div>
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
@@ -580,11 +476,7 @@ function IncomeStatementInner() {
               </thead>
               <tbody>
                 {rows.length === 0 ? (
-                  <tr>
-                    <td className="p-3 text-gray-500 text-center" colSpan={5}>
-                      No entries for this account in the selected period.
-                    </td>
-                  </tr>
+                  <tr><td className="p-3 text-gray-500 text-center" colSpan={5}>No entries for this account in the selected period.</td></tr>
                 ) : (
                   rows.map((r, i) => (
                     <tr key={i} className="odd:bg-white even:bg-gray-50">
@@ -592,10 +484,10 @@ function IncomeStatementInner() {
                       <td className="p-2 font-mono">{r.ref}</td>
                       <td className="p-2">{r.desc}</td>
                       <td className="p-2 text-right">
-                        {r.debit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {r.debit.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
                       </td>
                       <td className="p-2 text-right">
-                        {r.credit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {r.credit.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
                       </td>
                     </tr>
                   ))
@@ -608,32 +500,31 @@ function IncomeStatementInner() {
     );
   }
 
-  /* -------------------- report renderer -------------------- */
+  /* renderer */
   const renderReport = (reportObj) => {
-    const revs = reportObj.report.revenues || [];
-    const cogsList = reportObj.report.cogs || [];
-    const exps = reportObj.report.expenses || [];
+    const revs = A(reportObj?.report?.revenues);
+    const cogsList = A(reportObj?.report?.cogs);
+    const exps = A(reportObj?.report?.expenses);
 
-    const totalRevenueR = reportObj.report.totalRevenue ?? revs.reduce((s,a)=>s+a.amount,0);
-    const totalCOGSR = reportObj.report.totalCOGS ?? cogsList.reduce((s,a)=>s+a.amount,0);
-    const grossProfitR = reportObj.report.grossProfit ?? (totalRevenueR - totalCOGSR);
-    const totalExpenseR = reportObj.report.totalExpense ?? exps.reduce((s,a)=>s+a.amount,0);
-    const netIncomeR = reportObj.report.netIncome ?? (grossProfitR - totalExpenseR);
+    const totalRevenueR = reportObj?.report?.totalRevenue ?? revs.reduce((s,a)=>s+(a?.amount||0),0);
+    const totalCOGSR = reportObj?.report?.totalCOGS ?? cogsList.reduce((s,a)=>s+(a?.amount||0),0);
+    const grossProfitR = reportObj?.report?.grossProfit ?? (totalRevenueR - totalCOGSR);
+    const totalExpenseR = reportObj?.report?.totalExpense ?? exps.reduce((s,a)=>s+(a?.amount||0),0);
+    const netIncomeR = reportObj?.report?.netIncome ?? (grossProfitR - totalExpenseR);
 
-    // mobile section renderer
     const SectionMobile = ({ title, items }) => (
       <>
         <div className="mt-2 mb-1 font-semibold">{title}</div>
         <div className="space-y-2">
-          {items.map((acc, i) => (
+          {A(items).map((acc, i) => (
             <button
-              key={acc.code + i}
+              key={String(acc?.code) + i}
               onClick={() => openDrilldown(acc, { from: reportObj.from, to: reportObj.to })}
               className="w-full text-left card px-3 py-2 active:opacity-80"
             >
-              <div className="text-sm">{acc.code} - {acc.name}</div>
+              <div className="text-sm">{acc?.code} - {acc?.name}</div>
               <div className="font-mono text-right">
-                {Number(acc.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {Number(acc?.amount || 0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
               </div>
             </button>
           ))}
@@ -644,29 +535,10 @@ function IncomeStatementInner() {
     return (
       <>
         <div className="mb-4 flex flex-wrap gap-2">
-          <button
-            className="btn btn-primary"
-            onClick={() => handleDownloadCSV(reportObj)}
-            disabled={downloading}
-          >
-            Export CSV
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={() => handleDownloadPDF(reportObj)}
-            disabled={downloading}
-          >
-            Export PDF
-          </button>
-          <button className="btn btn-outline" onClick={handlePrint}>
-            Print
-          </button>
-          <button
-            className="btn btn-primary disabled:opacity-60"
-            onClick={() => handleSaveToReports(reportObj)}
-            disabled={saving}
-            title="Save a read-only snapshot to Reports"
-          >
+          <button className="btn btn-primary" onClick={() => handleDownloadCSV(reportObj)} disabled={downloading}>Export CSV</button>
+          <button className="btn btn-primary" onClick={() => handleDownloadPDF(reportObj)} disabled={downloading}>Export PDF</button>
+          <button className="btn btn-outline" onClick={handlePrint}>Print</button>
+          <button className="btn btn-primary disabled:opacity-60" onClick={() => handleSaveToReports(reportObj)} disabled={saving} title="Save a read-only snapshot to Reports">
             {saving ? "Saving…" : "Save to Reports"}
           </button>
         </div>
@@ -683,85 +555,75 @@ function IncomeStatementInner() {
                 </tr>
               </thead>
               <tbody>
-                {/* Revenues */}
                 <tr><td colSpan={2} className="font-bold p-2">Revenues</td></tr>
                 {revs.map((acc, i) => (
-                  <tr key={acc.code + i} className="odd:bg-white even:bg-gray-50">
-                    <td className="p-2 border-b border-r border-gray-200">
-                      {acc.code} - {acc.name}
-                    </td>
+                  <tr key={String(acc?.code) + i} className="odd:bg-white even:bg-gray-50">
+                    <td className="p-2 border-b border-r border-gray-200">{acc?.code} - {acc?.name}</td>
                     <td className="p-2 border-b text-right">
-                      {Number(acc.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {Number(acc?.amount || 0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
                     </td>
                   </tr>
                 ))}
                 <tr className="font-bold bg-gray-100">
                   <td className="p-2 border-t border-r border-gray-200 text-right">Total Revenue</td>
                   <td className="p-2 border-t text-right">
-                    {Number(totalRevenueR).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {Number(totalRevenueR).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
                   </td>
                 </tr>
 
-                {/* COGS */}
                 {cogsList.length > 0 && (
                   <>
                     <tr><td colSpan={2} className="font-bold p-2">Less: Cost of Goods Sold (COGS)</td></tr>
                     {cogsList.map((acc, i) => (
-                      <tr key={acc.code + i} className="odd:bg-white even:bg-gray-50">
-                        <td className="p-2 border-b border-r border-gray-200">
-                          {acc.code} - {acc.name}
-                        </td>
+                      <tr key={String(acc?.code) + i} className="odd:bg-white even:bg-gray-50">
+                        <td className="p-2 border-b border-r border-gray-200">{acc?.code} - {acc?.name}</td>
                         <td className="p-2 border-b text-right">
-                          {Number(acc.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {Number(acc?.amount || 0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
                         </td>
                       </tr>
                     ))}
                     <tr className="font-bold bg-gray-100">
                       <td className="p-2 border-t border-r border-gray-200 text-right">Total COGS</td>
                       <td className="p-2 border-t text-right">
-                        {Number(totalCOGSR).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {Number(totalCOGSR).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
                       </td>
                     </tr>
                     <tr className="font-bold bg-gray-100">
                       <td className="p-2 border-t border-r border-gray-200 text-right">Gross Profit</td>
                       <td className="p-2 border-t text-right">
-                        {Number(grossProfitR).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {Number(grossProfitR).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
                       </td>
                     </tr>
                   </>
                 )}
 
-                {/* Expenses */}
                 <tr><td colSpan={2} className="font-bold p-2">Expenses</td></tr>
                 {exps.map((acc, i) => (
-                  <tr key={acc.code + i} className="odd:bg-white even:bg-gray-50">
-                    <td className="p-2 border-b border-r border-gray-200">
-                      {acc.code} - {acc.name}
-                    </td>
+                  <tr key={String(acc?.code) + i} className="odd:bg-white even:bg-gray-50">
+                    <td className="p-2 border-b border-r border-gray-200">{acc?.code} - {acc?.name}</td>
                     <td className="p-2 border-b text-right">
-                      {Number(acc.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {Number(acc?.amount || 0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
                     </td>
                   </tr>
                 ))}
                 <tr className="font-bold bg-gray-100">
                   <td className="p-2 border-t border-r border-gray-200 text-right">Total Expenses</td>
                   <td className="p-2 border-t text-right">
-                    {Number(totalExpenseR).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {Number(totalExpenseR).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
                   </td>
                 </tr>
 
-                {/* Net Income */}
                 <tr className="font-bold bg-gray-100">
                   <td className="p-2 border-t border-r border-gray-200 text-right">Net Income</td>
                   <td className="p-2 border-t text-right">
-                    {Number(netIncomeR).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {Number(netIncomeR).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
                   </td>
                 </tr>
               </tbody>
             </table>
           </div>
 
-          {/* Mobile sections/cards */}
+          {/* Mobile cards */}
           <div className="sm:hidden">
             <SectionMobile title="Revenues" items={revs} />
             {cogsList.length > 0 && <SectionMobile title="COGS" items={cogsList} />}
@@ -794,37 +656,18 @@ function IncomeStatementInner() {
               </div>
             </div>
           </div>
-
-          {/* Optional chart (loaded safely) */}
-          <div className="mt-4">
-            {Chart ? (
-              <Chart
-                totalRevenue={totalRevenue}
-                totalCOGS={totalCOGS}
-                totalExpense={totalExpense}
-                netIncome={netIncome}
-              />
-            ) : null}
-          </div>
         </div>
         {/* === /CONTENT TO SNAPSHOT === */}
       </>
     );
   };
 
-  /* -------------------- page layout -------------------- */
   const currentReportObj = {
     from,
     to,
     report: {
-      revenues,
-      cogs,
-      expenses,
-      totalRevenue,
-      totalCOGS,
-      grossProfit,
-      totalExpense,
-      netIncome,
+      revenues, cogs, expenses,
+      totalRevenue, totalCOGS, grossProfit, totalExpense, netIncome,
       notes,
       generatedBy: userName,
       generatedById: userId,
@@ -836,7 +679,7 @@ function IncomeStatementInner() {
     <div className="page-gutter">
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold">Income Statement</h1>
-        <div className="text-sm text-ink/60">{loading ? "Loading…" : `${entries.length} entry(ies)`}</div>
+        <div className="text-sm text-ink/60">{loading ? "Loading…" : `${A(entries).length} entry(ies)`}</div>
       </div>
 
       {/* Controls */}
@@ -852,7 +695,7 @@ function IncomeStatementInner() {
           </label>
           <label className="text-xs text-ink/60 flex-1 flex flex-col">
             Notes
-            <input ref={notesRef} className="border rounded px-2 py-1" placeholder="Optional note…" value={notes} onChange={(e)=>setNotes(e.target.value)} />
+            <input className="border rounded px-2 py-1" placeholder="Optional note…" value={notes} onChange={(e)=>setNotes(e.target.value)} />
           </label>
           <button className="btn btn-primary disabled:opacity-60" onClick={handleGenerate} disabled={generating}>
             {generating ? "Saving…" : "Save (structured)"}
@@ -864,9 +707,7 @@ function IncomeStatementInner() {
       {showReport ? (
         <div className="mb-4">
           <div className="flex items-center justify-between mb-2">
-            <div className="text-sm text-ink/60">
-              Viewing saved report • Period: {formatRange(showReport.from, showReport.to)}
-            </div>
+            <div className="text-sm text-ink/60">Viewing saved report • Period: {formatRange(showReport.from, showReport.to)}</div>
             <div className="flex gap-2">
               <button className="btn btn-outline" onClick={handleBackToCurrent}>Back to current</button>
               {canDeleteReports && (
@@ -882,10 +723,10 @@ function IncomeStatementInner() {
         <div className="mb-4">{renderReport(currentReportObj)}</div>
       )}
 
-      {/* Recent saved reports list (structured) */}
+      {/* Recent saved reports */}
       <div className="card p-3">
         <div className="font-semibold mb-2">Recent saved (structured) reports</div>
-        {recentReports.length === 0 ? (
+        {A(recentReports).length === 0 ? (
           <div className="text-sm text-ink/60">No saved reports yet.</div>
         ) : (
           <div className="overflow-x-auto">
@@ -899,15 +740,11 @@ function IncomeStatementInner() {
                 </tr>
               </thead>
               <tbody>
-                {recentReports.map((r) => (
+                {A(recentReports).map((r) => (
                   <tr key={r.id} className="odd:bg-white even:bg-gray-50">
                     <td className="p-2 border-b border-r">{r.label || "Income Statement"}</td>
-                    <td className="p-2 border-b border-r">
-                      {formatRange(r.periodStart || r.from, r.periodEnd || r.to)}
-                    </td>
-                    <td className="p-2 border-b">
-                      {r.createdAt?.seconds ? new Date(r.createdAt.seconds*1000).toLocaleString() : "—"}
-                    </td>
+                    <td className="p-2 border-b border-r">{formatRange(r.periodStart || r.from, r.periodEnd || r.to)}</td>
+                    <td className="p-2 border-b">{r.createdAt?.seconds ? new Date(r.createdAt.seconds*1000).toLocaleString() : "—"}</td>
                     <td className="p-2 border-b">
                       <button
                         className="btn btn-outline"
@@ -936,7 +773,6 @@ function IncomeStatementInner() {
   );
 }
 
-/* Wrap with Error Boundary to avoid blank screen */
 export default function IncomeStatement() {
   return (
     <ISBoundary>
