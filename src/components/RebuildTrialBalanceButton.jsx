@@ -18,17 +18,9 @@ import useUserProfile from "../hooks/useUserProfile";
 function Modal({ open, title, children, onClose }) {
   if (!open) return null;
   return (
-    <div
-      className="fixed inset-0 z-[1000] flex items-end sm:items-center justify-center"
-      aria-modal="true"
-      role="dialog"
-    >
+    <div className="fixed inset-0 z-[1000] flex items-end sm:items-center justify-center" aria-modal="true" role="dialog">
       {/* backdrop */}
-      <div
-        className="absolute inset-0 bg-black/40"
-        onClick={onClose}
-        aria-hidden="true"
-      />
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
       {/* sheet/card */}
       <div className="relative w-full sm:max-w-lg bg-white rounded-t-2xl sm:rounded-2xl shadow-lg p-4 sm:p-5 m-0 sm:m-4 max-h-[90vh] overflow-auto">
         <div className="flex items-center justify-between gap-2 mb-3">
@@ -64,20 +56,19 @@ export default function RebuildTrialBalanceButton() {
 
   if (!isAdmin) return null;
 
+  /** Always aggregate from this fixed cooperative start. */
+  const FIXED_BEGIN = "2025-01-01"; // <-- per your request
+
   async function fetchAllEntriesOrdered() {
     // Try order by "date" (string YYYY-MM-DD used in your app)
     try {
-      const snap = await getDocs(
-        query(collection(db, "journalEntries"), orderBy("date", "asc"))
-      );
+      const snap = await getDocs(query(collection(db, "journalEntries"), orderBy("date", "asc")));
       return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     } catch {
       // Fallbacks if ordering by "date" isn't possible
       for (const field of ["createdAt", "postedAt"]) {
         try {
-          const snap2 = await getDocs(
-            query(collection(db, "journalEntries"), orderBy(field, "asc"))
-          );
+          const snap2 = await getDocs(query(collection(db, "journalEntries"), orderBy(field, "asc")));
           if (snap2.size) return snap2.docs.map((d) => ({ id: d.id, ...d.data() }));
         } catch {}
       }
@@ -88,16 +79,22 @@ export default function RebuildTrialBalanceButton() {
   }
 
   function filterByRangeStringYmd(entries, startYmd, endYmd) {
+    // Both start/end are "YYYY-MM-DD" strings (or undefined)
     return entries.filter((j) => {
-      const d = j?.date || ""; // "YYYY-MM-DD"
-      if (startYmd && d < startYmd) return false;
+      const d = j?.date || ""; // your schema
+      // If your date is a Firestore Timestamp in some docs, keep them (no filter) so we don't lose data.
+      if (typeof d !== "string") return true;
+      if (startYmd && d < startYmd) return false; // lexicographic works for YYYY-MM-DD
       if (endYmd && d > endYmd) return false;
       return true;
     });
   }
 
   function infoFromDates(entries) {
-    const dates = entries.map((j) => j?.date).filter(Boolean).sort();
+    const dates = entries
+      .map((j) => (typeof j?.date === "string" ? j.date : null))
+      .filter(Boolean)
+      .sort();
     return {
       count: entries.length,
       min: dates[0] || "—",
@@ -107,106 +104,81 @@ export default function RebuildTrialBalanceButton() {
 
   function fmt(n) {
     const v = Number(n || 0);
-    return v.toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
+    return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
   async function handleRebuild() {
     try {
       setBusy(true);
       setPopupTitle("Rebuilding Trial Balance…");
-      setPopupBody(
-        <div className="text-sm text-ink/70">Please wait a moment…</div>
-      );
+      setPopupBody(<div className="text-sm text-ink/70">Please wait a moment…</div>);
       setOpen(true);
 
-      // 1) Read daily TB period
+      // 1) Read daily TB end date, but override start with FIXED_BEGIN
       const tbRef = doc(db, "financialReports", "auto_TB");
       const tbSnap = await getDoc(tbRef);
       if (!tbSnap.exists()) throw new Error("auto_TB not found.");
       const tb = tbSnap.data();
-      const periodStart = tb.periodStart || tb.from || null; // "YYYY-MM-DD" or null
-      const periodEnd = tb.periodEnd || tb.to || null;
-      if (!periodEnd) {
-        throw new Error(
-          'auto_TB missing "periodEnd" (or "to"). Tap "Update Daily Reports Now" first.'
-        );
+
+      // Force our requested period: 2025-01-01 -> periodEnd (from the doc)
+      const requestedStart = FIXED_BEGIN;
+      const requestedEnd = tb.periodEnd || tb.to || null; // expect "YYYY-MM-DD"
+      if (!requestedEnd) {
+        throw new Error('auto_TB missing "periodEnd" (or "to"). Tap "Update Daily Reports Now" first.');
       }
 
       // 2) Fetch ALL entries once (ordered) so filtering is reliable
       const all = await fetchAllEntriesOrdered();
       const allInfo = infoFromDates(all);
 
-      // 3) Try requested period first
-      let inRange = filterByRangeStringYmd(all, periodStart, periodEnd);
-      const inRangeInfo = infoFromDates(inRange);
+      // 3) Filter by our fixed start → doc end (string compare)
+      let used = filterByRangeStringYmd(all, requestedStart, requestedEnd);
+      const usedInfo = infoFromDates(used);
 
-      // 4) If empty, fall back to ALL so you still get a TB
-      let used = inRange;
+      // If still empty (e.g., entries use non-string date on some docs), fall back to ALL
       let usedNote = "";
-      if (inRange.length === 0 && all.length > 0) {
+      if (used.length === 0 && all.length > 0) {
         used = all;
-        usedNote = `No entries for ${periodStart || "start"} .. ${periodEnd}. Using ALL entries (${allInfo.min} .. ${allInfo.max}).`;
-      } else if (inRange.length === 0 && all.length === 0) {
+        usedNote = `No entries matched ${requestedStart} .. ${requestedEnd}. Using ALL entries instead (${allInfo.min} .. ${allInfo.max}).`;
+      } else if (used.length === 0 && all.length === 0) {
         setPopupTitle("No journal entries");
         setPopupBody(
           <div className="text-sm">
-            I couldn’t find any documents in <code>journalEntries</code>. Add
-            entries first, then rebuild.
+            I couldn’t find any documents in <code>journalEntries</code>. Add entries first, then rebuild.
           </div>
         );
         return;
       }
 
-      // 5) Accounts lookup (for code/name)
-      const accSnap = await getDocs(
-        query(collection(db, "accounts"), orderBy("code"))
-      );
-      const accountsById = new Map(
-        accSnap.docs.map((d) => [d.id, { id: d.id, ...d.data() }])
-      );
+      // 4) Accounts lookup (for code/name)
+      const accSnap = await getDocs(query(collection(db, "accounts"), orderBy("code")));
+      const accountsById = new Map(accSnap.docs.map((d) => [d.id, { id: d.id, ...d.data() }]));
 
-      // 6) Build TB
+      // 5) Build TB
       const { rows, totals } = buildTrialBalanceRows(used, accountsById);
 
-      // 7) Save to auto_TB.payload
-      await setDoc(
-        tbRef,
-        { type: "trial_balance", payload: { rows, totals } },
-        { merge: true }
-      );
+      // 6) Save to auto_TB.payload (we only write the payload; we don't change your doc dates)
+      await setDoc(tbRef, { type: "trial_balance", payload: { rows, totals } }, { merge: true });
 
-      // 8) Show results in a pop‑up
+      // 7) Show results in a pop‑up
       setPopupTitle("Trial Balance Rebuilt");
       setPopupBody(
         <div className="space-y-3 text-sm">
           {usedNote && (
-            <div className="rounded bg-amber-50 text-amber-900 border border-amber-200 p-2">
-              {usedNote}
-            </div>
+            <div className="rounded bg-amber-50 text-amber-900 border border-amber-200 p-2">{usedNote}</div>
           )}
+
           <div className="grid grid-cols-2 gap-2">
             <div className="rounded border p-2">
-              <div className="text-ink/60 text-xs">Requested period</div>
-              <div className="font-mono">
-                {periodStart || "start"} → {periodEnd}
-              </div>
-              <div className="text-xs text-ink/60 mt-1">
-                Found {inRangeInfo.count} entry(ies)
-              </div>
+              <div className="text-ink/60 text-xs">Requested period (fixed)</div>
+              <div className="font-mono">{requestedStart} → {requestedEnd}</div>
             </div>
             <div className="rounded border p-2">
               <div className="text-ink/60 text-xs">Dataset used</div>
               <div className="font-mono">
-                {used === inRange
-                  ? `${periodStart || "start"} → ${periodEnd}`
-                  : `${allInfo.min} → ${allInfo.max}`}
+                {used === all ? `${allInfo.min} → ${allInfo.max}` : `${requestedStart} → ${requestedEnd}`}
               </div>
-              <div className="text-xs text-ink/60 mt-1">
-                {used.length} entry(ies)
-              </div>
+              <div className="text-xs text-ink/60 mt-1">{(used === all ? allInfo : usedInfo).count} entry(ies)</div>
             </div>
           </div>
 
@@ -221,16 +193,12 @@ export default function RebuildTrialBalanceButton() {
               <span className="font-mono">{fmt(totals.credit)}</span>
             </div>
             {Math.abs((totals.debit || 0) - (totals.credit || 0)) > 0.005 && (
-              <div className="mt-1 text-rose-700">
-                ⚠️ Not balanced by {fmt((totals.debit || 0) - (totals.credit || 0))}
-              </div>
+              <div className="mt-1 text-rose-700">⚠️ Not balanced by {fmt((totals.debit || 0) - (totals.credit || 0))}</div>
             )}
           </div>
 
           <div className="rounded border p-2">
-            <div className="text-ink/60 text-xs mb-1">
-              Sample rows (first 10)
-            </div>
+            <div className="text-ink/60 text-xs mb-1">Sample rows (first 10)</div>
             {rows.length === 0 ? (
               <div className="text-ink/60">No accounts aggregated.</div>
             ) : (
@@ -259,10 +227,9 @@ export default function RebuildTrialBalanceButton() {
       setPopupTitle("Rebuild failed");
       setPopupBody(
         <div className="text-sm">
-          {String(err?.message || err)}<br />
+          {String(err?.message || err)}
           <div className="mt-2 text-ink/60">
-            Tip: Ensure <code>auto_TB.periodStart/periodEnd</code> cover your{" "}
-            <code>journalEntries.date</code> (YYYY‑MM‑DD).
+            Tip: Ensure your <code>journalEntries.date</code> is "YYYY‑MM‑DD" for best filtering.
           </div>
         </div>
       );
@@ -280,7 +247,7 @@ export default function RebuildTrialBalanceButton() {
         ].join(" ")}
         onClick={handleRebuild}
         disabled={busy}
-        title='Rebuild auto_TB.payload from "journalEntries"'
+        title='Rebuild auto_TB.payload from "journalEntries" (fixed start 2025-01-01)'
       >
         {busy ? "Rebuilding TB…" : "Rebuild Trial Balance"}
       </button>
