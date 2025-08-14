@@ -199,7 +199,7 @@ export default function ReportView() {
             </div>
 
             {sections.map((sec) => (
-              <SectionTable key={sec.key || sec.title || Math.random()} section={sec} />
+              <SectionTable key={sec.key || sec.title || `${Math.random()}`} section={sec} />
             ))}
 
             {/* Totals */}
@@ -460,4 +460,4 @@ export default function ReportView() {
     const sections = payload.sections || [];
     const summary = payload.summary || { startCash: 0, netChangeCash: 0, endCash: 0 };
     return (
-      <div className="pa
+      <div classNam
