@@ -4,17 +4,12 @@ import { db } from "../../../lib/firebase";
 import {
   collection,
   query,
-  where,
   orderBy,
-  limit,
   onSnapshot,
-  deleteDoc,
-  doc,
   addDoc,
   serverTimestamp,
 } from "firebase/firestore";
 import useUserProfile from "../../../hooks/useUserProfile";
-import { saveFinancialSnapshot } from "../../reports/saveSnapshot";
 import jsPDF from "jspdf";
 import { useNavigate } from "react-router-dom";
 
@@ -124,18 +119,11 @@ function IncomeStatementInner() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [notes, setNotes] = useState("");
-  const [recentReports, setRecentReports] = useState([]); // structured saves in financialReports
-  const [showReport, setShowReport] = useState(null);      // {id?, from, to, report}
-  const [generating, setGenerating] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [printing, setPrinting] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const { profile } = useUserProfile();
-  const isAdmin = profile?.roles?.includes("admin") || profile?.role === "admin";
-  const isTreasurer = profile?.roles?.includes("treasurer") || profile?.role === "treasurer";
-  const canDeleteReports = isAdmin || isTreasurer;
-
   const userName = profile?.displayName || profile?.email || "Unknown";
   const userId = profile?.uid || "";
   const viewRef = useRef(null); // content snapshot
@@ -152,20 +140,6 @@ function IncomeStatementInner() {
       },
       () => setLoading(false)
     );
-    return () => unsub();
-  }, []);
-
-  /* recent structured IS saves */
-  useEffect(() => {
-    const q = query(
-      collection(db, "financialReports"),
-      where("type", "==", "incomeStatement"),
-      orderBy("createdAt", "desc"),
-      limit(25)
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      setRecentReports(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
     return () => unsub();
   }, []);
 
@@ -208,36 +182,20 @@ function IncomeStatementInner() {
   const totalExpense = expenses.reduce((s, a) => s + (a.amount || 0), 0);
   const netIncome = grossProfit - totalExpense;
 
-  /* -------------- Save structured (“Save (structured)”) -------------- */
-  async function handleGenerate() {
-    setGenerating(true);
-    const now = new Date();
-    const report = {
+  const currentReportObj = {
+    from,
+    to,
+    report: {
       revenues, cogs, expenses,
       totalRevenue, totalCOGS, grossProfit, totalExpense, netIncome,
       notes,
       generatedBy: userName,
       generatedById: userId,
-      generatedAt: now.toISOString(),
-    };
-    try {
-      await saveFinancialSnapshot({
-        type: "incomeStatement",
-        label: "Income Statement",
-        from, to, report,
-        createdBy: userName,
-        createdById: userId,
-      });
-      setShowReport({ from, to, report });
-      setNotes("");
-    } catch (e) {
-      alert("Failed to save report: " + (e?.message || e));
-    } finally {
-      setGenerating(false);
-    }
-  }
+      generatedAt: new Date().toISOString(),
+    },
+  };
 
-  /* -------------- Save to periodic Reports (payload.html) -------------- */
+  /* -------------- Save to periodic Reports (payload.html only) -------------- */
   function buildSnapshotHTML(title, reportObj) {
     return `<!doctype html><meta charset="utf-8" />
     <style>
@@ -268,7 +226,7 @@ function IncomeStatementInner() {
         createdAt: serverTimestamp(),
         createdByName: userName,
         createdById: userId,
-        payload: { html },
+        payload: { html }, // periodic reports viewer uses this
       });
       alert("Saved to Reports ✅");
       nav(`/reports/${ref.id}`);
@@ -409,25 +367,6 @@ function IncomeStatementInner() {
     URL.revokeObjectURL(url);
   }
 
-  /* saved report open (compat) */
-  function handleShowReport(r) {
-    if (!r?.report?.cogs) {
-      const expenses = A(r?.report?.expenses);
-      const guessedCogs = expenses.filter((e) => mainFromRenderedName(e?.name) === "cogs");
-      const rest = expenses.filter((e) => mainFromRenderedName(e?.name) !== "cogs");
-      const totalCOGS_ = guessedCogs.reduce((s, a) => s + (a?.amount || 0), 0);
-      const totalRevenue_ = r?.report?.totalRevenue ?? A(r?.report?.revenues).reduce((s, a) => s + (a?.amount || 0), 0);
-      const grossProfit_ = totalRevenue_ - totalCOGS_;
-      const totalExpense_ = rest.reduce((s, a) => s + (a?.amount || 0), 0);
-      const netIncome_ = grossProfit_ - totalExpense_;
-      r = { ...r, report: { ...r.report, cogs: guessedCogs, expenses: rest, totalCOGS: totalCOGS_, grossProfit: grossProfit_, totalExpense: totalExpense_, netIncome: netIncome_ } };
-    }
-    setShowReport(r);
-  }
-  function handleBackToCurrent() {
-    setShowReport(null);
-  }
-
   /* drilldown modal */
   const [drill, setDrill] = useState(null);
   function openDrilldown(row, range) {
@@ -435,7 +374,10 @@ function IncomeStatementInner() {
   }
   function renderDrilldown() {
     if (!drill) return null;
-    const acct = A(accounts).find((a) => a.code === drill.code) || A(accounts).find((a) => a.id === drill.id);
+    const acct =
+      A(accounts).find((a) => a.code === drill.code) ||
+      A(accounts).find((a) => a.id === drill.id);
+
     const list = filterEntriesByDate(entries, drill.from, drill.to);
     const rows = [];
     A(list).forEach((e) => {
@@ -500,7 +442,7 @@ function IncomeStatementInner() {
     );
   }
 
-  /* renderer */
+  /* renderer for current (unsaved) report */
   const renderReport = (reportObj) => {
     const revs = A(reportObj?.report?.revenues);
     const cogsList = A(reportObj?.report?.cogs);
@@ -538,7 +480,12 @@ function IncomeStatementInner() {
           <button className="btn btn-primary" onClick={() => handleDownloadCSV(reportObj)} disabled={downloading}>Export CSV</button>
           <button className="btn btn-primary" onClick={() => handleDownloadPDF(reportObj)} disabled={downloading}>Export PDF</button>
           <button className="btn btn-outline" onClick={handlePrint}>Print</button>
-          <button className="btn btn-primary disabled:opacity-60" onClick={() => handleSaveToReports(reportObj)} disabled={saving} title="Save a read-only snapshot to Reports">
+          <button
+            className="btn btn-primary disabled:opacity-60"
+            onClick={() => handleSaveToReports(reportObj)}
+            disabled={saving}
+            title="Save a read-only snapshot to Reports"
+          >
             {saving ? "Saving…" : "Save to Reports"}
           </button>
         </div>
@@ -662,19 +609,6 @@ function IncomeStatementInner() {
     );
   };
 
-  const currentReportObj = {
-    from,
-    to,
-    report: {
-      revenues, cogs, expenses,
-      totalRevenue, totalCOGS, grossProfit, totalExpense, netIncome,
-      notes,
-      generatedBy: userName,
-      generatedById: userId,
-      generatedAt: new Date().toISOString(),
-    },
-  };
-
   return (
     <div className="page-gutter">
       <div className="flex items-center justify-between mb-4">
@@ -697,76 +631,11 @@ function IncomeStatementInner() {
             Notes
             <input className="border rounded px-2 py-1" placeholder="Optional note…" value={notes} onChange={(e)=>setNotes(e.target.value)} />
           </label>
-          <button className="btn btn-primary disabled:opacity-60" onClick={handleGenerate} disabled={generating}>
-            {generating ? "Saving…" : "Save (structured)"}
-          </button>
         </div>
       </div>
 
-      {/* Current or Saved report */}
-      {showReport ? (
-        <div className="mb-4">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-sm text-ink/60">Viewing saved report • Period: {formatRange(showReport.from, showReport.to)}</div>
-            <div className="flex gap-2">
-              <button className="btn btn-outline" onClick={handleBackToCurrent}>Back to current</button>
-              {canDeleteReports && (
-                <button className="btn btn-danger" onClick={() => handleDeleteReport(showReport.id)}>
-                  Delete
-                </button>
-              )}
-            </div>
-          </div>
-          {renderReport(showReport)}
-        </div>
-      ) : (
-        <div className="mb-4">{renderReport(currentReportObj)}</div>
-      )}
-
-      {/* Recent saved reports */}
-      <div className="card p-3">
-        <div className="font-semibold mb-2">Recent saved (structured) reports</div>
-        {A(recentReports).length === 0 ? (
-          <div className="text-sm text-ink/60">No saved reports yet.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="text-left p-2 border-b border-r">Label</th>
-                  <th className="text-left p-2 border-b border-r">Period</th>
-                  <th className="text-left p-2 border-b">Created</th>
-                  <th className="text-left p-2 border-b">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {A(recentReports).map((r) => (
-                  <tr key={r.id} className="odd:bg-white even:bg-gray-50">
-                    <td className="p-2 border-b border-r">{r.label || "Income Statement"}</td>
-                    <td className="p-2 border-b border-r">{formatRange(r.periodStart || r.from, r.periodEnd || r.to)}</td>
-                    <td className="p-2 border-b">{r.createdAt?.seconds ? new Date(r.createdAt.seconds*1000).toLocaleString() : "—"}</td>
-                    <td className="p-2 border-b">
-                      <button
-                        className="btn btn-outline"
-                        onClick={() =>
-                          handleShowReport({
-                            id: r.id,
-                            from: r.periodStart || r.from || "",
-                            to: r.periodEnd || r.to || "",
-                            report: r.report || {},
-                          })
-                        }
-                      >
-                        Open
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      {/* Current (unsaved) report preview + actions */}
+      {renderReport(currentReportObj)}
 
       {renderDrilldown()}
     </div>
