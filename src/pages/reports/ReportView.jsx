@@ -1,5 +1,5 @@
 // src/pages/reports/ReportView.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
 import { db } from "../../lib/firebase";
 import { doc, getDoc, deleteDoc } from "firebase/firestore";
@@ -39,17 +39,16 @@ export default function ReportView() {
   const [docData, setDocData] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  async function load() {
-    setLoading(true);
-    const ref = doc(db, "financialReports", id);
-    const snap = await getDoc(ref);
-    setDocData(snap.exists() ? { id: snap.id, ...snap.data() } : null);
-    setLoading(false);
-  }
+  const isAuto = id === "auto_TB" || id === "auto_IS" || id === "auto_BS" || id === "auto_CF";
 
   useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    (async () => {
+      setLoading(true);
+      const ref = doc(db, "financialReports", id);
+      const snap = await getDoc(ref);
+      setDocData(snap.exists() ? { id: snap.id, ...snap.data() } : null);
+      setLoading(false);
+    })();
   }, [id]);
 
   async function handleDelete() {
@@ -63,7 +62,7 @@ export default function ReportView() {
   if (!docData) return <div className="p-4">Report not found.</div>;
 
   const { type, label, createdAt, periodStart, periodEnd, payload } = docData;
-  const title = label || "Daily auto report";
+  const title = label || (isAuto ? "Daily auto report" : "Report");
   const period =
     periodStart && periodEnd && periodStart === periodEnd
       ? `as of ${fmtYMD(periodEnd)}`
@@ -85,30 +84,38 @@ export default function ReportView() {
     </div>
   );
 
-  /* ========== 1) Periodical reports (HTML snapshot) — unchanged  ========== */
-  const hasHtml =
-    payload?.html && typeof payload.html === "string" && payload.html.trim().length > 0;
+  /* ====================== PERIODIC REPORTS (unchanged) ====================== */
+  if (!isAuto) {
+    const hasHtml = payload?.html && typeof payload.html === "string" && payload.html.trim().length > 0;
 
-  if (hasHtml) {
     return (
       <div className="page-gutter">
         {Header}
-        {/* eslint-disable-next-line react/no-danger */}
-        <div dangerouslySetInnerHTML={{ __html: payload.html }} />
-        <div className="mt-3">
-          <button className="btn" onClick={() => window.print()}>Print</button>
-        </div>
+        {hasHtml ? (
+          <>
+            {/* eslint-disable-next-line react/no-danger */}
+            <div dangerouslySetInnerHTML={{ __html: payload.html }} />
+            <div className="mt-3">
+              <button className="btn" onClick={() => window.print()}>Print</button>
+            </div>
+          </>
+        ) : (
+          <div className="card p-4">
+            <div className="text-ink/70">
+              This periodic report has no snapshot content (<code>payload.html</code> is empty).
+              Use your “Save to Reports” action to generate a printable snapshot.
+            </div>
+          </div>
+        )}
       </div>
     );
   }
 
-  /* ========== 2) Daily auto reports: structured payload renderers ========== */
-
+  /* ====================== DAILY AUTO REPORTS (structured) ====================== */
   // ---- Trial Balance ----
-  if (type === "trial_balance" && Array.isArray(payload?.rows)) {
+  if (id === "auto_TB" && Array.isArray(payload?.rows)) {
     const rows = payload.rows || [];
     const totals = payload.totals || { debit: 0, credit: 0 };
-
     return (
       <div className="page-gutter">
         {Header}
@@ -131,12 +138,8 @@ export default function ReportView() {
                   <tr key={i} className="odd:bg-white even:bg-gray-50">
                     <td className="p-2 border-b border-r">{r.code || ""}</td>
                     <td className="p-2 border-b border-r">{r.name || ""}</td>
-                    <td className="p-2 border-b border-r text-right">
-                      {r.debit ? fmtNum(r.debit) : ""}
-                    </td>
-                    <td className="p-2 border-b text-right">
-                      {r.credit ? fmtNum(r.credit) : ""}
-                    </td>
+                    <td className="p-2 border-b border-r text-right">{r.debit ? fmtNum(r.debit) : ""}</td>
+                    <td className="p-2 border-b text-right">{r.credit ? fmtNum(r.credit) : ""}</td>
                   </tr>
                 ))}
                 <tr className="font-bold bg-gray-100">
@@ -147,7 +150,6 @@ export default function ReportView() {
               </tbody>
             </table>
           </div>
-
           <div className="mt-3">
             <button className="btn" onClick={() => window.print()}>Print</button>
           </div>
@@ -157,10 +159,9 @@ export default function ReportView() {
   }
 
   // ---- Income Statement ----
-  if (type === "income_statement" && Array.isArray(payload?.sections)) {
+  if (id === "auto_IS" && Array.isArray(payload?.sections)) {
     const sections = payload.sections || [];
     const totals = payload.totals || {};
-
     return (
       <div className="page-gutter">
         {Header}
@@ -168,7 +169,6 @@ export default function ReportView() {
           <div className="mb-2 text-sm text-ink/70">
             <span className="font-semibold">Income Statement</span> — read-only snapshot
           </div>
-
           {sections.map((sec) => (
             <div key={sec.key} className="mb-4">
               <div className="font-semibold mb-1">{sec.title}</div>
@@ -197,17 +197,11 @@ export default function ReportView() {
                     </tbody>
                   </table>
                 </div>
-              ) : typeof sec.amount === "number" ? (
-                <div className="flex items-center justify-between bg-gray-50 border rounded p-2 text-sm">
-                  <span>{sec.title}</span>
-                  <span className="font-mono">{fmtNum(sec.amount)}</span>
-                </div>
               ) : (
                 <div className="text-sm text-ink/60">No items</div>
               )}
             </div>
           ))}
-
           <div className="grid sm:grid-cols-2 gap-2 text-sm">
             <div className="border rounded p-2 flex items-center justify-between">
               <span>Total Revenue</span>
@@ -230,7 +224,6 @@ export default function ReportView() {
               <span className="font-mono">{fmtNum(totals.netIncome)}</span>
             </div>
           </div>
-
           <div className="mt-3">
             <button className="btn" onClick={() => window.print()}>Print</button>
           </div>
@@ -240,10 +233,9 @@ export default function ReportView() {
   }
 
   // ---- Balance Sheet ----
-  if (type === "balance_sheet" && Array.isArray(payload?.sections)) {
+  if (id === "auto_BS" && Array.isArray(payload?.sections)) {
     const sections = payload.sections || [];
     const totals = payload.totals || {};
-
     return (
       <div className="page-gutter">
         {Header}
@@ -251,7 +243,6 @@ export default function ReportView() {
           <div className="mb-2 text-sm text-ink/70">
             <span className="font-semibold">Balance Sheet</span> — read-only snapshot
           </div>
-
           {sections.map((sec) => (
             <div key={sec.key} className="mb-4">
               <div className="font-semibold mb-1">{sec.title}</div>
@@ -285,7 +276,6 @@ export default function ReportView() {
               )}
             </div>
           ))}
-
           <div className="grid sm:grid-cols-3 gap-2 text-sm">
             {"assets" in totals && (
               <div className="border rounded p-2 flex items-center justify-between">
@@ -306,7 +296,6 @@ export default function ReportView() {
               </div>
             )}
           </div>
-
           <div className="mt-3">
             <button className="btn" onClick={() => window.print()}>Print</button>
           </div>
@@ -316,10 +305,9 @@ export default function ReportView() {
   }
 
   // ---- Cash Flow ----
-  if (type === "cash_flow" && (Array.isArray(payload?.sections) || payload?.summary)) {
+  if (id === "auto_CF" && (Array.isArray(payload?.sections) || payload?.summary)) {
     const sections = payload.sections || [];
     const summary = payload.summary || { startCash: 0, netChangeCash: 0, endCash: 0 };
-
     return (
       <div className="page-gutter">
         {Header}
@@ -327,7 +315,6 @@ export default function ReportView() {
           <div className="mb-2 text-sm text-ink/70">
             <span className="font-semibold">Cash Flow</span> — read-only snapshot
           </div>
-
           {sections.map((sec) => (
             <div key={sec.key} className="mb-4">
               <div className="font-semibold mb-1">{sec.title}</div>
@@ -361,7 +348,6 @@ export default function ReportView() {
               )}
             </div>
           ))}
-
           <div className="grid sm:grid-cols-3 gap-2 text-sm">
             <div className="border rounded p-2 flex items-center justify-between">
               <span>Start Cash</span>
@@ -376,7 +362,6 @@ export default function ReportView() {
               <span className="font-mono">{fmtNum(summary.endCash)}</span>
             </div>
           </div>
-
           <div className="mt-3">
             <button className="btn" onClick={() => window.print()}>Print</button>
           </div>
@@ -385,20 +370,13 @@ export default function ReportView() {
     );
   }
 
-  /* ========== 3) Fallback (unknown structured type) ========== */
+  /* Fallback (auto doc without payload yet) */
   return (
     <div className="page-gutter">
       {Header}
       <div className="card p-4">
         <div className="text-ink/70">
-          No snapshot found for {type || "report"}. If this is a daily auto report, ensure its
-          <code className="mx-1">payload</code> includes structured data:
-          <ul className="list-disc pl-6 mt-2">
-            <li><code>trial_balance</code>: <code>payload.rows</code>, <code>payload.totals</code></li>
-            <li><code>income_statement</code>: <code>payload.sections</code>, <code>payload.totals</code></li>
-            <li><code>balance_sheet</code>: <code>payload.sections</code>, <code>payload.totals</code></li>
-            <li><code>cash_flow</code>: <code>payload.sections</code>, <code>payload.summary</code></li>
-          </ul>
+          This daily auto report has no structured payload yet. Rebuild it from the Reports page.
         </div>
       </div>
     </div>
