@@ -40,13 +40,10 @@ export default function RequireFullMemberOrRole({ rolesAllowed = ["admin", "trea
   return (
     <div className="page-gutter">
       <div className="max-w-xl mx-auto card p-6 text-center">
-        <h2 className="text-xl font-semibold mb-3">Access Denied</h2>
-        <p className="text-ink/80 mb-4">
-          These are Sensitive Information, Only Full Members Can View the Page, Become Full now, by completing the Rwequirements
-        </p>
+        <h2 className="text-xl font-semibold mb-3">You’re almost there</h2>
+        <p className="text-ink/80 mb-4">Finish your membership requirements to unlock Reports.</p>
         <div className="flex flex-col sm:flex-row gap-2 justify-center">
-          <Link className="btn btn-primary" to="/profile">Edit Profile</Link>
-          <Link className="btn btn-outline" to="/RequirementsMembership">View Requirements</Link>
+          <Link className="btn btn-primary" to="/profile">Complete Requirements</Link>
         </div>
       </div>
     </div>

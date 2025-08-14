@@ -17,6 +17,7 @@ import RebuildTrialBalanceButton from "../../components/RebuildTrialBalanceButto
 import RebuildIncomeStatementButton from "../../components/RebuildIncomeStatementButton";
 import RebuildBalanceSheetButton from "../../components/RebuildBalanceSheetButton";
 import RebuildCashFlowButton from "../../components/RebuildCashFlowButton";
+import RunAutosNowButton from "../../components/RunAutosNowButton";
 
 /* ----------------------------- background ----------------------------- */
 const reportsBg =
@@ -261,12 +262,17 @@ export default function Reports() {
       {/* ===================== DAILY SECTION ===================== */}
       <div className="mb-6">
         <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <h2 className="text-lg font-semibold">
               Daily Financial Status Update{" "}
               <span className="text-ink/60 text-sm">(updated every 1am)</span>
             </h2>
-            {isAdmin && <DailyReportsUpdateButton />}
+            {isAdmin && (
+              <>
+                <DailyReportsUpdateButton />
+                <RunAutosNowButton />
+              </>
+            )}
           </div>
           <div className="text-sm text-ink/60">
             {dailyRows.length ? `${dailyRows.length} item(s)` : "No daily reports yet"}
