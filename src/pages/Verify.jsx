@@ -4,6 +4,10 @@ import { useAuth } from "../AuthContext";
 import { sendEmailVerification } from "firebase/auth";
 import { auth } from "../lib/firebase";
 import { useNavigate, Navigate } from "react-router-dom";
+import PageBackground from "../components/PageBackground";
+
+const authBg =
+  "https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80";
 
 export default function Verify() {
   const { user, loading: authLoading } = useAuth();
@@ -78,35 +82,37 @@ export default function Verify() {
   }
 
   return (
-    <div className="mx-auto max-w-md">
-      <div className="card p-6 space-y-4">
-        <h2 className="text-xl font-bold">Verify your email</h2>
-        <p>
-          We sent a verification link to <b>{user?.email}</b>. Click the link in your email,
-          then press “I verified it”.
-        </p>
+    <PageBackground image={authBg} boxed boxedWidth="max-w-md" overlayClass="bg-white/90 backdrop-blur">
+      <div className="mx-auto max-w-md">
+        <div className="card p-6 space-y-4">
+          <h2 className="text-xl font-bold">Verify your email</h2>
+          <p>
+            We sent a verification link to <b>{user?.email}</b>. Click the link in your email,
+            then press “I verified it”.
+          </p>
 
-        {err && <p className="text-sm text-rose-600">{err}</p>}
-        {info && <p className="text-sm text-emerald-700">{info}</p>}
+          {err && <p className="text-sm text-rose-600">{err}</p>}
+          {info && <p className="text-sm text-emerald-700">{info}</p>}
 
-        <div className="flex items-center gap-3">
-          <button
-            onClick={resend}
-            disabled={busy || checking}
-            className="btn btn-primary"
-          >
-            {busy ? "Sending…" : sent ? "Resend again" : "Resend email"}
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={resend}
+              disabled={busy || checking}
+              className="btn btn-primary"
+            >
+              {busy ? "Sending…" : sent ? "Resend again" : "Resend email"}
+            </button>
 
-          <button
-            onClick={IVerified}
-            disabled={checking}
-            className="btn btn-outline"
-          >
-            {checking ? "Checking…" : "I verified it"}
-          </button>
+            <button
+              onClick={IVerified}
+              disabled={checking}
+              className="btn btn-outline"
+            >
+              {checking ? "Checking…" : "I verified it"}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+    </PageBackground>
   );
 }

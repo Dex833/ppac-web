@@ -1,10 +1,15 @@
 import React from "react";
+import PageBackground from "../components/PageBackground";
+
+const bg =
+  "https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80";
 
 export default function RequirementsMembership() {
   return (
-    <div className="max-w-2xl mx-auto p-6">
-  <h1 className="text-2xl sm:text-3xl font-bold mb-6 text-center">Membership Requirements & Types (PPAC)</h1>
-  <div className="text-justify text-base sm:text-lg leading-relaxed">
+    <PageBackground image={bg} boxed boxedWidth="max-w-3xl" overlayClass="bg-white/85 backdrop-blur">
+      <div className="max-w-2xl mx-auto p-2 sm:p-6">
+        <h1 className="text-2xl sm:text-3xl font-bold mb-6 text-center">Membership Requirements & Types (PPAC)</h1>
+        <div className="text-justify text-base sm:text-lg leading-relaxed">
         <h2>Overview</h2>
         <p>PPAC welcomes four member types: <b>Farmer</b>, <b>Consumer</b>, <b>Associate</b>, and <b>Establishment/Institution</b> (Puerto Princesa–based).</p>
         <ul>
@@ -111,10 +116,11 @@ export default function RequirementsMembership() {
           <li>Associate Members have no voting rights but enjoy key economic benefits.</li>
           <li>All capital and fee policies follow PPAC bylaws and may be updated by the Board.</li>
         </ul>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-4 justify-center mt-10">
+          <a className="btn btn-primary w-full sm:w-auto text-lg" href="/Signup">Sign Up</a>
+        </div>
       </div>
-      <div className="flex flex-col sm:flex-row gap-4 justify-center mt-10">
-        <a className="btn btn-primary w-full sm:w-auto text-lg" href="/Signup">Sign Up</a>
-      </div>
-    </div>
+    </PageBackground>
   );
 }

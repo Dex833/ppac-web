@@ -1,6 +1,7 @@
 
 import React from "react";
 import Html from "../components/Html";
+import PageBackground from "../components/PageBackground";
 
 const hero = "https://images.unsplash.com/photo-1542834369-f10ebf06d3cb?auto=format&fit=crop&w=1600&q=80";
 const body = `
@@ -47,29 +48,31 @@ const body = `
 
 export default function BecomeMember() {
   return (
-    <div className="max-w-2xl w-full mx-auto px-4 sm:px-6 py-6">
-      <div className="prose max-w-none text-justify text-base sm:text-lg">
-        <Html html={body} />
-      </div>
-      <style>{`
-        .prose .btn {
-          display: block;
-          width: 100%;
-          margin-bottom: 0.75rem;
-          font-size: 1.1rem;
-        }
-        @media (min-width: 640px) {
+    <PageBackground image={hero} boxed boxedWidth="max-w-3xl" overlayClass="bg-white/85 backdrop-blur">
+      <div className="max-w-2xl w-full mx-auto px-4 sm:px-6 py-6">
+        <div className="prose max-w-none text-justify text-base sm:text-lg">
+          <Html html={body} />
+        </div>
+        <style>{`
           .prose .btn {
-            display: inline-block;
-            width: auto;
-            margin-bottom: 0;
-            margin-right: 1rem;
+            display: block;
+            width: 100%;
+            margin-bottom: 0.75rem;
+            font-size: 1.1rem;
           }
-        }
-        .prose ul, .prose ol {
-          padding-left: 1.25rem;
-        }
-      `}</style>
-    </div>
+          @media (min-width: 640px) {
+            .prose .btn {
+              display: inline-block;
+              width: auto;
+              margin-bottom: 0;
+              margin-right: 1rem;
+            }
+          }
+          .prose ul, .prose ol {
+            padding-left: 1.25rem;
+          }
+        `}</style>
+      </div>
+    </PageBackground>
   );
 }

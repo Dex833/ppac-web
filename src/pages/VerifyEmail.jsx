@@ -3,6 +3,10 @@ import { auth } from "../lib/firebase";
 import { sendEmailVerification, reload } from "firebase/auth";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../AuthContext";
+import PageBackground from "../components/PageBackground";
+
+const authBg =
+  "https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80";
 
 export default function VerifyEmail() {
   const { user } = useAuth();        // for showing email
@@ -47,16 +51,18 @@ export default function VerifyEmail() {
   }
 
   return (
-    <div>
-      <h2>Verify your email</h2>
-      <p>We sent a verification link to <b>{user?.email || "your email"}</b>.</p>
-      <div style={{display:"flex", gap:8, marginTop:12}}>
-        <button onClick={handleSend} disabled={busy}>Resend email</button>
-        <button onClick={handleIAlreadyVerified} disabled={busy}>I verified, refresh</button>
+    <PageBackground image={authBg} boxed boxedWidth="max-w-md" overlayClass="bg-white/90 backdrop-blur">
+      <div className="mx-auto max-w-md w-full p-6 card space-y-3">
+        <h2 className="text-2xl font-bold">Verify your email</h2>
+        <p>We sent a verification link to <b>{user?.email || "your email"}</b>.</p>
+        <div className="flex gap-2">
+          <button className="btn btn-outline" onClick={handleSend} disabled={busy}>Resend email</button>
+          <button className="btn btn-primary" onClick={handleIAlreadyVerified} disabled={busy}>I verified, refresh</button>
+        </div>
+        {msg && <div className="text-sm text-emerald-700">{msg}</div>}
+        {err && <div className="text-sm text-rose-600">{err}</div>}
+        <p className="text-sm"><Link className="underline" to="/dashboard">Back to Dashboard</Link></p>
       </div>
-      {msg && <p style={{color:"green"}}>{msg}</p>}
-      {err && <p style={{color:"crimson"}}>{err}</p>}
-      <p style={{marginTop:12}}><Link to="/dashboard">Back to Dashboard</Link></p>
-    </div>
+    </PageBackground>
   );
 }

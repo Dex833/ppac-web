@@ -15,6 +15,7 @@ function Signup() {
   const nav = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [firstName, setFirstName] = useState("");
   const [middleName, setMiddleName] = useState("");
   const [lastName, setLastName] = useState("");
@@ -140,6 +141,11 @@ function Signup() {
       setBusy(false);
       return;
     }
+    if (password !== confirmPassword) {
+      setErr("Passwords do not match.");
+      setBusy(false);
+      return;
+    }
 
     try {
       // 1) Create Auth user
@@ -252,6 +258,19 @@ function Signup() {
               required
             />
             <div className="text-xs mt-1 text-gray-500">Strength: {strengthLabel}</div>
+          </div>
+          <div>
+            <label className="block text-sm font-semibold">Confirm Password</label>
+            <input
+              type="password"
+              className="input w-full"
+              value={confirmPassword}
+              onChange={e => setConfirmPassword(e.target.value)}
+              required
+            />
+            {confirmPassword && password && confirmPassword !== password && (
+              <div className="text-xs mt-1 text-rose-600">Passwords do not match.</div>
+            )}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <input

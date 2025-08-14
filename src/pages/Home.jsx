@@ -8,9 +8,54 @@ import { useAuth } from "../AuthContext";
 import WhatYouHaveModal from "../components/WhatYouHaveModal";
 import useUserShareCapitalAndLoan from "../hooks/useUserShareCapitalAndLoan";
 import Html from "../components/Html"; // ⟵ NEW
+import WeatherWidget from "../components/WeatherWidget";
 
 const homeBg =
   "https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80";
+
+// Fallback images for the home photo slider when none are set yet in Firestore
+const defaultSliderImages = [
+  {
+    url: "https://images.unsplash.com/photo-1506806732259-39c2d0268443?auto=format&fit=crop&w=1600&q=80",
+    link: "/",
+    label: "Kadiwa · Fresh Vegetables",
+  },
+  {
+    url: "https://images.unsplash.com/photo-1441123285228-1448e608f3d5?auto=format&fit=crop&w=1600&q=80",
+    link: "/",
+    label: "Kadiwa · Market Produce",
+  },
+  {
+    url: "https://images.unsplash.com/photo-1501004318641-b39e6451bec6?auto=format&fit=crop&w=1600&q=80",
+    link: "/",
+    label: "Kadiwa · Fruits",
+  },
+  {
+    url: "https://images.unsplash.com/photo-1542831371-29b0f74f9713?auto=format&fit=crop&w=1600&q=80",
+    link: "/",
+    label: "Kadiwa · Bananas",
+  },
+  {
+    url: "https://images.unsplash.com/photo-1478145046317-39f10e56b5e9?auto=format&fit=crop&w=1600&q=80",
+    link: "/",
+    label: "Kadiwa · Veggie Stall",
+  },
+  {
+    url: "https://images.unsplash.com/photo-1518977676601-b53f82aba655?auto=format&fit=crop&w=1600&q=80",
+    link: "/",
+    label: "Kadiwa · Tomatoes & Peppers",
+  },
+  {
+    url: "https://images.unsplash.com/photo-1506801310323-534be5e7f48f?auto=format&fit=crop&w=1600&q=80",
+    link: "/",
+    label: "Kadiwa · Fruit Stand",
+  },
+  {
+    url: "https://images.unsplash.com/photo-1464454709131-ffd692591ee5?auto=format&fit=crop&w=1600&q=80",
+    link: "/",
+    label: "Kadiwa · Mangoes",
+  },
+];
 
 export default function Home() {
   const { user } = useAuth();
@@ -42,8 +87,13 @@ export default function Home() {
             featuredEvent: d.featuredEvent || "",
             resources: d.resources || "",
             news: Array.isArray(d.news) ? d.news.slice(0, 4) : ["", "", "", ""],
-            sliderImages: Array.isArray(d.sliderImages) ? d.sliderImages : [],
+            sliderImages:
+              Array.isArray(d.sliderImages) && d.sliderImages.length > 0
+                ? d.sliderImages
+                : defaultSliderImages,
           });
+        } else {
+          setContent((c) => ({ ...c, sliderImages: defaultSliderImages }));
         }
       } finally {
         setLoading(false);
@@ -172,15 +222,67 @@ export default function Home() {
 
           <div className="card p-4">
             <h3 className="font-semibold mb-2">Photo Gallery</h3>
-            <div className="text-ink/70">[Photo carousel/spotlight here]</div>
+            {content.sliderImages && content.sliderImages.length > 0 ? (
+              <div className="grid grid-cols-2 gap-2">
+                {content.sliderImages.slice(0, 8).map((img, idx) =>
+                  img?.url ? (
+                    img.link ? (
+                      <Link
+                        key={idx}
+                        to={img.link}
+                        title={img.label || `Photo ${idx + 1}`}
+                        className="block"
+                      >
+                        <img
+                          src={img.url}
+                          alt={img.label || `Photo ${idx + 1}`}
+                          className="w-full h-24 object-cover rounded"
+                          loading="lazy"
+                        />
+                      </Link>
+                    ) : (
+                      <img
+                        key={idx}
+                        src={img.url}
+                        alt={img.label || `Photo ${idx + 1}`}
+                        className="w-full h-24 object-cover rounded"
+                        loading="lazy"
+                      />
+                    )
+                  ) : null
+                )}
+              </div>
+            ) : (
+              <div className="text-ink/70">[Photo carousel/spotlight here]</div>
+            )}
           </div>
           <div className="card p-4">
             <h3 className="font-semibold mb-2">Contact & Support</h3>
-            <div className="text-ink/70">[Email, phone, socials here]</div>
+            <div className="text-ink/80 text-sm space-y-1">
+              <div>
+                Email: {" "}
+                <a
+                  href="mailto:ppcagriculturalcoop@gmail.com"
+                  className="underline"
+                >
+                  ppcagriculturalcoop@gmail.com
+                </a>
+              </div>
+              <div>
+                Mobile No.: {" "}
+                <a
+                  href="tel:+639504686668"
+                  className="underline"
+                  title="Call 09504686668"
+                >
+                  09504686668
+                </a>
+              </div>
+            </div>
           </div>
           <div className="card p-4">
             <h3 className="font-semibold mb-2">Local Weather</h3>
-            <div className="text-ink/70">[Weather widget placeholder]</div>
+            <WeatherWidget label="Manila" />
           </div>
         </div>
 

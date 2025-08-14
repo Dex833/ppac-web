@@ -129,21 +129,50 @@ export default function EditHome() {
 
   const [sliderImages, setSliderImages] = useState([
     {
-      url: "https://images.unsplash.com/photo-1519125323398-675f0ddb6308?auto=format&fit=crop&w=1600&q=80",
-      link: "/BecomeMember",
-      label: "Become a Member",
+      url: "https://images.unsplash.com/photo-1506806732259-39c2d0268443?auto=format&fit=crop&w=1600&q=80",
+      link: "/",
+      label: "Kadiwa · Fresh Vegetables",
     },
     {
-      url: "https://images.unsplash.com/photo-1464983953574-0892a716854b?auto=format&fit=crop&w=1600&q=80",
-      link: "/ReportsToUser",
-      label: "Reports for Members",
+      url: "https://images.unsplash.com/photo-1441123285228-1448e608f3d5?auto=format&fit=crop&w=1600&q=80",
+      link: "/",
+      label: "Kadiwa · Market Produce",
     },
     {
-      url: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1600&q=80",
-      link: "/RequirementsMembership",
-      label: "Membership Requirements",
+      url: "https://images.unsplash.com/photo-1501004318641-b39e6451bec6?auto=format&fit=crop&w=1600&q=80",
+      link: "/",
+      label: "Kadiwa · Fruits",
+    },
+    {
+      url: "https://images.unsplash.com/photo-1542831371-29b0f74f9713?auto=format&fit=crop&w=1600&q=80",
+      link: "/",
+      label: "Kadiwa · Bananas",
+    },
+    {
+      url: "https://images.unsplash.com/photo-1478145046317-39f10e56b5e9?auto=format&fit=crop&w=1600&q=80",
+      link: "/",
+      label: "Kadiwa · Veggie Stall",
+    },
+    {
+      url: "https://images.unsplash.com/photo-1518977676601-b53f82aba655?auto=format&fit=crop&w=1600&q=80",
+      link: "/",
+      label: "Kadiwa · Tomatoes & Peppers",
+    },
+    {
+      url: "https://images.unsplash.com/photo-1506801310323-534be5e7f48f?auto=format&fit=crop&w=1600&q=80",
+      link: "/",
+      label: "Kadiwa · Fruit Stand",
+    },
+    {
+      url: "https://images.unsplash.com/photo-1464454709131-ffd692591ee5?auto=format&fit=crop&w=1600&q=80",
+      link: "/",
+      label: "Kadiwa · Mangoes",
     },
   ]);
+
+  // Bulk import helper state
+  const [showBulk, setShowBulk] = useState(false);
+  const [bulkText, setBulkText] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -189,6 +218,28 @@ export default function EditHome() {
     setSliderImages((arr) =>
       arr.map((item, i) => (i === index ? { ...item, [key]: value } : item))
     );
+  }
+
+  function bulkAddImages() {
+    const lines = (bulkText || "")
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!lines.length) return;
+    const items = [];
+    for (const line of lines) {
+      const parts = line.split("|").map((s) => s.trim());
+      const url = parts[0];
+      if (!url || !/^https?:\/\//i.test(url)) continue;
+      const label = parts[1] || "Kadiwa Produce";
+      const link = parts[2] || "/";
+      items.push({ url, label, link });
+    }
+    if (items.length) {
+      setSliderImages((arr) => [...arr, ...items]);
+      setBulkText("");
+      setShowBulk(false);
+    }
   }
 
   function removeSliderImage(index) {
@@ -322,6 +373,44 @@ export default function EditHome() {
             >
               + Add Image
             </button>
+            <button
+              type="button"
+              className="btn btn-outline ml-2"
+              onClick={() => setShowBulk((v) => !v)}
+            >
+              {showBulk ? "Hide Bulk Import" : "Bulk Import"}
+            </button>
+
+            {showBulk && (
+              <div className="mt-3 border rounded p-3 bg-white">
+                <div className="text-sm mb-2">
+                  Paste one per line. Format: URL | Label (optional) | Link (optional)
+                </div>
+                <textarea
+                  className="border rounded w-full min-h-[120px] p-2 font-mono text-xs"
+                  placeholder={`https://...jpg | Fruits & Vegetables | /\nhttps://...jpg | Kadiwa Stall | /BecomeMember`}
+                  value={bulkText}
+                  onChange={(e) => setBulkText(e.target.value)}
+                />
+                <div className="flex items-center gap-2 mt-2">
+                  <button type="button" className="btn btn-primary" onClick={bulkAddImages}>
+                    Import
+                  </button>
+                  <a
+                    href="https://unsplash.com/s/photos/fruits-vegetables-philippines"
+                    className="text-sm underline"
+                    target="_blank"
+                    rel="noreferrer"
+                    title="Open Unsplash search in a new tab"
+                  >
+                    Open Unsplash search (royalty‑free)
+                  </a>
+                </div>
+                <div className="text-xs text-ink/60 mt-1">
+                  Tip: Prefer images you have rights to use (e.g., Unsplash, your own photos). Avoid copyrighted images.
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Editors with toolbar */}

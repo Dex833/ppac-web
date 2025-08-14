@@ -4,6 +4,10 @@ import { Link, useNavigate } from "react-router-dom";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth, db } from "../lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
+import PageBackground from "../components/PageBackground";
+
+const authBg =
+  "https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80";
 
 export default function Login() {
   const nav = useNavigate();
@@ -62,9 +66,9 @@ export default function Login() {
   }
 
   return (
-    <div className="max-w-md mx-auto">
-      <div className="card p-6">
-        <h2 className="text-xl font-bold mb-4">Sign in</h2>
+    <PageBackground image={authBg} boxed boxedWidth="max-w-md" overlayClass="bg-white/90 backdrop-blur">
+      <div className="mx-auto max-w-md w-full p-6 card">
+        <h2 className="text-2xl font-bold mb-4">Sign in</h2>
 
         {err && (
           <div className="mb-3 rounded border border-rose-200 bg-rose-50 text-rose-700 px-3 py-2 text-sm">
@@ -72,11 +76,11 @@ export default function Login() {
           </div>
         )}
 
-        <form onSubmit={onSubmit} className="grid gap-3">
+    <form onSubmit={onSubmit} className="grid gap-3">
           <label className="block">
             <span className="text-sm">Email or Member ID</span>
             <input
-              className="border rounded px-3 py-2 w-full"
+      className="input w-full"
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
               autoComplete="username"
@@ -88,7 +92,7 @@ export default function Login() {
           <label className="block">
             <span className="text-sm">Password</span>
             <input
-              className="border rounded px-3 py-2 w-full"
+      className="input w-full"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -113,6 +117,6 @@ export default function Login() {
           </span>
         </div>
       </div>
-    </div>
+    </PageBackground>
   );
 }
