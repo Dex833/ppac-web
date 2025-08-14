@@ -1,11 +1,22 @@
 // src/pages/reports/ReportView.jsx
-import React, { useEffect, useState } from "react";
-import { Link, useParams, useNavigate } from "react-router-dom";
+import React, { useEffect, useMemo, useState } from "react";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { db } from "../../lib/firebase";
-import { doc, getDoc, deleteDoc } from "firebase/firestore";
+import {
+  doc,
+  getDoc,
+  deleteDoc,
+} from "firebase/firestore";
+import PageBackground from "../../components/PageBackground";
 import useUserProfile from "../../hooks/useUserProfile";
 
-/* ----------------------------- utils ----------------------------- */
+/* ---------------- utils ---------------- */
+const fmt2 = (n) =>
+  Number(n || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
 function tsToDate(v) {
   if (!v) return null;
   if (typeof v.toDate === "function") return v.toDate();
@@ -17,336 +28,485 @@ function fmtDT(v) {
   const d = tsToDate(v);
   return d ? d.toLocaleString() : "—";
 }
-function fmtNum(n) {
-  const v = Number(n || 0);
-  return v.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+function normalizeType(t) {
+  switch (t) {
+    case "incomeStatement": return "income_statement";
+    case "balanceSheet": return "balance_sheet";
+    case "cashFlow": return "cash_flow";
+    case "trialBalance": return "trial_balance";
+    default: return t || "";
+  }
 }
-function fmtYMD(s) {
-  if (!s) return "—";
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return s;
-  const month = d.toLocaleString("en-US", { month: "short" });
-  return `${month}/${String(d.getDate()).padStart(2, "0")}/${d.getFullYear()}`;
+function periodParts(r) {
+  // prefer explicit new keys
+  const L = r?.periodStart || r?.from || "";
+  const R = r?.periodEnd || r?.to || "";
+  return { L, R };
+}
+function periodLabel(r) {
+  const { L, R } = periodParts(r);
+  const t = normalizeType(r?.type);
+  const pretty = (s) => {
+    if (!s) return "—";
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return s;
+    const mo = d.toLocaleString("en-US", { month: "short" });
+    const dy = String(d.getDate()).padStart(2, "0");
+    const yr = d.getFullYear();
+    return `${mo}/${dy}/${yr}`;
+  };
+  if (t === "balance_sheet") {
+    const asof = R || L || "";
+    return `as of ${pretty(asof)}`;
+  }
+  if (L && R && L === R) return `as of ${pretty(R)}`;
+  if (!L && !R) return "—";
+  return `${pretty(L || "—")} → ${pretty(R || "—")}`;
 }
 
-/* ----------------------------- component ----------------------------- */
+const reportsBg =
+  "https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80";
+
+/* ------------- robust safe getters for daily payloads ------------- */
+function safeIS(payload = {}) {
+  // Accept either payload.sections.{revenues,cogs,expenses} and payload.totals,
+  // or a flat shape from older buttons.
+  const sections = payload.sections || {};
+  const revenues = sections.revenues || payload.revenues || [];
+  const cogs = sections.cogs || payload.cogs || [];
+  const expenses = sections.expenses || payload.expenses || [];
+
+  const totals = payload.totals || {};
+  const totalRevenue =
+    totals.totalRevenue ??
+    revenues.reduce((s, x) => s + Number(x.amount || 0), 0);
+  const totalCOGS =
+    totals.totalCOGS ?? cogs.reduce((s, x) => s + Number(x.amount || 0), 0);
+  const grossProfit =
+    totals.grossProfit ?? (Number(totalRevenue) - Number(totalCOGS));
+  const totalExpense =
+    totals.totalExpense ??
+    expenses.reduce((s, x) => s + Number(x.amount || 0), 0);
+  const netIncome =
+    totals.netIncome ?? (Number(grossProfit) - Number(totalExpense));
+
+  return { revenues, cogs, expenses, totals: { totalRevenue, totalCOGS, grossProfit, totalExpense, netIncome } };
+}
+
+function safeBS(payload = {}) {
+  const sections = payload.sections || {};
+  const assets = sections.assets || payload.assets || [];
+  const liabilities = sections.liabilities || payload.liabilities || [];
+  const equity = sections.equity || payload.equity || [];
+  const totals = payload.totals || {};
+  const sum = (rows) => rows.reduce((s, r) => s + Number(r.amount || 0), 0);
+  const tAssets = totals.assets ?? sum(assets);
+  const tLiab = totals.liabilities ?? sum(liabilities);
+  const tEq = totals.equity ?? sum(equity);
+  const tLE = totals.liabPlusEquity ?? (tLiab + tEq);
+  return {
+    assets, liabilities, equity,
+    totals: { assets: tAssets, liabilities: tLiab, equity: tEq, liabPlusEquity: tLE }
+  };
+}
+
+function safeCF(payload = {}) {
+  const sections = payload.sections || {};
+  const summary = payload.summary || {};
+  // Keep shape simple; we’ll render exactly what exists.
+  return {
+    sections: {
+      operating: sections.operating || { netIncome: 0, net: 0 },
+      investing: sections.investing || { net: 0 },
+      financing: sections.financing || { net: 0 },
+    },
+    deltas: payload.deltas || { loanReceivable: 0, inventory: 0, workingCapital: 0, shareCapital: 0 },
+    summary: {
+      startCash: Number(summary.startCash || 0),
+      endCash: Number(summary.endCash || 0),
+      netChangeCash: Number(summary.netChangeCash || 0),
+    },
+  };
+}
+
+function safeTB(payload = {}) {
+  const rows = payload.rows || [];
+  const totals = payload.totals || { debit: 0, credit: 0 };
+  return { rows, totals: { debit: Number(totals.debit || 0), credit: Number(totals.credit || 0) } };
+}
+
+/* ---------------- component ---------------- */
 export default function ReportView() {
-  const { id } = useParams(); // "auto_TB" | "auto_IS" | "auto_BS" | "auto_CF" | <periodic-id>
+  const { id } = useParams(); // /reports/:id
   const nav = useNavigate();
-  const { profile } = useUserProfile();
-  const isAdmin = profile?.role === "admin" || profile?.roles?.includes("admin");
+  const { profile, loading: profileLoading } = useUserProfile();
+  const isAdmin =
+    !profileLoading &&
+    ((Array.isArray(profile?.roles) && profile.roles.includes("admin")) ||
+      profile?.role === "admin") &&
+    profile?.suspended !== true;
 
   const [docData, setDocData] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const isAuto =
-    id === "auto_TB" || id === "auto_IS" || id === "auto_BS" || id === "auto_CF";
+  const isDaily = id?.startsWith("auto_");
 
   useEffect(() => {
+    let mounted = true;
     (async () => {
       setLoading(true);
-      const ref = doc(db, "financialReports", id);
-      const snap = await getDoc(ref);
-      setDocData(snap.exists() ? { id: snap.id, ...snap.data() } : null);
-      setLoading(false);
+      try {
+        const snap = await getDoc(doc(db, "financialReports", id));
+        if (mounted) setDocData(snap.exists() ? { id: snap.id, ...snap.data() } : null);
+      } catch (e) {
+        console.error("ReportView load error:", e);
+        if (mounted) setDocData(null);
+      } finally {
+        if (mounted) setLoading(false);
+      }
     })();
+    return () => { mounted = false; };
   }, [id]);
 
+  const tNorm = normalizeType(docData?.type);
+  const perLabel = periodLabel(docData);
+
   async function handleDelete() {
-    if (!isAdmin) return;
+    if (!isAdmin || !docData?.id) return;
     if (!window.confirm("Delete this report?")) return;
-    await deleteDoc(doc(db, "financialReports", id));
+    await deleteDoc(doc(db, "financialReports", docData.id));
     nav("/reports");
   }
 
-  if (loading) return <div className="p-4">Loading…</div>;
-  if (!docData) return <div className="p-4">Report not found.</div>;
+  /* --------------- RENDERERS for daily structured payloads --------------- */
+  function renderDaily() {
+    const payload = docData?.payload || {};
+    if (!payload || Object.keys(payload).length === 0) {
+      return (
+        <div className="card p-4">
+          This daily auto report has no structured payload yet. Rebuild it from the Reports page.
+        </div>
+      );
+    }
 
-  const { type, label, createdAt, periodStart, periodEnd, payload = {} } = docData;
-  const title = label || (isAuto ? "Daily auto report" : "Report");
-  const period =
-    periodStart && periodEnd && periodStart === periodEnd
-      ? `as of ${fmtYMD(periodEnd)}`
-      : `${fmtYMD(periodStart)} → ${fmtYMD(periodEnd)}`;
+    if (tNorm === "income_statement") {
+      const { revenues, cogs, expenses, totals } = safeIS(payload);
+      return (
+        <div className="space-y-6">
+          {/* Desktop table */}
+          <div className="hidden sm:block overflow-x-auto">
+            <table className="min-w-full border border-gray-300 rounded text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="text-left p-2 border-b border-r">Account</th>
+                  <th className="text-right p-2 border-b">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td className="p-2 font-bold" colSpan={2}>Revenues</td></tr>
+                {revenues.map((a, i) => (
+                  <tr key={`rev-${i}`} className="odd:bg-white even:bg-gray-50">
+                    <td className="p-2 border-b border-r">{a.code ? `${a.code} - ${a.name}` : a.name}</td>
+                    <td className="p-2 border-b text-right">{fmt2(a.amount)}</td>
+                  </tr>
+                ))}
+                <tr>
+                  <td className="p-2 border-t font-semibold">Total Revenue</td>
+                  <td className="p-2 border-t text-right font-semibold">{fmt2(totals.totalRevenue)}</td>
+                </tr>
 
-  const Header = (
-    <div className="flex items-center justify-between mb-3">
-      <div className="flex items-center gap-2">
-        <Link className="btn" to="/reports">
-          ← Back
-        </Link>
-        <h1 className="text-xl font-bold">{title}</h1>
-      </div>
-      <div className="text-sm text-ink/60">
-        <span className="mr-2">Period: {period}</span>
-        <span className="mr-2">Created: {fmtDT(createdAt)}</span>
-        {isAdmin && (
-          <button className="text-rose-700 underline" onClick={handleDelete}>
-            Delete
-          </button>
-        )}
-      </div>
-    </div>
-  );
+                {cogs.length > 0 && (
+                  <>
+                    <tr><td className="p-2 font-bold" colSpan={2}>Less: Cost of Goods Sold (COGS)</td></tr>
+                    {cogs.map((a, i) => (
+                      <tr key={`cogs-${i}`} className="odd:bg-white even:bg-gray-50">
+                        <td className="p-2 border-b border-r">{a.code ? `${a.code} - ${a.name}` : a.name}</td>
+                        <td className="p-2 border-b text-right">{fmt2(a.amount)}</td>
+                      </tr>
+                    ))}
+                    <tr>
+                      <td className="p-2 border-t font-semibold">Total COGS</td>
+                      <td className="p-2 border-t text-right font-semibold">{fmt2(totals.totalCOGS)}</td>
+                    </tr>
+                    <tr>
+                      <td className="p-2 font-semibold">Gross Profit</td>
+                      <td className="p-2 text-right font-semibold">{fmt2(totals.grossProfit)}</td>
+                    </tr>
+                  </>
+                )}
 
-  /* ---------- small render helpers (used by both periodic fallback + autos) ---------- */
-  const renderTB = (rows = [], totals = { debit: 0, credit: 0 }, note = "") => (
-    <div className="card p-3">
-      {note && <div className="mb-2 text-xs text-ink/60">{note}</div>}
-      <div className="overflow-x-auto">
-        <table className="min-w-full border border-gray-300 rounded text-sm">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="text-left p-2 border-b border-r">Code</th>
-              <th className="text-left p-2 border-b border-r">Account</th>
-              <th className="text-right p-2 border-b border-r">Debit</th>
-              <th className="text-right p-2 border-b">Credit</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={i} className="odd:bg-white even:bg-gray-50">
-                <td className="p-2 border-b border-r">{r.code || ""}</td>
-                <td className="p-2 border-b border-r">{r.name || ""}</td>
-                <td className="p-2 border-b border-r text-right">
-                  {r.debit ? fmtNum(r.debit) : ""}
-                </td>
-                <td className="p-2 border-b text-right">
-                  {r.credit ? fmtNum(r.credit) : ""}
-                </td>
-              </tr>
-            ))}
-            <tr className="font-bold bg-gray-100">
-              <td colSpan={2} className="p-2 border-t text-right">
-                Totals:
-              </td>
-              <td className="p-2 border-t border-r text-right">
-                {fmtNum(totals.debit)}
-              </td>
-              <td className="p-2 border-t text-right">{fmtNum(totals.credit)}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <div className="mt-3">
-        <button className="btn" onClick={() => window.print()}>
-          Print
-        </button>
-      </div>
-    </div>
-  );
+                <tr><td className="p-2 font-bold" colSpan={2}>Expenses</td></tr>
+                {expenses.map((a, i) => (
+                  <tr key={`exp-${i}`} className="odd:bg-white even:bg-gray-50">
+                    <td className="p-2 border-b border-r">{a.code ? `${a.code} - ${a.name}` : a.name}</td>
+                    <td className="p-2 border-b text-right">{fmt2(a.amount)}</td>
+                  </tr>
+                ))}
+                <tr>
+                  <td className="p-2 border-t font-semibold">Total Expenses</td>
+                  <td className="p-2 border-t text-right font-semibold">{fmt2(totals.totalExpense)}</td>
+                </tr>
+                <tr>
+                  <td className="p-2 font-semibold">Net Income</td>
+                  <td className="p-2 text-right font-semibold">{fmt2(totals.netIncome)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
 
-  const SectionTable = ({ section }) => (
-    <div className="mb-4">
-      <div className="font-semibold mb-1">{section.title || section.key || "Section"}</div>
-      {Array.isArray(section.rows) && section.rows.length > 0 ? (
+          {/* Mobile list */}
+          <div className="sm:hidden text-sm space-y-6">
+            <div>
+              <div className="font-semibold underline">Revenues</div>
+              <div className="mt-1 space-y-1">
+                {revenues.map((a, i) => (
+                  <div key={`mrev-${i}`} className="flex justify-between">
+                    <div>{a.code ? `${a.code} - ${a.name}` : a.name}</div>
+                    <div className="font-mono">{fmt2(a.amount)}</div>
+                  </div>
+                ))}
+                <div className="flex justify-between font-semibold border-t pt-1 mt-1">
+                  <div>Total Revenue</div><div className="font-mono">{fmt2(totals.totalRevenue)}</div>
+                </div>
+              </div>
+            </div>
+
+            {cogs.length > 0 && (
+              <div>
+                <div className="font-semibold underline">Less: COGS</div>
+                <div className="mt-1 space-y-1">
+                  {cogs.map((a, i) => (
+                    <div key={`mcogs-${i}`} className="flex justify-between">
+                      <div>{a.code ? `${a.code} - ${a.name}` : a.name}</div>
+                      <div className="font-mono">{fmt2(a.amount)}</div>
+                    </div>
+                  ))}
+                  <div className="flex justify-between font-semibold border-t pt-1 mt-1">
+                    <div>Total COGS</div><div className="font-mono">{fmt2(totals.totalCOGS)}</div>
+                  </div>
+                  <div className="flex justify-between font-semibold">
+                    <div>Gross Profit</div><div className="font-mono">{fmt2(totals.grossProfit)}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div>
+              <div className="font-semibold underline">Expenses</div>
+              <div className="mt-1 space-y-1">
+                {expenses.map((a, i) => (
+                  <div key={`mexp-${i}`} className="flex justify-between">
+                    <div>{a.code ? `${a.code} - ${a.name}` : a.name}</div>
+                    <div className="font-mono">{fmt2(a.amount)}</div>
+                  </div>
+                ))}
+                <div className="flex justify-between font-semibold border-t pt-1 mt-1">
+                  <div>Total Expenses</div><div className="font-mono">{fmt2(totals.totalExpense)}</div>
+                </div>
+                <div className="flex justify-between font-semibold">
+                  <div>Net Income</div><div className="font-mono">{fmt2(totals.netIncome)}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (tNorm === "balance_sheet") {
+      const { assets, liabilities, equity, totals } = safeBS(payload);
+      return (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
+          <div className="overflow-x-auto">
+            <table className="min-w-full border border-gray-300 rounded">
+              <thead className="bg-gray-50"><tr><th className="p-2 text-left">Assets</th><th className="p-2 text-right">Amount</th></tr></thead>
+              <tbody>
+                {assets.map((r, i) => (
+                  <tr key={`a-${i}`} className="odd:bg-white even:bg-gray-50">
+                    <td className="p-2 border-b">{r.code ? `${r.code} - ${r.name}` : r.name}</td>
+                    <td className="p-2 border-b text-right">{fmt2(r.amount)}</td>
+                  </tr>
+                ))}
+                <tr><td className="p-2 font-semibold border-t">Total Assets</td><td className="p-2 text-right font-semibold border-t">{fmt2(totals.assets)}</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full border border-gray-300 rounded">
+              <thead className="bg-gray-50"><tr><th className="p-2 text-left">Liabilities & Equity</th><th className="p-2 text-right">Amount</th></tr></thead>
+              <tbody>
+                {liabilities.map((r, i) => (
+                  <tr key={`l-${i}`} className="odd:bg-white even:bg-gray-50">
+                    <td className="p-2 border-b">{r.code ? `${r.code} - ${r.name}` : r.name}</td>
+                    <td className="p-2 border-b text-right">{fmt2(r.amount)}</td>
+                  </tr>
+                ))}
+                {equity.map((r, i) => (
+                  <tr key={`e-${i}`} className="odd:bg-white even:bg-gray-50">
+                    <td className="p-2 border-b">{r.code ? `${r.code} - ${r.name}` : r.name}</td>
+                    <td className="p-2 border-b text-right">{fmt2(r.amount)}</td>
+                  </tr>
+                ))}
+                <tr><td className="p-2 font-semibold border-t">Total Liabilities & Equity</td><td className="p-2 text-right font-semibold border-t">{fmt2(totals.liabPlusEquity)}</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    if (tNorm === "cash_flow") {
+      const { sections, deltas, summary } = safeCF(payload);
+      return (
+        <div className="text-sm space-y-6">
+          <div>
+            <div className="font-semibold underline">Cash Flow From Operating Activities:</div>
+            <div className="grid grid-cols-[1fr,12rem] sm:grid-cols-[1fr,1fr,12rem] gap-x-2 sm:pl-8 pl-4 mt-2">
+              <div className="col-span-1 sm:col-span-2">Net Profit/Loss</div>
+              <div className="text-right">{fmt2(sections.operating.netIncome)}</div>
+
+              <div className="col-span-2 sm:col-span-3 font-semibold mt-3">
+                Changes In Working Capital:
+              </div>
+              <div>Changes in Loan Receivable</div><div className="hidden sm:block">Loan Receivable</div>
+              <div className="text-right">{fmt2(deltas.loanReceivable)}</div>
+
+              <div>Changes in Rice Inventory</div><div className="hidden sm:block">Rice Inventory</div>
+              <div className="text-right">{fmt2(deltas.inventory)}</div>
+
+              <div className="italic">Net Changes on Working Capital</div><div className="hidden sm:block"></div>
+              <div className="text-right italic">{fmt2(deltas.workingCapital)}</div>
+
+              <div className="col-span-1 sm:col-span-2 font-semibold mt-3">Net Cash Flow From Operating Activities</div>
+              <div className="text-right font-semibold">{fmt2(sections.operating.net)}</div>
+            </div>
+          </div>
+
+          <div>
+            <div className="font-semibold underline">Cash Flow from Investing Activities:</div>
+            <div className="grid grid-cols-[1fr,12rem] sm:grid-cols-[1fr,1fr,12rem] gap-x-2 sm:pl-8 pl-4 mt-2">
+              <div>None</div><div className="hidden sm:block"></div>
+              <div className="text-right">{fmt2(0)}</div>
+
+              <div className="col-span-1 sm:col-span-2 font-semibold mt-3">Net Cash Flow From Investing Activities</div>
+              <div className="text-right font-semibold">{fmt2(sections.investing.net)}</div>
+            </div>
+          </div>
+
+          <div>
+            <div className="font-semibold underline">Cash Flow From Financing Activities:</div>
+            <div className="grid grid-cols-[1fr,12rem] sm:grid-cols-[1fr,1fr,12rem] gap-x-2 sm:pl-8 pl-4 mt-2">
+              <div>Share Capital</div><div className="hidden sm:block">Share Capital</div>
+              <div className="text-right">{fmt2(deltas.shareCapital)}</div>
+
+              <div className="col-span-1 sm:col-span-2 font-semibold mt-3">Net Cash Flow From Financing Activities</div>
+              <div className="text-right font-semibold">{fmt2(sections.financing.net)}</div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-[1fr,12rem] gap-x-2 sm:pl-8 pl-4">
+            <div className="font-semibold">Net Increase In Cash:</div><div className="text-right font-semibold">{fmt2(summary.netChangeCash)}</div>
+            <div>Beginning Cash Balance:</div><div className="text-right">{fmt2(summary.startCash)}</div>
+            <div>Ending Balance Of Cash</div><div className="text-right">{fmt2(summary.endCash)}</div>
+          </div>
+        </div>
+      );
+    }
+
+    if (tNorm === "trial_balance") {
+      const { rows, totals } = safeTB(payload);
+      return (
         <div className="overflow-x-auto">
           <table className="min-w-full border border-gray-300 rounded text-sm">
             <thead className="bg-gray-50">
               <tr>
-                <th className="text-left p-2 border-b border-r">Code</th>
-                <th className="text-left p-2 border-b border-r">Account</th>
-                <th className="text-right p-2 border-b">Amount</th>
+                <th className="p-2 text-left border-b border-r">Code</th>
+                <th className="p-2 text-left border-b border-r">Account</th>
+                <th className="p-2 text-right border-b border-r">Debit</th>
+                <th className="p-2 text-right border-b">Credit</th>
               </tr>
             </thead>
             <tbody>
-              {section.rows.map((r, i) => (
+              {rows.map((r, i) => (
                 <tr key={i} className="odd:bg-white even:bg-gray-50">
                   <td className="p-2 border-b border-r">{r.code || ""}</td>
                   <td className="p-2 border-b border-r">{r.name || ""}</td>
-                  <td className="p-2 border-b text-right">{fmtNum(r.amount)}</td>
+                  <td className="p-2 border-b border-r text-right">{fmt2(r.debit)}</td>
+                  <td className="p-2 border-b text-right">{fmt2(r.credit)}</td>
                 </tr>
               ))}
-              {typeof section.total === "number" && (
-                <tr className="font-bold bg-gray-100">
-                  <td colSpan={2} className="p-2 border-t text-right">
-                    Subtotal:
-                  </td>
-                  <td className="p-2 border-t text-right">{fmtNum(section.total)}</td>
-                </tr>
-              )}
+              <tr>
+                <td className="p-2 border-t font-semibold" colSpan={2}>Totals</td>
+                <td className="p-2 border-t text-right font-semibold">{fmt2(totals.debit)}</td>
+                <td className="p-2 border-t text-right font-semibold">{fmt2(totals.credit)}</td>
+              </tr>
             </tbody>
           </table>
         </div>
-      ) : (
-        <div className="text-sm text-ink/60">No items</div>
-      )}
-    </div>
-  );
-
-  const renderSections = (
-    sections = [],
-    totals = {},
-    summary = null,
-    heading = "",
-    note = ""
-  ) => (
-    <div className="card p-3">
-      {note && <div className="mb-2 text-xs text-ink/60">{note}</div>}
-      {heading && <div className="mb-1 font-semibold">{heading}</div>}
-
-      {sections.map((sec, idx) => (
-        <SectionTable key={(sec.key || sec.title || idx) + "_sec"} section={sec} />
-      ))}
-
-      {!!Object.keys(totals || {}).length && (
-        <div className="grid sm:grid-cols-3 gap-2 text-sm">
-          {Object.entries(totals).map(([k, v]) => (
-            <div key={k} className="border rounded p-2 flex items-center justify-between">
-              <span className="capitalize">{k.replace(/([A-Z])/g, " $1")}</span>
-              <span className="font-mono">{fmtNum(v)}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {summary && (
-        <div className="grid sm:grid-cols-3 gap-2 text-sm mt-2">
-          {"startCash" in summary && (
-            <div className="border rounded p-2 flex items-center justify-between">
-              <span>Start Cash</span>
-              <span className="font-mono">{fmtNum(summary.startCash)}</span>
-            </div>
-          )}
-          {"netChangeCash" in summary && (
-            <div className="border rounded p-2 flex items-center justify-between">
-              <span>Net Change</span>
-              <span className="font-mono">{fmtNum(summary.netChangeCash)}</span>
-            </div>
-          )}
-          {"endCash" in summary && (
-            <div className="border rounded p-2 flex items-center justify-between font-semibold">
-              <span>End Cash</span>
-              <span className="font-mono">{fmtNum(summary.endCash)}</span>
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className="mt-3">
-        <button className="btn" onClick={() => window.print()}>
-          Print
-        </button>
-      </div>
-    </div>
-  );
-
-  /* ====================== PERIODIC REPORTS (HTML-first) ====================== */
-  if (!isAuto) {
-    // Exact: render the saved HTML snapshot from periodic docs
-    const html = typeof payload?.html === "string" ? payload.html.trim() : "";
-    if (html) {
-      return (
-        <div className="page-gutter">
-          {Header}
-          {/* eslint-disable-next-line react/no-danger */}
-          <div dangerouslySetInnerHTML={{ __html: html }} />
-          <div className="mt-3">
-            <button className="btn" onClick={() => window.print()}>
-              Print
-            </button>
-          </div>
-        </div>
       );
     }
 
-    // Optional fallback for older periodic docs saved as structured data
-    if (Array.isArray(payload?.rows) && payload?.totals) {
-      return (
-        <div className="page-gutter">
-          {Header}
-          {renderTB(payload.rows, payload.totals, "Structured snapshot (periodic doc)")}
-        </div>
-      );
-    }
-    if (Array.isArray(payload?.sections) || payload?.summary || payload?.totals) {
-      return (
-        <div className="page-gutter">
-          {Header}
-          {renderSections(
-            payload.sections || [],
-            payload.totals || {},
-            payload.summary || null,
-            label || "Statement",
-            "Structured snapshot (periodic doc)"
-          )}
-        </div>
-      );
-    }
-
-    // Nothing saved on this periodic doc
     return (
-      <div className="page-gutter">
-        {Header}
-        <div className="card p-4">
-          <div className="text-ink/70">
-            This periodic report has no snapshot content (<code>payload.html</code> is empty).
-            Use your “Save to Reports” action on the report page to generate it.
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  /* ====================== DAILY AUTO REPORTS (unchanged) ====================== */
-
-  // auto_TB
-  if (id === "auto_TB" && Array.isArray(payload?.rows)) {
-    return (
-      <div className="page-gutter">
-        {Header}
-        {renderTB(payload.rows, payload.totals || { debit: 0, credit: 0 })}
-      </div>
-    );
-  }
-
-  // auto_IS
-  if (id === "auto_IS" && Array.isArray(payload?.sections)) {
-    return (
-      <div className="page-gutter">
-        {Header}
-        {renderSections(payload.sections, payload.totals || {}, null, "Income Statement")}
-      </div>
-    );
-  }
-
-  // auto_BS
-  if (id === "auto_BS" && Array.isArray(payload?.sections)) {
-    return (
-      <div className="page-gutter">
-        {Header}
-        {renderSections(payload.sections, payload.totals || {}, null, "Balance Sheet")}
-      </div>
-    );
-  }
-
-  // auto_CF
-  if (id === "auto_CF" && (Array.isArray(payload?.sections) || payload?.summary)) {
-    return (
-      <div className="page-gutter">
-        {Header}
-        {renderSections(
-          payload.sections || [],
-          payload.totals || {},
-          payload.summary || { startCash: 0, netChangeCash: 0, endCash: 0 },
-          "Cash Flow"
-        )}
-      </div>
-    );
-  }
-
-  // Auto doc without payload yet
-  return (
-    <div className="page-gutter">
-      {Header}
       <div className="card p-4">
-        <div className="text-ink/70">
-          This daily auto report has no structured payload yet. Rebuild it from the Reports page.
+        Unknown daily report type. ({String(docData?.type || "")})
+      </div>
+    );
+  }
+
+  /* ---------------- main render ---------------- */
+  return (
+    <PageBackground
+      image={reportsBg}
+      boxed
+      boxedWidth="max-w-4xl"
+      overlayClass="bg-white/85 backdrop-blur"
+      className="page-gutter"
+    >
+      <div className="mb-3">
+        <Link to="/reports" className="inline-flex items-center gap-2 text-sm hover:underline">
+          ← Back
+        </Link>
+      </div>
+
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-xl font-semibold">{docData?.label || "Daily auto report"}</h2>
+        <div className="text-sm text-ink/60">
+          Period: <span className="font-mono">{perLabel}</span> — Created:{" "}
+          <span className="font-mono">{fmtDT(docData?.createdAt)}</span>
+          {isAdmin && !id.startsWith("auto_") && (
+            <>
+              {" "}
+              —{" "}
+              <button className="text-red-600 hover:underline" onClick={handleDelete}>
+                Delete
+              </button>
+            </>
+          )}
         </div>
       </div>
-    </div>
+
+      {loading ? (
+        <div className="card p-4">Loading…</div>
+      ) : !docData ? (
+        <div className="card p-4">Report not found.</div>
+      ) : isDaily ? (
+        renderDaily()
+      ) : (
+        // Periodic snapshots (render saved HTML if present)
+        <>
+          {docData?.payload?.html ? (
+            <div
+              className="card p-4"
+              dangerouslySetInnerHTML={{ __html: docData.payload.html }}
+            />
+          ) : (
+            <div className="card p-4">
+              This periodic report has no snapshot content (<code>payload.html</code> is empty). Use your “Save to Reports” action to generate it.
+            </div>
+          )}
+        </>
+      )}
+    </PageBackground>
   );
 }
