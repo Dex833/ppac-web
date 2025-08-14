@@ -71,6 +71,7 @@ export default function AdminLayout() {
             <nav className="flex md:flex-col gap-2">
               <AdminNavItem to="/admin/users">Users</AdminNavItem>
               <AdminNavItem to="/admin/edit-home">Edit Home</AdminNavItem>
+              <AdminNavItem to="/admin/membership-status">Membership Status</AdminNavItem>
             </nav>
           </div>
         </aside>
@@ -109,6 +110,12 @@ export default function AdminLayout() {
                   onClick={() => setMobileOpen(false)}
                 >
                   Edit Home
+                </AdminNavItem>
+                <AdminNavItem
+                  to="/admin/membership-status"
+                  onClick={() => setMobileOpen(false)}
+                >
+                  Membership Status
                 </AdminNavItem>
               </nav>
             </div>

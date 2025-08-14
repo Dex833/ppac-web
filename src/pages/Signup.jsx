@@ -10,18 +10,91 @@ import PageBackground from "../components/PageBackground";
 const authBg =
   "https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80";
 
-export default function Signup({ openLoginModal }) {
-  const nav = useNavigate();
 
+function Signup() {
+  const nav = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [firstName, setFirstName] = useState("");
   const [middleName, setMiddleName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [memberType, setMemberType] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [agreed, setAgreed] = useState(false);
   const [passwordStrength, setPasswordStrength] = useState(0);
+
+  const memberTypeOptions = [
+    {
+      value: "farmer",
+      label: "Farmer",
+      descList: [
+        "May farm sa Puerto Princesa",
+        "May City Agriculture Office certification",
+        "Pwedeng maging Board of Directors o Chairperson",
+      ],
+      reqList: [
+        "Farm in Puerto Princesa",
+        "City Agriculture Office certification",
+        "Legal age",
+        "Residency in Puerto Princesa",
+        "Valid ID",
+        "₱300 membership fee",
+        "₱2,000 paid-up share capital",
+        "Additional ₱2,000 within 3 months",
+      ],
+    },
+    {
+      value: "consumer",
+      label: "Consumer",
+      descList: [
+        "Residente ng Puerto Princesa",
+        "Pwedeng mag-avail ng lahat ng benepisyo",
+        "Hindi pwedeng maging Board of Directors o Chairperson",
+      ],
+      reqList: [
+        "Residency in Puerto Princesa",
+        "Legal age",
+        "Valid ID",
+        "₱300 membership fee",
+        "₱2,000 paid-up share capital",
+        "Additional ₱2,000 within 3 months",
+      ],
+    },
+    {
+      value: "associate",
+      label: "Associate",
+      descList: [
+        "Non-resident (outside Puerto Princesa)",
+        "Walang voting rights",
+        "May discounts at benepisyo",
+      ],
+      reqList: [
+        "Non-resident",
+        "Legal age",
+        "Valid ID",
+        "₱300 membership fee",
+        "₱2,000 paid-up share capital",
+        "Additional ₱2,000 within 3 months",
+      ],
+    },
+    {
+      value: "institution",
+      label: "Institution",
+      descList: [
+        "Establishment o institution sa Puerto Princesa",
+        "May benepisyo ayon sa coop programs",
+      ],
+      reqList: [
+        "Puerto Princesa-based",
+        "Legal age (authorized representative)",
+        "Valid ID (authorized representative)",
+        "₱300 membership fee",
+        "₱2,000 paid-up share capital",
+        "Additional ₱2,000 within 3 months",
+      ],
+    },
+  ];
 
   // Simple password strength estimator
   function getPasswordStrength(pw) {
@@ -47,6 +120,11 @@ export default function Signup({ openLoginModal }) {
 
     if (!firstName.trim() || !middleName.trim() || !lastName.trim()) {
       setErr("First name, middle name, and last name are required.");
+      setBusy(false);
+      return;
+    }
+    if (!memberType) {
+      setErr("Please select your member type.");
       setBusy(false);
       return;
     }
@@ -88,6 +166,8 @@ export default function Signup({ openLoginModal }) {
           firstName: firstName.trim(),
           middleName: middleName.trim(),
           lastName: lastName.trim(),
+          memberType,
+          membershipStatus: "pending", // derived later based on profile completeness and admin verification
           role: "member", // legacy
           roles: ["member"],
           verifiedByAdmin: false,
@@ -107,6 +187,7 @@ export default function Signup({ openLoginModal }) {
           middleName: middleName.trim(),
           lastName: lastName.trim(),
           email: cred.user.email || email.trim(),
+          memberType,
           createdAt: serverTimestamp(),
         },
         { merge: true }
@@ -136,152 +217,117 @@ export default function Signup({ openLoginModal }) {
     }
   }
 
+
   const strengthLabel =
     passwordStrength >= 4 ? "Strong" : passwordStrength === 3 ? "Medium" : "Weak";
 
+
+  // Selected member type details for display
+  const selectedType = memberTypeOptions.find(opt => opt.value === memberType);
+
+  // Render signup form
   return (
-    <PageBackground
-      image={authBg}
-      boxed
-      boxedWidth="max-w-7xl"
-      overlayClass="bg-white/85 backdrop-blur"
-      className="page-gutter"
-    >
-      <div className="max-w-md mx-auto">
-        <div className="card p-6 flex flex-col gap-6">
-          <h2 className="text-xl font-bold mb-4">Create your account</h2>
-
-          {err && (
-            <div className="mb-3 rounded border border-rose-200 bg-rose-50 text-rose-700 px-3 py-2 text-sm">
-              {err}
-            </div>
-          )}
-
-          <form onSubmit={onSubmit} className="grid gap-3">
-            <label className="block">
-              <span className="text-sm">First Name</span>
-              <input
-                className="border rounded px-3 py-2 w-full"
-                value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-                autoComplete="given-name"
-                required
-              />
-            </label>
-            <label className="block">
-              <span className="text-sm">Middle Name</span>
-              <input
-                className="border rounded px-3 py-2 w-full"
-                value={middleName}
-                onChange={(e) => setMiddleName(e.target.value)}
-                autoComplete="additional-name"
-                required
-              />
-            </label>
-            <label className="block">
-              <span className="text-sm">Last Name</span>
-              <input
-                className="border rounded px-3 py-2 w-full"
-                value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
-                autoComplete="family-name"
-                required
-              />
-            </label>
-
-            <label className="block">
-              <span className="text-sm">Email</span>
-              <input
-                className="border rounded px-3 py-2 w-full"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                autoComplete="email"
-                required
-              />
-            </label>
-
-            <label className="block">
-              <span className="text-sm">Password</span>
-              <input
-                className="border rounded px-3 py-2 w-full"
-                type="password"
-                value={password}
-                onChange={handlePasswordChange}
-                autoComplete="new-password"
-                required
-              />
-              <div className="mt-1 text-xs flex items-center gap-2">
-                <span>Password strength:</span>
-                <span
-                  className={
-                    passwordStrength >= 4
-                      ? "text-green-700"
-                      : passwordStrength === 3
-                      ? "text-amber-600"
-                      : "text-rose-600"
-                  }
-                >
-                  {strengthLabel}
-                </span>
-              </div>
-              {/* tiny visual bar */}
-              <div className="mt-1 h-1 bg-gray-200 rounded overflow-hidden">
-                <div
-                  className={
-                    "h-1 transition-all " +
-                    (passwordStrength >= 4
-                      ? "bg-green-600"
-                      : passwordStrength === 3
-                      ? "bg-amber-500"
-                      : "bg-rose-500")
-                  }
-                  style={{ width: `${(passwordStrength / 5) * 100}%` }}
-                />
-              </div>
-            </label>
-
-            <label className="flex items-center gap-2 mt-2">
-              <input
-                type="checkbox"
-                checked={agreed}
-                onChange={(e) => setAgreed(e.target.checked)}
-                required
-              />
-              <span className="text-xs">
-                I agree to the{" "}
-                <a href="/terms" target="_blank" rel="noopener noreferrer" className="underline">
-                  Terms of Service
-                </a>{" "}
-                and{" "}
-                <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline">
-                  Privacy Policy
-                </a>
-                .
-              </span>
-            </label>
-
-            <button
-              type="submit"
-              disabled={busy}
-              className="btn btn-primary disabled:opacity-60 mt-2"
+    <PageBackground image={authBg} boxed boxedWidth="max-w-md" overlayClass="bg-white/90 backdrop-blur">
+      <div className="mx-auto max-w-md w-full p-6 card">
+        <h2 className="text-2xl font-bold mb-4">Sign Up</h2>
+        <form onSubmit={onSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-semibold">Email</label>
+            <input
+              type="email"
+              className="input w-full"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              required
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold">Password</label>
+            <input
+              type="password"
+              className="input w-full"
+              value={password}
+              onChange={handlePasswordChange}
+              required
+            />
+            <div className="text-xs mt-1 text-gray-500">Strength: {strengthLabel}</div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <input
+              className="input"
+              placeholder="First Name"
+              value={firstName}
+              onChange={e => setFirstName(e.target.value)}
+              required
+            />
+            <input
+              className="input"
+              placeholder="Middle Name"
+              value={middleName}
+              onChange={e => setMiddleName(e.target.value)}
+              required
+            />
+            <input
+              className="input"
+              placeholder="Last Name"
+              value={lastName}
+              onChange={e => setLastName(e.target.value)}
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold">Membership Class</label>
+            <select
+              className="input w-full"
+              value={memberType}
+              onChange={e => setMemberType(e.target.value)}
+              required
             >
-              {busy ? "Creating…" : "Sign up"}
-            </button>
-          </form>
-
-          <p className="text-sm text-ink/70 mt-4">
-            Already have an account?{" "}
-            <button
-              type="button"
-              className="underline text-brand-600 hover:text-brand-800"
-              onClick={openLoginModal}
-            >
-              Log in
-            </button>
-          </p>
-        </div>
+              <option value="">— Select class —</option>
+              {memberTypeOptions.map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            {selectedType && (
+              <div className="mt-2 text-sm text-gray-700">
+                <div className="font-semibold mb-1">About:</div>
+                <ul className="list-disc pl-5 space-y-1">
+                  {selectedType.descList.map((item, idx) => (
+                    <li key={idx}>{item}</li>
+                  ))}
+                </ul>
+                <div className="font-semibold mt-3 mb-1">
+                  Requirements (to follow — signup first and complete the requirements later):
+                </div>
+                <ul className="list-disc pl-5 space-y-1">
+                  {selectedType.reqList.map((item, idx) => (
+                    <li key={idx}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+          <label className="inline-flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={agreed}
+              onChange={e => setAgreed(e.target.checked)}
+              required
+            />
+            <span className="text-xs">I agree to the <a href="/RequirementsMembership" className="underline text-brand-700" target="_blank" rel="noopener noreferrer">Membership Requirements</a> and <a href="/privacy" className="underline text-brand-700" target="_blank" rel="noopener noreferrer">Privacy Policy</a>.</span>
+          </label>
+          {err && <div className="text-sm text-rose-600">{err}</div>}
+          <button
+            type="submit"
+            className="btn btn-primary w-full mt-2 disabled:opacity-60"
+            disabled={busy}
+          >
+            {busy ? "Creating account…" : "Sign Up"}
+          </button>
+        </form>
       </div>
     </PageBackground>
   );
 }
+export default Signup;

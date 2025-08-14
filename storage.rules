@@ -1,0 +1,58 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() { return request.auth != null; }
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.admin == true ||
+        exists(/databases/(default)/documents/users/$(request.auth.uid)) && (
+          get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (
+            ('roles' in get(/databases/(default)/documents/users/$(request.auth.uid)).data) &&
+            get(/databases/(default)/documents/users/$(request.auth.uid)).data.roles.hasAny(['admin'])
+          )
+        )
+      );
+    }
+
+    function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
+
+    function isImage(contentType) {
+      return contentType.matches('image/.*');
+    }
+
+    function isPdf(contentType) {
+      return contentType == 'application/pdf';
+    }
+
+    function sizeOk() {
+      return request.resource.size <= 2 * 1024 * 1024; // 2MB
+    }
+
+    // Members-owned files under folder policy
+    match /members/{uid}/{folder}/{filename} {
+      allow read: if isOwner(uid) || isAdmin();
+
+      allow write: if isOwner(uid) && sizeOk() && (
+        (
+          folder == 'profile' && isImage(request.resource.contentType)
+        ) || (
+          folder == 'id' && isImage(request.resource.contentType)
+        ) || (
+          folder == 'paidUpProof' && (isImage(request.resource.contentType) || isPdf(request.resource.contentType))
+        ) || (
+          folder == 'caoCertification' && (isImage(request.resource.contentType) || isPdf(request.resource.contentType))
+        ) || (
+          folder == 'residencyProof' && (isImage(request.resource.contentType) || isPdf(request.resource.contentType))
+        ) || (
+          folder == 'authorizationLetter' && (isImage(request.resource.contentType) || isPdf(request.resource.contentType))
+        )
+      );
+    }
+
+    // Deny everything else
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

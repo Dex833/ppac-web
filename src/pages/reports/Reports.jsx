@@ -39,16 +39,26 @@ function fmtDT(v) {
   return d ? d.toLocaleString() : "—";
 }
 
+function fmtPeriodDate(dateStr) {
+  if (!dateStr || dateStr === "—") return "—";
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  const month = d.toLocaleString("en-US", { month: "short" });
+  const day = String(d.getDate()).padStart(2, "0");
+  const year = d.getFullYear();
+  return `${month}/${day}/${year}`;
+}
+
 function periodLabel(r) {
   if (!r) return "—";
   const L = r.from || "—";
   const R = r.to || "—";
   if (r.type === "balanceSheet") {
     const asof = r.to || r.from || "—";
-    return `as of ${asof}`;
+    return `as of ${fmtPeriodDate(asof)}`;
   }
-  if (L === R) return `as of ${R}`;
-  return `${L} → ${R}`;
+  if (L === R) return `as of ${fmtPeriodDate(R)}`;
+  return `${fmtPeriodDate(L)} - ${fmtPeriodDate(R)}`;
 }
 
 function TypeBadge({ t }) {
@@ -85,7 +95,7 @@ export default function Reports() {
 
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
-  const [sortKey, setSortKey] = useState("createdAt"); // createdAt | label | type | period
+  const [sortKey, setSortKey] = useState("createdAt");
   const [sortDir, setSortDir] = useState("desc");
 
   useEffect(() => {
@@ -116,9 +126,7 @@ export default function Reports() {
       .filter((r) => (typeFilter ? r.type === typeFilter : true))
       .filter((r) => {
         if (!s) return true;
-        const hay = `${r.label || ""} ${r.type || ""} ${periodLabel(r)} ${
-          r.createdByName || ""
-        } ${r.createdById || ""}`.toLowerCase();
+        const hay = `${r.label || ""} ${r.type || ""} ${periodLabel(r)}`.toLowerCase();
         return hay.includes(s);
       });
   }, [rows, search, typeFilter]);
@@ -141,7 +149,6 @@ export default function Reports() {
           vb = periodLabel(b);
           break;
         default:
-          // createdAt
           va = tsToDate(a.createdAt)?.getTime() || 0;
           vb = tsToDate(b.createdAt)?.getTime() || 0;
       }
@@ -257,7 +264,6 @@ export default function Reports() {
               >
                 Period {sortKey === "period" ? (sortDir === "asc" ? "▲" : "▼") : ""}
               </th>
-              <th className="text-left p-2 border-b border-r">Created By</th>
               <th
                 className="text-left p-2 border-b cursor-pointer select-none"
                 onClick={() => toggleSort("createdAt")}
@@ -282,12 +288,6 @@ export default function Reports() {
                 <td className="p-2 border-b border-r font-mono">
                   {periodLabel(r)}
                 </td>
-                <td className="p-2 border-b border-r">
-                  <div className="text-sm">{r.createdByName || "—"}</div>
-                  {r.createdById && (
-                    <div className="text-xs text-ink/50">{r.createdById}</div>
-                  )}
-                </td>
                 <td className="p-2 border-b font-mono">{fmtDT(r.createdAt)}</td>
                 <td className="p-2 border-b">
                   <div className="flex gap-2">
@@ -308,14 +308,14 @@ export default function Reports() {
             ))}
             {!loading && sorted.length === 0 && (
               <tr>
-                <td colSpan={6} className="p-4 text-center text-ink/60">
+                <td colSpan={5} className="p-4 text-center text-ink/60">
                   No reports found for the current filters.
                 </td>
               </tr>
             )}
             {loading && (
               <tr>
-                <td colSpan={6} className="p-4 text-center">
+                <td colSpan={5} className="p-4 text-center">
                   Loading…
                 </td>
               </tr>
@@ -334,9 +334,6 @@ export default function Reports() {
             </div>
             <div className="mt-1 text-xs text-ink/60">
               Period: <span className="font-mono">{periodLabel(r)}</span>
-            </div>
-            <div className="mt-1 text-xs text-ink/60">
-              By: {r.createdByName || "—"}
             </div>
             <div className="mt-1 text-xs text-ink/60">
               Created: <span className="font-mono">{fmtDT(r.createdAt)}</span>

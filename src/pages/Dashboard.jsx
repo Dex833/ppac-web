@@ -257,6 +257,13 @@ export default function Dashboard() {
     ? [member.firstName, member.middleName, member.lastName].filter(Boolean).join(" ")
     : "";
 
+  // Membership status display: prefer users/{uid}.membershipStatus (admin can set "full")
+  const derivedStatus = memberComplete ? "validating" : "pending";
+  const membershipStatus =
+    typeof profile?.membershipStatus === "string" && profile.membershipStatus
+      ? profile.membershipStatus
+      : derivedStatus;
+
   /* ---------------- layout ---------------- */
   return (
     <PageBackground
@@ -371,9 +378,33 @@ export default function Dashboard() {
                 <dt className="text-xs uppercase tracking-wide text-ink/50">Email</dt>
                 <dd className="text-sm">{emailToShow}</dd>
               </div>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <div className="flex-1">
+                  <dt className="text-xs uppercase tracking-wide text-ink/50">Role</dt>
+                  <dd className="text-sm">{profile?.role || "member"}</dd>
+                </div>
+                {profile?.memberType && (
+                  <div className="flex-1">
+                    <dt className="text-xs uppercase tracking-wide text-ink/50">Membership Class</dt>
+                    <dd className="text-sm">{profile.memberType}</dd>
+                  </div>
+                )}
+              </div>
               <div>
-                <dt className="text-xs uppercase tracking-wide text-ink/50">Role</dt>
-                <dd className="text-sm">{profile?.role || "member"}</dd>
+                <dt className="text-xs uppercase tracking-wide text-ink/50">membership status:</dt>
+                <dd className="text-sm">
+                  <span
+                    className={`inline-block rounded px-2 py-0.5 border text-xs ${
+                      membershipStatus === "pending"
+                        ? "bg-amber-50 border-amber-200 text-amber-800"
+                        : membershipStatus === "validating"
+                        ? "bg-blue-50 border-blue-200 text-blue-800"
+                        : "bg-emerald-50 border-emerald-200 text-emerald-800"
+                    }`}
+                  >
+                    {membershipStatus}
+                  </span>
+                </dd>
               </div>
               <div>
                 <dt className="text-xs uppercase tracking-wide text-ink/50">Phone</dt>

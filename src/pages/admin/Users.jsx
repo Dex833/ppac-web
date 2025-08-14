@@ -292,6 +292,7 @@ export default function Users() {
               <th className="text-left p-2 border-b">Name</th>
               <th className="text-left p-2 border-b">Member ID</th>
               <th className="text-left p-2 border-b">Role</th>
+              <th className="text-left p-2 border-b">Membership Class</th>
               <th className="text-left p-2 border-b">Suspended</th>
               <th className="text-left p-2 border-b">Admin Verified</th>
               <th className="text-left p-2 border-b">Actions</th>
@@ -317,6 +318,7 @@ export default function Users() {
                   <td className="p-2 border-b">{u.displayName || "—"}</td>
                   <td className="p-2 border-b">{u.memberId || "—"}</td>
 
+
                   {/* Role: single-select dropdown */}
                   <td className="p-2 border-b">
                     <select
@@ -329,6 +331,43 @@ export default function Users() {
                       {roleOptions.map((r) => (
                         <option key={r} value={r}>{r}</option>
                       ))}
+                    </select>
+                  </td>
+
+                  {/* Membership Class: single-select dropdown */}
+                  <td className="p-2 border-b">
+                    <select
+                      className="border rounded px-2 py-1"
+                      value={u.memberType || ""}
+                      disabled={busy}
+                      onChange={async (e) => {
+                        const value = e.target.value;
+                        setSaving((s) => ({ ...s, [u.id]: true }));
+                        const prev = rows;
+                        setRows((rs) => rs.map((r) => (r.id === u.id ? { ...r, memberType: value } : r)));
+                        try {
+                          await updateDoc(doc(db, "users", u.id), {
+                            memberType: value,
+                            updatedAt: serverTimestamp(),
+                          });
+                          showToast("Membership class updated");
+                        } catch (e) {
+                          console.error(e);
+                          setRows(prev);
+                          showToast("Failed to update membership class", "error");
+                        } finally {
+                          setSaving((s) => {
+                            const { [u.id]: _, ...rest } = s;
+                            return rest;
+                          });
+                        }
+                      }}
+                    >
+                      <option value="">— Select class —</option>
+                      <option value="farmer">Farmer</option>
+                      <option value="consumer">Consumer</option>
+                      <option value="associate">Associate</option>
+                      <option value="institution">Institution</option>
                     </select>
                   </td>
 

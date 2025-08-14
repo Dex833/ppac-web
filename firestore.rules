@@ -52,9 +52,10 @@ service cloud.firestore {
 
     // Detailed member profile (self-managed)
     match /members/{uid} {
-      allow create: if isSignedIn() && request.auth.uid == uid;
-      allow update: if isSignedIn() && request.auth.uid == uid;
-      allow get:    if isSignedIn() && (request.auth.uid == uid || isAdmin());
+  allow create: if isSignedIn() && request.auth.uid == uid;
+  // Allow owner to update their own profile; admins can also update (e.g., set membershipStatus)
+  allow update: if (isSignedIn() && request.auth.uid == uid) || isAdmin();
+  allow get:    if isSignedIn() && (request.auth.uid == uid || isAdmin());
       allow list:   if isAdmin();
       allow delete: if isAdmin();
     }

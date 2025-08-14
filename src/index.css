@@ -18,12 +18,13 @@
   border-radius: 999px;
 }
 
-/* Better spacing for tap targets on small screens */
-.touch-gap > * { margin-bottom: .5rem; }
+
 @import "./styles/responsive.css";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+/* Better spacing for tap targets on small screens */
+.touch-gap > * { margin-bottom: .5rem; }
 
 /* Base (global) */
 @layer base {

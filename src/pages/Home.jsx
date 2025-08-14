@@ -126,7 +126,7 @@ export default function Home() {
               >
                 What You Have
               </button>
-              <button className="btn btn-primary">Report</button>
+              <Link to="/reports" className="btn btn-primary">Reports</Link>
             </div>
           ) : (
             <div className="flex flex-col sm:flex-row items-center gap-2 mt-2">
