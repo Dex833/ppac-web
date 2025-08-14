@@ -145,6 +145,7 @@ import { useAuth } from "./AuthContext";
 import useUserProfile from "./hooks/useUserProfile";
 
 import ProtectedRoute from "./components/ProtectedRoute.jsx";
+import RequireFullMemberOrRole from "./components/RequireFullMemberOrRole.jsx";
 import GuestRoute from "./components/GuestRoute.jsx";
 import RequireRole from "./components/RequireRole.jsx";
 import LoginModal from "./components/LoginModal.jsx";
@@ -258,7 +259,7 @@ export default function App() {
             )}
             <NavItem to="/dashboard">Dashboard</NavItem>
 
-            {/* NEW: Reports (signed-in, not suspended) */}
+            {/* Reports tab visible to any signed-in not-suspended member; access enforced inside route */}
             {profile && notSuspended && <NavItem to="/reports">Reports</NavItem>}
 
             {isAdmin && notSuspended && <NavItem to="/admin/users">Admin</NavItem>}
@@ -375,14 +376,16 @@ export default function App() {
             }
           />
 
-          {/* NEW: Reports (read-only for signed-in users) */}
+          {/* NEW: Reports (full members only, except admin + treasurer always allowed) */}
           <Route
             path="/reports"
             element={
               <ProtectedRoute>
-                <Suspense fallback={<div className="p-6">Loading…</div>}>
-                  <Reports />
-                </Suspense>
+                <RequireFullMemberOrRole rolesAllowed={["admin", "treasurer"]}>
+                  <Suspense fallback={<div className="p-6">Loading…</div>}>
+                    <Reports />
+                  </Suspense>
+                </RequireFullMemberOrRole>
               </ProtectedRoute>
             }
           />
@@ -390,9 +393,11 @@ export default function App() {
             path="/reports/:id"
             element={
               <ProtectedRoute>
-                <Suspense fallback={<div className="p-6">Loading…</div>}>
-                  <ReportView />
-                </Suspense>
+                <RequireFullMemberOrRole rolesAllowed={["admin", "treasurer"]}>
+                  <Suspense fallback={<div className="p-6">Loading…</div>}>
+                    <ReportView />
+                  </Suspense>
+                </RequireFullMemberOrRole>
               </ProtectedRoute>
             }
           />
