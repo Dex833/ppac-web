@@ -10,11 +10,14 @@ import {
   onSnapshot,
   deleteDoc,
   doc,
+  addDoc,
+  serverTimestamp,
 } from "firebase/firestore";
 import useUserProfile from "../../../hooks/useUserProfile";
 import { saveFinancialSnapshot } from "../../reports/saveSnapshot";
 import IncomeStatementChart from "./IncomeStatementChart";
 import jsPDF from "jspdf";
+import { useNavigate } from "react-router-dom";
 
 /* -------------------- date helpers -------------------- */
 function parseYMD(ymd) {
@@ -91,6 +94,7 @@ function sumForAccount(acc, filteredEntries) {
 
 export default function IncomeStatement() {
   const accounts = useAccounts();
+  const nav = useNavigate();
 
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -103,6 +107,7 @@ export default function IncomeStatement() {
   const [generating, setGenerating] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [printing, setPrinting] = useState(false);
+  const [saving, setSaving] = useState(false); // Save to Reports (HTML snapshot)
 
   const { profile } = useUserProfile();
   const isAdmin = profile?.roles?.includes("admin") || profile?.role === "admin";
@@ -112,6 +117,7 @@ export default function IncomeStatement() {
   const userName = profile?.displayName || profile?.email || "Unknown";
   const userId = profile?.uid || "";
   const notesRef = useRef();
+  const viewRef = useRef(null); // content we snapshot into payload.html
 
   /* ---- load journal entries ---- */
   useEffect(() => {
@@ -245,6 +251,50 @@ export default function IncomeStatement() {
       window.print();
       setPrinting(false);
     }, 50);
+  }
+
+  /* -------------------- snapshot -> financialReports (payload.html) -------------------- */
+  function buildSnapshotHTML(title, reportObj) {
+    return `<!doctype html><meta charset="utf-8" />
+    <style>
+      body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial}
+      table{border-collapse:collapse;width:100%}
+      th,td{border:1px solid #e5e7eb;padding:6px 8px;font-size:12px}
+      th{background:#f9fafb;text-align:left}
+      .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+    </style>
+    <h1>${title}</h1>
+    <div>Period: ${formatRange(reportObj.from, reportObj.to)}</div>
+    <div style="margin-top:10px">${viewRef.current ? viewRef.current.innerHTML : ""}</div>`;
+  }
+
+  async function handleSaveToReports(reportObj) {
+    if (!viewRef.current) return;
+    setSaving(true);
+    try {
+      const html = buildSnapshotHTML("Income Statement", reportObj);
+      const ref = await addDoc(collection(db, "financialReports"), {
+        type: "incomeStatement", // periodic type
+        status: "generated",
+        label:
+          reportObj.from || reportObj.to
+            ? `Income Statement (${reportObj.from || "—"} – ${reportObj.to || "—"})`
+            : "Income Statement",
+        periodStart: reportObj.from || null,
+        periodEnd: reportObj.to || null,
+        createdAt: serverTimestamp(),
+        createdByName: userName,
+        createdById: userId,
+        payload: { html }, // viewer reads this
+      });
+      alert("Saved to Reports ✅");
+      nav(`/reports/${ref.id}`);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to save: " + (e?.message || e));
+    } finally {
+      setSaving(false);
+    }
   }
 
   /* -------------------- exports -------------------- */
@@ -515,14 +565,14 @@ export default function IncomeStatement() {
   /* -------------------- report renderer -------------------- */
   const renderReport = (reportObj) => {
     const revs = reportObj.report.revenues || [];
-    const cogs = reportObj.report.cogs || [];
+    const cogsList = reportObj.report.cogs || [];
     const exps = reportObj.report.expenses || [];
 
-    const totalRevenue = reportObj.report.totalRevenue ?? revs.reduce((s,a)=>s+a.amount,0);
-    const totalCOGS = reportObj.report.totalCOGS ?? cogs.reduce((s,a)=>s+a.amount,0);
-    const grossProfit = reportObj.report.grossProfit ?? (totalRevenue - totalCOGS);
-    const totalExpense = reportObj.report.totalExpense ?? exps.reduce((s,a)=>s+a.amount,0);
-    const netIncome = reportObj.report.netIncome ?? (grossProfit - totalExpense);
+    const totalRevenueR = reportObj.report.totalRevenue ?? revs.reduce((s,a)=>s+a.amount,0);
+    const totalCOGSR = reportObj.report.totalCOGS ?? cogsList.reduce((s,a)=>s+a.amount,0);
+    const grossProfitR = reportObj.report.grossProfit ?? (totalRevenueR - totalCOGSR);
+    const totalExpenseR = reportObj.report.totalExpense ?? exps.reduce((s,a)=>s+a.amount,0);
+    const netIncomeR = reportObj.report.netIncome ?? (grossProfitR - totalExpenseR);
 
     // mobile section renderer
     const SectionMobile = ({ title, items }) => (
@@ -565,260 +615,267 @@ export default function IncomeStatement() {
           <button className="btn btn-outline" onClick={handlePrint}>
             Print
           </button>
+          <button
+            className="btn btn-primary disabled:opacity-60"
+            onClick={() => handleSaveToReports(reportObj)}
+            disabled={saving}
+            title="Save a read-only snapshot to Reports"
+          >
+            {saving ? "Saving…" : "Save to Reports"}
+          </button>
         </div>
 
-        {/* Desktop table */}
-        <div className="hidden sm:block overflow-x-auto">
-          <table className="min-w-full border border-gray-300 rounded text-sm mb-6">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="text-left p-2 border-b border-r border-gray-200">Account</th>
-                <th className="text-right p-2 border-b">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {/* Revenues */}
-              <tr><td colSpan={2} className="font-bold p-2">Revenues</td></tr>
-              {revs.map((acc, i) => (
-                <tr key={acc.code + i}
-                    className="hover:bg-blue-50 cursor-pointer"
-                    onClick={() => openDrilldown(acc, { from: reportObj.from, to: reportObj.to })}
-                >
-                  <td className="p-2 border-b border-r border-gray-200">{acc.code} - {acc.name}</td>
-                  <td className="p-2 border-b text-right">
-                    {Number(acc.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </td>
+        {/* === CONTENT TO SNAPSHOT === */}
+        <div ref={viewRef}>
+          {/* Desktop table */}
+          <div className="hidden sm:block overflow-x-auto">
+            <table className="min-w-full border border-gray-300 rounded text-sm mb-6">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="text-left p-2 border-b border-r border-gray-200">Account</th>
+                  <th className="text-right p-2 border-b">Amount</th>
                 </tr>
-              ))}
-              <tr className="font-semibold">
-                <td className="p-2 border-t border-r border-gray-200 text-right">Total Revenue</td>
-                <td className="p-2 border-t text-right">
-                  {Number(totalRevenue).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </td>
-              </tr>
-
-              {/* COGS */}
-              {cogs.length > 0 && <tr><td colSpan={2} className="font-bold p-2">Less: Cost of Goods Sold (COGS)</td></tr>}
-              {cogs.map((acc, i) => (
-                <tr key={acc.code + i}
-                    className="hover:bg-blue-50 cursor-pointer"
-                    onClick={() => openDrilldown(acc, { from: reportObj.from, to: reportObj.to })}
-                >
-                  <td className="p-2 border-b border-r border-gray-200">{acc.code} - {acc.name}</td>
-                  <td className="p-2 border-b text-right">
-                    {Number(acc.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </td>
-                </tr>
-              ))}
-              {cogs.length > 0 && (
-                <tr className="font-semibold">
-                  <td className="p-2 border-t border-r border-gray-200 text-right">Total COGS</td>
+              </thead>
+              <tbody>
+                {/* Revenues */}
+                <tr><td colSpan={2} className="font-bold p-2">Revenues</td></tr>
+                {revs.map((acc, i) => (
+                  <tr key={acc.code + i} className="odd:bg-white even:bg-gray-50">
+                    <td className="p-2 border-b border-r border-gray-200">
+                      {acc.code} - {acc.name}
+                    </td>
+                    <td className="p-2 border-b text-right">
+                      {Number(acc.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                  </tr>
+                ))}
+                <tr className="font-bold bg-gray-100">
+                  <td className="p-2 border-t border-r border-gray-200 text-right">Total Revenue</td>
                   <td className="p-2 border-t text-right">
-                    {Number(totalCOGS).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {Number(totalRevenueR).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                 </tr>
-              )}
 
-              {/* Gross Profit */}
-              <tr className="font-bold bg-gray-50">
-                <td className="p-2 border-t border-r border-gray-200 text-right">Gross Profit</td>
-                <td className="p-2 border-t text-right">
-                  {Number(grossProfit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </td>
-              </tr>
+                {/* COGS */}
+                {cogsList.length > 0 && (
+                  <>
+                    <tr><td colSpan={2} className="font-bold p-2">Less: Cost of Goods Sold (COGS)</td></tr>
+                    {cogsList.map((acc, i) => (
+                      <tr key={acc.code + i} className="odd:bg-white even:bg-gray-50">
+                        <td className="p-2 border-b border-r border-gray-200">
+                          {acc.code} - {acc.name}
+                        </td>
+                        <td className="p-2 border-b text-right">
+                          {Number(acc.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr className="font-bold bg-gray-100">
+                      <td className="p-2 border-t border-r border-gray-200 text-right">Total COGS</td>
+                      <td className="p-2 border-t text-right">
+                        {Number(totalCOGSR).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                    <tr className="font-bold bg-gray-100">
+                      <td className="p-2 border-t border-r border-gray-200 text-right">Gross Profit</td>
+                      <td className="p-2 border-t text-right">
+                        {Number(grossProfitR).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                  </>
+                )}
 
-              {/* Expenses */}
-              <tr><td colSpan={2} className="font-bold p-2">Expenses</td></tr>
-              {exps.map((acc, i) => (
-                <tr key={acc.code + i}
-                    className="hover:bg-blue-50 cursor-pointer"
-                    onClick={() => openDrilldown(acc, { from: reportObj.from, to: reportObj.to })}
-                >
-                  <td className="p-2 border-b border-r border-gray-200">{acc.code} - {acc.name}</td>
-                  <td className="p-2 border-b text-right">
-                    {Number(acc.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {/* Expenses */}
+                <tr><td colSpan={2} className="font-bold p-2">Expenses</td></tr>
+                {exps.map((acc, i) => (
+                  <tr key={acc.code + i} className="odd:bg-white even:bg-gray-50">
+                    <td className="p-2 border-b border-r border-gray-200">
+                      {acc.code} - {acc.name}
+                    </td>
+                    <td className="p-2 border-b text-right">
+                      {Number(acc.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </td>
+                  </tr>
+                ))}
+                <tr className="font-bold bg-gray-100">
+                  <td className="p-2 border-t border-r border-gray-200 text-right">Total Expenses</td>
+                  <td className="p-2 border-t text-right">
+                    {Number(totalExpenseR).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
                 </tr>
-              ))}
-              <tr className="font-semibold">
-                <td className="p-2 border-t border-r border-gray-200 text-right">Total Expenses</td>
-                <td className="p-2 border-t text-right">
-                  {Number(totalExpense).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </td>
-              </tr>
 
-              {/* Net Income */}
-              <tr className="font-bold bg-gray-100">
-                <td className="p-2 border-t border-r border-gray-200 text-right">Net Income</td>
-                <td className="p-2 border-t text-right">
-                  {Number(netIncome).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        {/* Mobile cards */}
-        <div className="sm:hidden">
-          <SectionMobile title="Revenues" items={revs} />
-          <div className="mt-2 text-right font-semibold">Total Revenue:{" "}
-            <span className="font-mono">
-              {Number(totalRevenue).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
-            </span>
+                {/* Net Income */}
+                <tr className="font-bold bg-gray-100">
+                  <td className="p-2 border-t border-r border-gray-200 text-right">Net Income</td>
+                  <td className="p-2 border-t text-right">
+                    {Number(netIncomeR).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
 
-          {cogs.length > 0 && (
-            <>
-              <SectionMobile title="Less: Cost of Goods Sold (COGS)" items={cogs} />
-              <div className="mt-2 text-right font-semibold">Total COGS:{" "}
-                <span className="font-mono">
-                  {Number(totalCOGS).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
-                </span>
+          {/* Mobile sections/cards */}
+          <div className="sm:hidden">
+            <SectionMobile title="Revenues" items={revs} />
+            {cogsList.length > 0 && <SectionMobile title="COGS" items={cogsList} />}
+            <SectionMobile title="Expenses" items={exps} />
+
+            <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+              <div className="card p-2 flex items-center justify-between">
+                <span>Total Revenue</span>
+                <span className="font-mono">{totalRevenueR.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
               </div>
-            </>
-          )}
-
-          <div className="mt-3 py-2 px-3 bg-gray-50 rounded font-bold flex justify-between">
-            <span>Gross Profit</span>
-            <span className="font-mono">
-              {Number(grossProfit).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
-            </span>
+              {cogsList.length > 0 && (
+                <>
+                  <div className="card p-2 flex items-center justify-between">
+                    <span>Total COGS</span>
+                    <span className="font-mono">{totalCOGSR.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+                  </div>
+                  <div className="card p-2 flex items-center justify-between">
+                    <span>Gross Profit</span>
+                    <span className="font-mono">{grossProfitR.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+                  </div>
+                </>
+              )}
+              <div className="card p-2 flex items-center justify-between">
+                <span>Total Expenses</span>
+                <span className="font-mono">{totalExpenseR.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+              </div>
+              <div className="card p-2 flex items-center justify-between font-semibold">
+                <span>Net Income</span>
+                <span className="font-mono">{netIncomeR.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+              </div>
+            </div>
           </div>
 
-          <SectionMobile title="Expenses" items={exps} />
-          <div className="mt-2 text-right font-semibold">Total Expenses:{" "}
-            <span className="font-mono">
-              {Number(totalExpense).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
-            </span>
-          </div>
-
-          <div className="mt-3 py-2 px-3 bg-gray-100 rounded font-bold flex justify-between">
-            <span>Net Income</span>
-            <span className="font-mono">
-              {Number(netIncome).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
-            </span>
+          {/* Optional chart (include inside snapshot if desired) */}
+          <div className="mt-4">
+            <IncomeStatementChart
+              totalRevenue={totalRevenueR}
+              totalCOGS={totalCOGSR}
+              totalExpense={totalExpenseR}
+              netIncome={netIncomeR}
+            />
           </div>
         </div>
-
-        {reportObj.report.notes && (
-          <div className="bg-yellow-50 border-l-4 border-yellow-400 p-3 my-3 text-sm text-yellow-900">
-            <div className="font-semibold mb-1">Notes:</div>
-            <div>{reportObj.report.notes}</div>
-          </div>
-        )}
-
-        <div className="mt-4 card p-3 overflow-x-auto">
-          <IncomeStatementChart revenues={revs} expenses={exps} />
-        </div>
+        {/* === /CONTENT TO SNAPSHOT === */}
       </>
     );
   };
 
-  /* -------------------- render -------------------- */
-  const activeReportObj = showReport
-    ? showReport
-    : {
-        from,
-        to,
-        report: {
-          revenues,
-          cogs,
-          expenses,
-          totalRevenue,
-          totalCOGS,
-          grossProfit,
-          totalExpense,
-          netIncome,
-          notes,
-          generatedBy: userName,
-          generatedById: userId,
-          generatedAt: new Date().toISOString(),
-        },
-      };
+  /* -------------------- page layout -------------------- */
+  const currentReportObj = {
+    from,
+    to,
+    report: {
+      revenues,
+      cogs,
+      expenses,
+      totalRevenue,
+      totalCOGS,
+      grossProfit,
+      totalExpense,
+      netIncome,
+      notes,
+      generatedBy: userName,
+      generatedById: userId,
+      generatedAt: new Date().toISOString(),
+    },
+  };
 
   return (
-    <div className={`flex flex-col lg:flex-row gap-6 lg:gap-8 ${printing ? " print:block" : ""}`}>
-      {renderDrilldown()}
-
-      {/* Main */}
-      <div className="flex-1 min-w-0">
-        <h3 className="text-xl font-semibold mb-3">Income Statement</h3>
-
-        {/* Filters row -> responsive grid */}
-        <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 items-end">
-          <label className="block">
-            <span className="block text-sm font-medium">From</span>
-            <input type="date" className="input px-2 py-2" value={from} onChange={(e) => setFrom(e.target.value)} />
-          </label>
-          <label className="block">
-            <span className="block text-sm font-medium">To</span>
-            <input type="date" className="input px-2 py-2" value={to} onChange={(e) => setTo(e.target.value)} />
-          </label>
-          <div className="flex gap-2 sm:col-span-2 lg:col-span-2">
-            <button
-              className="btn btn-primary flex-1"
-              onClick={handleGenerate}
-              disabled={generating || loading}
-            >
-              {generating ? "Generating..." : "Generate & Save"}
-            </button>
-            {showReport && (
-              <button className="btn btn-outline" onClick={handleBackToCurrent}>
-                Back to Current
-              </button>
-            )}
-          </div>
-        </div>
-
-        {!showReport && (
-          <div className="mb-4">
-            <label className="block text-sm font-medium mb-1">Notes (optional)</label>
-            <textarea
-              ref={notesRef}
-              className="border rounded px-3 py-2 w-full min-h-[44px]"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Add notes for this report (e.g. explanations, context, etc.)"
-              maxLength={500}
-            />
-          </div>
-        )}
-
-        {loading ? <div>Loading…</div> : renderReport(activeReportObj)}
+    <div className="page-gutter">
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-2xl font-bold">Income Statement</h1>
+        <div className="text-sm text-ink/60">{loading ? "Loading…" : `${entries.length} entry(ies)`}</div>
       </div>
 
-      {/* Sidebar (Recent Reports - unified) */}
-      <aside className="w-full lg:w-80 shrink-0">
-        <h4 className="text-lg font-semibold mb-2">Recent Reports</h4>
-        <ul className="space-y-2">
-          {recentReports.map((r) => (
-            <li key={r.id} className="flex items-center justify-between border border-gray-200 rounded px-3 py-2">
-              <button
-                className="text-left truncate"
-                onClick={() => handleShowReport(r)}
-                title={formatRange(r.from, r.to)}
-              >
-                {formatRange(r.from, r.to)}
-              </button>
+      {/* Controls */}
+      <div className="card p-3 mb-4">
+        <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+          <label className="text-xs text-ink/60 flex flex-col">
+            From
+            <input type="date" className="border rounded px-2 py-1" value={from} onChange={(e)=>setFrom(e.target.value)} />
+          </label>
+          <label className="text-xs text-ink/60 flex flex-col">
+            To
+            <input type="date" className="border rounded px-2 py-1" value={to} onChange={(e)=>setTo(e.target.value)} />
+          </label>
+          <label className="text-xs text-ink/60 flex-1 flex flex-col">
+            Notes
+            <input ref={notesRef} className="border rounded px-2 py-1" placeholder="Optional note…" value={notes} onChange={(e)=>setNotes(e.target.value)} />
+          </label>
+          <button className="btn btn-primary disabled:opacity-60" onClick={handleGenerate} disabled={generating}>
+            {generating ? "Saving…" : "Save (structured)"}
+          </button>
+        </div>
+      </div>
 
+      {/* Current or Saved report */}
+      {showReport ? (
+        <div className="mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-sm text-ink/60">
+              Viewing saved report • Period: {formatRange(showReport.from, showReport.to)}
+            </div>
+            <div className="flex gap-2">
+              <button className="btn btn-outline" onClick={handleBackToCurrent}>Back to current</button>
               {canDeleteReports && (
-                <button
-                  className="ml-2 px-2 py-1 rounded bg-red-100 hover:bg-red-200 text-red-800 text-xs font-semibold"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDeleteReport(r.id);
-                  }}
-                >
+                <button className="btn btn-danger" onClick={() => handleDeleteReport(showReport.id)}>
                   Delete
                 </button>
               )}
-            </li>
-          ))}
-          {recentReports.length === 0 && (
-            <li className="text-sm text-gray-500">No saved reports yet.</li>
-          )}
-        </ul>
-      </aside>
+            </div>
+          </div>
+          {renderReport(showReport)}
+        </div>
+      ) : (
+        <div className="mb-4">{renderReport(currentReportObj)}</div>
+      )}
+
+      {/* Recent saved reports list (structured) */}
+      <div className="card p-3">
+        <div className="font-semibold mb-2">Recent saved (structured) reports</div>
+        {recentReports.length === 0 ? (
+          <div className="text-sm text-ink/60">No saved reports yet.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="text-left p-2 border-b border-r">Label</th>
+                  <th className="text-left p-2 border-b border-r">Period</th>
+                  <th className="text-left p-2 border-b">Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentReports.map((r) => (
+                  <tr key={r.id} className="odd:bg-white even:bg-gray-50">
+                    <td className="p-2 border-b border-r">{r.label || "Income Statement"}</td>
+                    <td className="p-2 border-b border-r">
+                      {formatRange(r.periodStart || r.from, r.periodEnd || r.to)}
+                    </td>
+                    <td className="p-2 border-b">{r.createdAt?.seconds ? new Date(r.createdAt.seconds*1000).toLocaleString() : "—"}</td>
+                    <td className="p-2 border-b">
+                      <button className="btn btn-outline" onClick={() => handleShowReport({
+                        id: r.id,
+                        from: r.periodStart || r.from || "",
+                        to: r.periodEnd || r.to || "",
+                        report: r.report || {} })}
+                      >
+                        Open
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {renderDrilldown()}
     </div>
   );
 }
