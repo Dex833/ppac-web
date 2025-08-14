@@ -1,3 +1,4 @@
+// src/components/RebuildTrialBalanceButton.jsx
 import React, { useState } from "react";
 import { db } from "../lib/firebase";
 import {
@@ -10,7 +11,11 @@ import {
   setDoc,
   where,
 } from "firebase/firestore";
-import { endOfDayIso, normalizeToDate, buildTrialBalanceRows } from "../lib/bookkeeping";
+import {
+  endOfDayIso,
+  normalizeToDate,
+  buildTrialBalanceRows,
+} from "../lib/bookkeeping";
 import useUserProfile from "../hooks/useUserProfile";
 
 export default function RebuildTrialBalanceButton() {
@@ -31,73 +36,87 @@ export default function RebuildTrialBalanceButton() {
       setBusy(true);
       setMsg("");
 
-      // 1) Read period from financialReports/auto_TB
+      // 1) Read daily TB period (strings "YYYY-MM-DD")
       const tbRef = doc(db, "financialReports", "auto_TB");
       const tbSnap = await getDoc(tbRef);
-      if (!tbSnap.exists()) {
-        throw new Error("auto_TB not found. Create it first in Firestore.");
-      }
+      if (!tbSnap.exists()) throw new Error("auto_TB not found.");
       const tb = tbSnap.data();
-      const periodStart = tb.periodStart || tb.from;
+      const periodStart = tb.periodStart || tb.from; // may be undefined (open-begin)
       const periodEnd = tb.periodEnd || tb.to;
       if (!periodEnd) throw new Error("auto_TB missing periodEnd/to.");
 
-      // 2) Build accounts lookup (optional, for names/codes)
+      const SOD = periodStart ? normalizeToDate(periodStart) : null;
+      const EOD = new Date(endOfDayIso(periodEnd));
+
+      // 2) Accounts lookup (for code/name)
       const accSnap = await getDocs(query(collection(db, "accounts"), orderBy("code")));
       const accountsById = new Map(
         accSnap.docs.map((d) => [d.id, { id: d.id, ...d.data() }])
       );
 
-      // 3) Query journals up to end-of-day (supports string or Timestamp date fields)
-      // Try both strategies so we’re safe:
-
-      // Strategy A: if your journals.date is a string "YYYY-MM-DD"
-      const qStr = query(
-        collection(db, "journals"),
-        where("date", "<=", periodEnd) // string compare works for YYYY-MM-DD
-      );
-
-      // Strategy B: if your journals.date is a Timestamp -> use a separate query fallback
-      // we'll pull all and filter in memory by normalized date, to avoid composite index surprises
-      const jSnap = await getDocs(qStr);
-      let journals = jSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-
-      // If too few journals (maybe date is Timestamp), fetch all (bounded order) and filter locally
-      if (journals.length === 0) {
-        const allSnap = await getDocs(query(collection(db, "journals"), orderBy("date", "asc")));
-        const EOD = new Date(endOfDayIso(periodEnd));
-        journals = allSnap.docs
-          .map((d) => ({ id: d.id, ...d.data() }))
-          .filter((j) => {
-            const jd = normalizeToDate(j.date);
-            return jd && jd.getTime() <= EOD.getTime();
-          });
+      // 3) Fetch journalEntries by string date
+      const col = collection(db, "journalEntries");
+      let jSnap;
+      try {
+        // Works lexicographically for "YYYY-MM-DD"
+        jSnap = await getDocs(
+          query(
+            col,
+            where("date", ">=", periodStart || "0000-01-01"),
+            where("date", "<=", periodEnd)
+          )
+        );
+      } catch {
+        jSnap = null;
       }
 
-      // 4) Aggregate into TB rows/totals
+      let journals = jSnap ? jSnap.docs.map((d) => ({ id: d.id, ...d.data() })) : [];
+
+      if (journals.length === 0) {
+        // Range query may need an index — fall back to order + filter locally
+        let all = [];
+        try {
+          const snap = await getDocs(query(col, orderBy("date", "asc")));
+          all = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        } catch {
+          // Final fallback (small datasets)
+          const snap = await getDocs(col);
+          all = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        }
+        journals = all.filter((j) => {
+          const d = j?.date || ""; // "YYYY-MM-DD"
+          if (periodStart && d < periodStart) return false;
+          if (periodEnd && d > periodEnd) return false;
+          return true;
+        });
+      }
+
+      // 4) Aggregate → TB
       const { rows, totals } = buildTrialBalanceRows(journals, accountsById);
 
-      // 5) Save back to auto_TB.payload
+      // 5) Save to auto_TB.payload
       await setDoc(
         tbRef,
-        {
-          type: "trial_balance",
-          // keep existing meta/period fields as-is, just overwrite payload
-          payload: {
-            rows,
-            totals,
-          },
-        },
+        { type: "trial_balance", payload: { rows, totals } },
         { merge: true }
       );
 
-      setMsg(`Trial Balance rebuilt. ${rows.length} account(s), totals D=${totals.debit.toFixed(2)} C=${totals.credit.toFixed(2)}`);
+      setMsg(
+        `Trial Balance rebuilt. ${rows.length} account(s), totals D=${fmt(
+          totals.debit
+        )} C=${fmt(totals.credit)}`
+      );
     } catch (err) {
       console.error(err);
       setMsg(`Rebuild failed: ${err.message || err}`);
     } finally {
       setBusy(false);
     }
+  }
+
+  function fmt(n) {
+    const v = Number(n || 0);
+    return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
   return (
@@ -109,7 +128,7 @@ export default function RebuildTrialBalanceButton() {
         ].join(" ")}
         onClick={handleRebuild}
         disabled={busy}
-        title="Compute Trial Balance from journals and save into auto_TB.payload"
+        title="Compute Trial Balance from journalEntries and save into auto_TB.payload"
       >
         {busy ? "Rebuilding TB…" : "Rebuild Trial Balance"}
       </button>
