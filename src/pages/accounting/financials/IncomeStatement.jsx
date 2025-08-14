@@ -15,9 +15,43 @@ import {
 } from "firebase/firestore";
 import useUserProfile from "../../../hooks/useUserProfile";
 import { saveFinancialSnapshot } from "../../reports/saveSnapshot";
-import IncomeStatementChart from "./IncomeStatementChart";
+// NOTE: chart is dynamically imported below (no static import)
+// import IncomeStatementChart from "./IncomeStatementChart";
 import jsPDF from "jspdf";
 import { useNavigate } from "react-router-dom";
+
+/* -------------------- Error Boundary (prevents blank page) -------------------- */
+class ISBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    // still logs to console if available
+    // eslint-disable-next-line no-console
+    console.error("IncomeStatement crashed:", error, info);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="page-gutter">
+          <h1 className="text-2xl font-bold mb-2">Income Statement</h1>
+          <div className="card p-4 text-sm">
+            <div className="font-semibold mb-1">Something went wrong on this page.</div>
+            <div className="text-rose-700">{String(this.state.error?.message || this.state.error)}</div>
+            <div className="mt-2 text-ink/60">
+              Try refreshing. If it keeps happening, send this message to the devs.
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 /* -------------------- date helpers -------------------- */
 function parseYMD(ymd) {
@@ -92,7 +126,7 @@ function sumForAccount(acc, filteredEntries) {
   return { amount };
 }
 
-export default function IncomeStatement() {
+function IncomeStatementInner() {
   const accounts = useAccounts();
   const nav = useNavigate();
 
@@ -118,6 +152,18 @@ export default function IncomeStatement() {
   const userId = profile?.uid || "";
   const notesRef = useRef();
   const viewRef = useRef(null); // content we snapshot into payload.html
+
+  // SAFELY load chart (won’t crash if chunk fails)
+  const [Chart, setChart] = useState(null);
+  useEffect(() => {
+    let mounted = true;
+    import("./IncomeStatementChart")
+      .then((m) => mounted && setChart(() => m.default))
+      .catch(() => mounted && setChart(() => null));
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   /* ---- load journal entries ---- */
   useEffect(() => {
@@ -749,14 +795,16 @@ export default function IncomeStatement() {
             </div>
           </div>
 
-          {/* Optional chart (include inside snapshot if desired) */}
+          {/* Optional chart (loaded safely) */}
           <div className="mt-4">
-            <IncomeStatementChart
-              totalRevenue={totalRevenueR}
-              totalCOGS={totalCOGSR}
-              totalExpense={totalExpenseR}
-              netIncome={netIncomeR}
-            />
+            {Chart ? (
+              <Chart
+                totalRevenue={totalRevenue}
+                totalCOGS={totalCOGS}
+                totalExpense={totalExpense}
+                netIncome={netIncome}
+              />
+            ) : null}
           </div>
         </div>
         {/* === /CONTENT TO SNAPSHOT === */}
@@ -847,6 +895,7 @@ export default function IncomeStatement() {
                   <th className="text-left p-2 border-b border-r">Label</th>
                   <th className="text-left p-2 border-b border-r">Period</th>
                   <th className="text-left p-2 border-b">Created</th>
+                  <th className="text-left p-2 border-b">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -856,13 +905,20 @@ export default function IncomeStatement() {
                     <td className="p-2 border-b border-r">
                       {formatRange(r.periodStart || r.from, r.periodEnd || r.to)}
                     </td>
-                    <td className="p-2 border-b">{r.createdAt?.seconds ? new Date(r.createdAt.seconds*1000).toLocaleString() : "—"}</td>
                     <td className="p-2 border-b">
-                      <button className="btn btn-outline" onClick={() => handleShowReport({
-                        id: r.id,
-                        from: r.periodStart || r.from || "",
-                        to: r.periodEnd || r.to || "",
-                        report: r.report || {} })}
+                      {r.createdAt?.seconds ? new Date(r.createdAt.seconds*1000).toLocaleString() : "—"}
+                    </td>
+                    <td className="p-2 border-b">
+                      <button
+                        className="btn btn-outline"
+                        onClick={() =>
+                          handleShowReport({
+                            id: r.id,
+                            from: r.periodStart || r.from || "",
+                            to: r.periodEnd || r.to || "",
+                            report: r.report || {},
+                          })
+                        }
                       >
                         Open
                       </button>
@@ -877,5 +933,14 @@ export default function IncomeStatement() {
 
       {renderDrilldown()}
     </div>
+  );
+}
+
+/* Wrap with Error Boundary to avoid blank screen */
+export default function IncomeStatement() {
+  return (
+    <ISBoundary>
+      <IncomeStatementInner />
+    </ISBoundary>
   );
 }
