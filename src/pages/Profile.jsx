@@ -192,7 +192,7 @@ export default function Profile() {
     const allowedReq = ["paidUpProof", "caoCertification", "residencyProof", "authorizationLetter"];
     if (allowedReq.includes(folder)) {
       if (!(isImage || isPdf)) return "Only images or PDF files are allowed.";
-      if (isPdf && file.size > maxBytes) return "PDF is larger than 2MB. Please upload a smaller PDF.";
+      if (isPdf && file.size >= maxBytes) return "PDF must be under 2MB. Please upload a smaller PDF.";
       return null;
     }
 
@@ -221,8 +221,8 @@ export default function Profile() {
 
     // compress images; PDFs pass-through
     const maybeCompressed = file.type?.startsWith("image/") ? await compressImageToMax(file) : file;
-    if ((maybeCompressed?.size || 0) > 2 * 1024 * 1024) {
-      const e = new Error("File is larger than 2MB after compression.");
+    if ((maybeCompressed?.size || 0) >= 2 * 1024 * 1024) {
+      const e = new Error("File must be under 2MB after compression.");
       e.code = "size-too-large";
       throw e;
     }

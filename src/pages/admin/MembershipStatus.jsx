@@ -38,11 +38,11 @@ export default function MembershipStatusAdmin() {
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2">
+  <div className="space-y-3">
+    <div className="flex flex-col sm:flex-row sm:items-center gap-2">
         <label className="text-sm">Filter:</label>
         <select
-          className="border rounded px-2 py-1"
+      className="border rounded px-2 py-1 w-full sm:w-auto"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         >
@@ -53,7 +53,7 @@ export default function MembershipStatusAdmin() {
         </select>
       </div>
 
-      <div className="overflow-x-auto">
+    <div className="overflow-x-auto">
         <table className="min-w-[800px] w-full border border-gray-200 rounded">
           <thead className="bg-gray-50">
             <tr>
@@ -106,9 +106,9 @@ export default function MembershipStatusAdmin() {
                 </td>
               </tr>
             ))}
-            {filtered.length === 0 && (
+      {filtered.length === 0 && (
               <tr>
-                <td className="p-4 text-gray-500" colSpan={5}>No results.</td>
+        <td className="p-4 text-gray-500" colSpan={5}>No results.</td>
               </tr>
             )}
           </tbody>

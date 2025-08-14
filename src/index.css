@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 /* Subtle fade at the left/right edges while horizontally scrolling tables */
 .table-scroll {
   position: relative;
@@ -17,12 +21,6 @@
   background: rgba(0,0,0,.15);
   border-radius: 999px;
 }
-
-
-@import "./styles/responsive.css";
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
 /* Better spacing for tap targets on small screens */
 .touch-gap > * { margin-bottom: .5rem; }
 
@@ -64,4 +62,82 @@
 
   /* Badges */
   .badge { @apply inline-flex items-center rounded-full bg-brand-50 text-brand-700 px-2 py-0.5 text-xs; }
+}
+
+/* ---- Inlined responsive tweaks (previously src/styles/responsive.css) ---- */
+@layer utilities {
+  /* Helpers */
+  .hide-on-mobile { display: block; }
+  .show-on-mobile { display: none; }
+
+  @media (max-width: 768px) {
+    .hide-on-mobile { display: none !important; }
+    .show-on-mobile { display: block !important; }
+  }
+
+  /* Desktop/boxed page gutters – ensure background peeks on the sides */
+  .page-boxed { max-width: 72rem; margin-left: auto; margin-right: auto; }
+  .page-gutter { padding-left: 1rem; padding-right: 1rem; }
+  @media (min-width: 768px) {
+    .page-gutter { padding-left: 1.25rem; padding-right: 1.25rem; }
+  }
+
+  /* Tables: compact by default on phones */
+  .table-compact th,
+  .table-compact td {
+    padding: 0.5rem 0.625rem;
+  }
+
+  /* Optional: stack tables into cards on phones */
+  @media (max-width: 768px) {
+    table.stack-on-mobile { border: 0; width: 100%; }
+    table.stack-on-mobile thead { display: none; }
+    table.stack-on-mobile tr {
+      display: block;
+      background: #fff;
+      border: 1px solid rgb(229 231 235);
+      border-radius: 12px;
+      margin-bottom: 0.75rem;
+      padding: 0.5rem 0.75rem;
+    }
+    table.stack-on-mobile td {
+      display: grid;
+      grid-template-columns: 9.5rem 1fr;
+      gap: 0.5rem;
+      border: 0 !important;
+      padding: 0.375rem 0 !important;
+    }
+    table.stack-on-mobile td::before {
+      content: attr(data-label);
+      font-weight: 600;
+      color: rgb(55 65 81);
+    }
+  }
+}
+
+@layer components {
+  /* Tighter UI on small screens */
+  @media (max-width: 768px) {
+    :root { --ui-radius: 12px; }
+
+    .card {
+      border-radius: var(--ui-radius);
+      padding: 0.875rem !important;
+    }
+
+    .btn {
+      padding: 0.5rem 0.75rem !important;
+      border-radius: 9999px !important;
+      font-size: 0.9375rem !important;
+    }
+
+    .input, input[type="date"], select, textarea {
+      padding: 0.5rem 0.625rem !important;
+      border-radius: 10px !important;
+      font-size: 0.9375rem !important;
+    }
+
+    /* Header height a bit smaller */
+    header .h-16 { height: 3.25rem !important; }
+  }
 }

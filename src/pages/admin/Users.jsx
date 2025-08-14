@@ -27,6 +27,7 @@ const DEFAULT_ROLE_OPTIONS = [
   "bod",
   "secretary",
   "treasurer",
+  "general manager",
   "auditor",
   "committee chairman",
 ];
@@ -243,9 +244,9 @@ export default function Users() {
       )}
 
       {/* catalog controls */}
-      <div className="flex items-center gap-2">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
         <input
-          className="border rounded px-3 py-2 w-64"
+          className="border rounded px-3 py-2 w-full sm:w-64"
           placeholder='Add new role (e.g., "inventory")'
           value={newRole}
           onChange={(e) => setNewRole(e.target.value)}
@@ -254,7 +255,7 @@ export default function Users() {
         <button className="px-3 py-2 border rounded" onClick={addRoleToCatalog}>
           + Add role
         </button>
-        <div className="ml-auto flex gap-2">
+        <div className="mt-2 sm:mt-0 sm:ml-auto flex gap-2">
           <button
             onClick={prevPage}
             disabled={!canPrev}
@@ -272,12 +273,12 @@ export default function Users() {
         </div>
       </div>
 
-      <div className="mb-3 flex items-center gap-3">
+      <div className="mb-3 flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3">
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search email, name, or member ID…"
-          className="border rounded px-3 py-2 w-80"
+          className="border rounded px-3 py-2 w-full sm:w-80"
         />
         <span className="text-sm text-gray-600">
           Showing {filtered.length} of {rows.length} (page size {PAGE_SIZE})
@@ -299,9 +300,9 @@ export default function Users() {
             </tr>
           </thead>
           <tbody>
-            {loading && (
+      {loading && (
               <tr>
-                <td className="p-4 text-gray-500" colSpan={7}>
+        <td className="p-4 text-gray-500" colSpan={8}>
                   Loading users…
                 </td>
               </tr>
@@ -401,9 +402,9 @@ export default function Users() {
               );
             })}
 
-            {!loading && filtered.length === 0 && (
+      {!loading && filtered.length === 0 && (
               <tr>
-                <td className="p-4 text-gray-500" colSpan={7}>
+        <td className="p-4 text-gray-500" colSpan={8}>
                   No users found.
                 </td>
               </tr>

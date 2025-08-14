@@ -120,16 +120,49 @@ export default function Reports() {
     return () => unsub();
   }, []);
 
+  /* ---------- Split rows: Daily auto vs Periodical (user-created) ---------- */
+  const DAILY_IDS = useMemo(
+    () => ["auto_IS", "auto_BS", "auto_CF", "auto_TB"],
+    []
+  );
+
+  const dailyRows = useMemo(
+    () => rows.filter((r) => DAILY_IDS.includes(r.id)),
+    [rows, DAILY_IDS]
+  );
+
+  const userRows = useMemo(
+    () => rows.filter((r) => !DAILY_IDS.includes(r.id)),
+    [rows, DAILY_IDS]
+  );
+
+  // UI-only friendly titles for daily docs
+  const dailyTitle = (r) => {
+    switch (r.id) {
+      case "auto_IS":
+        return "Income Statement";
+      case "auto_BS":
+        return "Balance Sheet";
+      case "auto_CF":
+        return "Cash Flow";
+      case "auto_TB":
+        return "Trial Balance";
+      default:
+        return r.label || "—";
+    }
+  };
+
+  /* ---------- Filters & sorting apply only to Periodical section ---------- */
   const filtered = useMemo(() => {
     const s = search.trim().toLowerCase();
-    return rows
+    return userRows
       .filter((r) => (typeFilter ? r.type === typeFilter : true))
       .filter((r) => {
         if (!s) return true;
         const hay = `${r.label || ""} ${r.type || ""} ${periodLabel(r)}`.toLowerCase();
         return hay.includes(s);
       });
-  }, [rows, search, typeFilter]);
+  }, [userRows, search, typeFilter]);
 
   const sorted = useMemo(() => {
     const arr = [...filtered];
@@ -185,10 +218,102 @@ export default function Reports() {
       <div className="flex items-center justify-between gap-3 mb-4">
         <h1 className="text-2xl font-bold">Reports</h1>
         <div className="text-sm text-ink/60">
-          {loading ? "Loading…" : `${sorted.length} report(s)`}
+          {loading ? "Loading…" : `${rows.length} report(s)`}
         </div>
       </div>
 
+      {/* ===================== DAILY SECTION ===================== */}
+      <div className="mb-6">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-lg font-semibold">
+            Daily Financial Status Update{" "}
+            <span className="text-ink/60 text-sm">(updated every 1am)</span>
+          </h2>
+          <div className="text-sm text-ink/60">
+            {dailyRows.length ? `${dailyRows.length} item(s)` : "No daily reports yet"}
+          </div>
+        </div>
+
+        {/* Desktop table for daily */}
+        <div className="hidden sm:block card p-0 overflow-x-auto">
+          <table className="min-w-full border border-gray-300 rounded text-sm">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="text-left p-2 border-b border-r">Label</th>
+                <th className="text-left p-2 border-b border-r">Type</th>
+                <th className="text-left p-2 border-b border-r">Period</th>
+                <th className="text-left p-2 border-b">Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {["auto_IS", "auto_BS", "auto_CF", "auto_TB"]
+                .map((id) => dailyRows.find((r) => r.id === id))
+                .filter(Boolean)
+                .map((r) => (
+                  <tr key={r.id} className="odd:bg-white even:bg-gray-50">
+                    <td className="p-2 border-b border-r">
+                      <div className="font-medium">{dailyTitle(r)}</div>
+                      <div className="mt-1">
+                        <Link className="btn btn-outline btn-sm" to={`/reports/${r.id}`}>
+                          Open
+                        </Link>
+                      </div>
+                    </td>
+                    <td className="p-2 border-b border-r">
+                      <TypeBadge t={r.type} />
+                    </td>
+                    <td className="p-2 border-b border-r font-mono">{periodLabel(r)}</td>
+                    <td className="p-2 border-b font-mono">{fmtDT(r.createdAt)}</td>
+                  </tr>
+                ))}
+              {!loading && dailyRows.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="p-4 text-center text-ink/60">
+                    No daily reports found.
+                  </td>
+                </tr>
+              )}
+              {loading && (
+                <tr>
+                  <td colSpan={4} className="p-4 text-center">Loading…</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Mobile cards for daily */}
+        <div className="sm:hidden space-y-3">
+          {["auto_IS", "auto_BS", "auto_CF", "auto_TB"]
+            .map((id) => dailyRows.find((r) => r.id === id))
+            .filter(Boolean)
+            .map((r) => (
+              <div key={r.id} className="card p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="font-semibold">{dailyTitle(r)}</div>
+                  <TypeBadge t={r.type} />
+                </div>
+                <div className="mt-1 text-xs text-ink/60">
+                  Period: <span className="font-mono">{periodLabel(r)}</span>
+                </div>
+                <div className="mt-1 text-xs text-ink/60">
+                  Created: <span className="font-mono">{fmtDT(r.createdAt)}</span>
+                </div>
+                <div className="mt-3">
+                  <Link className="btn btn-outline btn-sm" to={`/reports/${r.id}`}>
+                    Open
+                  </Link>
+                </div>
+              </div>
+            ))}
+          {!loading && dailyRows.length === 0 && (
+            <div className="text-center text-ink/60">No daily reports found.</div>
+          )}
+          {loading && <div>Loading…</div>}
+        </div>
+      </div>
+
+      {/* ===================== CONTROLS (apply to Periodical) ===================== */}
       <div className="card p-4 mb-4">
         <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
           <label className="text-xs text-ink/60 flex flex-col">
@@ -241,7 +366,15 @@ export default function Reports() {
         </div>
       </div>
 
-      {/* Desktop table */}
+      {/* ===================== PERIODICAL SECTION ===================== */}
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-lg font-semibold">Periodical update</h2>
+        <div className="text-sm text-ink/60">
+          {loading ? "Loading…" : `${sorted.length} item(s)`}
+        </div>
+      </div>
+
+      {/* Desktop table (periodical) */}
       <div className="hidden sm:block card p-0 overflow-x-auto">
         <table className="min-w-full border border-gray-300 rounded text-sm">
           <thead className="bg-gray-50">
@@ -324,7 +457,7 @@ export default function Reports() {
         </table>
       </div>
 
-      {/* Mobile cards */}
+      {/* Mobile cards (periodical) */}
       <div className="sm:hidden space-y-3">
         {sorted.map((r) => (
           <div key={r.id} className="card p-3">

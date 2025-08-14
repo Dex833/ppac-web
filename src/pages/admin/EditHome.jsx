@@ -250,7 +250,7 @@ export default function EditHome() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto card p-6">
+  <div className="max-w-3xl mx-auto card p-6">
       <h2 className="text-2xl font-bold mb-4">Edit Home Page Content</h2>
 
       {loading ? (
@@ -271,9 +271,9 @@ export default function EditHome() {
                 key={idx}
                 className="border rounded p-3 mb-2 flex flex-col gap-2 bg-gray-50"
               >
-                <div className="flex gap-2">
+                <div className="flex flex-col sm:flex-row gap-2">
                   <input
-                    className="border rounded px-2 py-1 w-1/2"
+                    className="border rounded px-2 py-1 w-full sm:w-1/2"
                     placeholder="Image URL"
                     value={img.url}
                     onChange={(e) =>
@@ -281,7 +281,7 @@ export default function EditHome() {
                     }
                   />
                   <input
-                    className="border rounded px-2 py-1 w-1/2"
+                    className="border rounded px-2 py-1 w-full sm:w-1/2"
                     placeholder="Link (e.g. /BecomeMember)"
                     value={img.link}
                     onChange={(e) =>
@@ -297,7 +297,7 @@ export default function EditHome() {
                     updateSliderImage(idx, "label", e.target.value)
                   }
                 />
-                <div className="flex gap-2">
+                <div className="flex flex-col sm:flex-row gap-2">
                   <button
                     type="button"
                     className="btn btn-outline"

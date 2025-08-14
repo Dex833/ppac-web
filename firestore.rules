@@ -1,104 +1,109 @@
-// firestore.rules
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ---------- helpers ----------
-    function isSignedIn() {
-      return request.auth != null;
-    }
+    // Helpers
+    function isSignedIn() { return request.auth != null; }
 
     function userDoc() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid));
     }
-
     function profileDoc() {
       return get(/databases/$(database)/documents/profiles/$(request.auth.uid));
     }
 
     function hasArrayRole(doc, role) {
-      // roles is an array like ["admin","member"]
       return ('roles' in doc.data) && doc.data.roles.hasAny([role]);
     }
-
     function notSuspended(doc) {
       return !(('suspended' in doc.data) && doc.data.suspended == true);
     }
 
-    // Unified admin check (matches frontend: "admin")
-    function isAdmin() {
-      return isSignedIn() && (
-        (request.auth.token.admin == true) ||
+    // Role checker against users/{uid} and profiles/{uid}
+    function hasRole(role) {
+      return (
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
         (
-          exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-          (
-            (('role' in userDoc().data) && userDoc().data.role == 'admin') ||
-            hasArrayRole(userDoc(), 'admin')
-          ) &&
-          notSuspended(userDoc())
-        ) ||
+          (("role" in userDoc().data) && userDoc().data.role == role) ||
+          hasArrayRole(userDoc(), role)
+        ) &&
+        notSuspended(userDoc())
+      ) || (
+        exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) &&
         (
-          exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) &&
-          (
-            (('role' in profileDoc().data) && profileDoc().data.role == 'admin') ||
-            hasArrayRole(profileDoc(), 'admin')
-          ) &&
-          notSuspended(profileDoc())
-        )
+          (("role" in profileDoc().data) && profileDoc().data.role == role) ||
+          hasArrayRole(profileDoc(), role)
+        ) &&
+        notSuspended(profileDoc())
       );
     }
 
-    // ---------- collections ----------
+    function isAdmin()     { return isSignedIn() && ((request.auth.token.admin == true) || hasRole('admin')); }
+    function isTreasurer() { return isSignedIn() && hasRole('treasurer'); }
+  function isManager()   { return isSignedIn() && (hasRole('manager') || hasRole('general manager')); }
+    function isMember()    { return isSignedIn() && hasRole('member'); }
+    function isStaff()     { return isAdmin() || isTreasurer() || isManager(); }
+    function canReadAccounting() { return isStaff() || isMember(); }
 
-    // Detailed member profile (self-managed)
+    // Financial Reports
+    match /financialReports/{rid} {
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if isAdmin() || isTreasurer();
+    }
+
+    // Site content
+    match /siteContent/{docId} {
+      allow get, list: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Members profile/requirements
     match /members/{uid} {
-  allow create: if isSignedIn() && request.auth.uid == uid;
-  // Allow owner to update their own profile; admins can also update (e.g., set membershipStatus)
-  allow update: if (isSignedIn() && request.auth.uid == uid) || isAdmin();
-  allow get:    if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if isSignedIn() && request.auth.uid == uid;
+      // allow owner or admin to update (admin used for validation decisions)
+      allow update: if (isSignedIn() && request.auth.uid == uid) || isAdmin();
+      allow get:    if isSignedIn() && (request.auth.uid == uid || isAdmin());
       allow list:   if isAdmin();
       allow delete: if isAdmin();
     }
 
-    // Users (account profile + admin flags)
+    // Users meta
     match /users/{uid} {
-      // Owner can create their own doc
       allow create: if isSignedIn() && request.auth.uid == uid;
 
-      // Read: owner or admin
       allow get:  if isSignedIn() && (request.auth.uid == uid || isAdmin());
       allow list: if isAdmin();
 
-      // Update:
-      // - Admin: anything
-      // - Owner: can edit safe fields; cannot edit admin-only fields;
-      //          may set memberId ONCE (if previously missing/empty).
       allow update: if
-        isAdmin()
-        ||
+        isAdmin() ||
         (
-          isSignedIn() && request.auth.uid == uid
-          &&
-          // 1) Owner is NOT changing admin-only fields
+          isSignedIn() && request.auth.uid == uid &&
+          // user cannot change privileged fields
           !request.resource.data.diff(resource.data).changedKeys()
-            .hasAny(['roles','role','suspended','verifiedByAdmin'])
-          &&
-          // 2) memberId rule: either not changing OR being set first time
+            .hasAny(['roles','role','suspended','verifiedByAdmin']) &&
+          // memberId can only be set if empty
           (
-            !request.resource.data.diff(resource.data).changedKeys().hasAny(['memberId'])
-            ||
+            !request.resource.data.diff(resource.data).changedKeys().hasAny(['memberId']) ||
             (
-              request.resource.data.diff(resource.data).changedKeys().hasOnly(['memberId'])
-              && (!('memberId' in resource.data) || resource.data.memberId == "")
+              request.resource.data.diff(resource.data).changedKeys().hasOnly(['memberId']) &&
+              (!('memberId' in resource.data) || resource.data.memberId == "")
+            )
+          ) &&
+          // membershipStatus can only be 'pending' or 'validating' by self,
+          // and cannot overwrite an existing 'full'
+          (
+            !request.resource.data.diff(resource.data).changedKeys().hasAny(['membershipStatus']) ||
+            (
+              request.resource.data.membershipStatus in ['pending','validating'] &&
+              (!('membershipStatus' in resource.data) || resource.data.membershipStatus != 'full')
             )
           )
         );
 
-      // Delete: admin only
       allow delete: if isAdmin();
     }
 
-    // Optional profiles collection (if used)
+    // Profiles (if used)
     match /profiles/{uid} {
       allow create: if isSignedIn() && request.auth.uid == uid;
       allow get:    if isSignedIn() && (request.auth.uid == uid || isAdmin());
@@ -106,64 +111,70 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
-    // Admin audit logs
+    // Admin logs
     match /adminLogs/{logId} {
       allow create: if isAdmin();
       allow read, list: if isAdmin();
     }
 
-    // ACCOUNTING (lock to admins for now)
-    // ACCOUNTING (only the currently logged-in admin can write)
-    // Income Statement Reports (admin only)
-match /incomeStatementReports/{docId} {
-  allow get, list: if isAdmin();
-  allow create, update, delete: if isAdmin();
-}
-match /accounts/{id} {
-  allow get, list: if isAdmin();
-  allow create, update, delete: if isAdmin() && request.auth.uid == userDoc().id;
-}
-match /journalEntries/{jid} {
-  allow get, list: if isAdmin();
-  allow create, update, delete: if isAdmin() && request.auth.uid == userDoc().id;
-}
+    // Accounting
     match /accounts/{id} {
-      allow get, list: if isAdmin();
-      allow create, update, delete: if isAdmin();
+      allow get, list: if canReadAccounting();
+      allow create, update, delete: if isAdmin() || isTreasurer();
     }
+
+    match /journalEntries/{jid} {
+      allow get, list: if canReadAccounting();
+      allow create, update, delete: if isStaff();
+    }
+
     match /journals/{jid} {
       allow get, list: if isAdmin();
       allow create, update, delete: if isAdmin();
     }
 
-    // SEQUENCES (member ID counter)
+    match /incomeStatementReports/{docId} {
+      allow get, list: if isAdmin() || isTreasurer();
+      allow create, update, delete: if isAdmin() || isTreasurer();
+    }
+
+    match /balanceSheets/{docId} {
+      allow get, list: if isAdmin() || isTreasurer();
+      allow create, update, delete: if isAdmin() || isTreasurer();
+    }
+    match /balanceSheetReports/{docId} {
+      allow get, list: if isAdmin() || isTreasurer();
+      allow create, update, delete: if isAdmin() || isTreasurer();
+    }
+
+    match /cashFlowStatementReports/{docId} {
+      allow get, list: if isAdmin() || isTreasurer();
+      allow create, update, delete: if isAdmin() || isTreasurer();
+    }
+
+    // Sequences
     match /sequences/{sid} {
-      // Read the 'members' counter if signed-in; admins can read/list all
       allow get, list: if (isSignedIn() && sid == "members") || isAdmin();
+      allow create:    if (isSignedIn() && sid == "members") || isAdmin();
 
-      // Create 'members' counter on first use (others: admin-only)
-      allow create: if (isSignedIn() && sid == "members") || isAdmin();
-
-      // Allow atomic +1; allow year reset to lastNumber = 1
       allow update: if isSignedIn() && sid == "members"
         && request.resource.data.keys().hasOnly(["lastNumber","year","updatedAt"])
         && (
-             (resource.data.year == request.resource.data.year
-              && request.resource.data.lastNumber == resource.data.lastNumber + 1)
-             ||
-             (resource.data.year != request.resource.data.year
-              && request.resource.data.lastNumber == 1)
-           );
+          (resource.data.year == request.resource.data.year &&
+           request.resource.data.lastNumber == resource.data.lastNumber + 1)
+          ||
+          (resource.data.year != request.resource.data.year &&
+           request.resource.data.lastNumber == 1)
+        );
 
       allow delete: if isAdmin();
     }
 
-    // Public, non-listable mapping: memberId -> { uid, email } (for login by ID)
+    // Member ID lookup
     match /memberLookup/{mid} {
-      allow get: if true;    // resolve memberId on login screen
-      allow list: if false;  // prevent bulk harvesting
+      allow get: if true;
+      allow list: if false;
 
-      // only the signed-in owner can create/update their own mapping
       allow create, update: if isSignedIn()
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.keys().hasOnly(["uid","email"]);
@@ -171,7 +182,7 @@ match /journalEntries/{jid} {
       allow delete: if isAdmin();
     }
 
-    // Everything else: deny
+    // Deny everything else
     match /{document=**} {
       allow read, write: if false;
     }

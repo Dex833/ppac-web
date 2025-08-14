@@ -204,7 +204,8 @@ export default function App() {
   const roles = Array.isArray(profile?.roles) ? profile.roles : profile?.role ? [profile.role] : [];
   const isAdmin = roles.includes("admin");
   const isTreasurer = roles.includes("treasurer");
-  const isManager = roles.includes("manager");
+  // Treat both 'manager' and 'general manager' as managers for UI access
+  const isManager = roles.includes("manager") || roles.includes("general manager");
   const notSuspended = profile?.suspended !== true;
 
   const [menuOpen, setMenuOpen] = React.useState(false);
@@ -301,7 +302,7 @@ export default function App() {
         onClose={() => setMenuOpen(false)}
         isAdmin={isAdmin}
         isTreasurer={isTreasurer}
-        isManager={isManager}
+  isManager={isManager}
         notSuspended={notSuspended}
         profile={profile}
         onLogin={() => setLoginOpen(true)}
@@ -321,7 +322,7 @@ export default function App() {
         }}
       />
 
-      <main className="page-boxed page-gutter py-8 sm:py-10">
+  <main className="py-8 sm:py-10">
         <Routes>
           {/* Home (driven by Firestore via pages/Home.jsx) */}
           <Route path="/" element={<Home />} />
@@ -416,10 +417,10 @@ export default function App() {
 
           {/* Accounting-only (nested) */}
           <Route
-            path="/accounting"
+      path="/accounting"
             element={
               <ProtectedRoute>
-                <RequireRole allowed={["admin", "treasurer", "manager"]}>
+        <RequireRole allowed={["admin", "treasurer", "manager", "general manager"]}>
                   <Suspense fallback={<div className="p-6">Loading…</div>}>
                     <Accounting />
                   </Suspense>

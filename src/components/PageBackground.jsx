@@ -9,7 +9,15 @@ const PageBackground = ({
   overlayClass = "bg-white/85 backdrop-blur",
   pad = "p-6",
   margin = "my-8",
+  className,
 }) => {
+  const containerClasses = [
+    "w-full",
+    boxed ? `${boxedWidth} mx-auto` : "",
+    className ? className : "px-4",
+  ]
+    .filter(Boolean)
+    .join(" ");
   return (
     <div
       className="bg-center bg-cover bg-fixed"
@@ -19,7 +27,7 @@ const PageBackground = ({
         minHeight: "calc(100vh - 128px)",
       }}
     >
-      <div className={`w-full ${boxed ? `${boxedWidth} mx-auto px-4` : ""}`}>
+      <div className={containerClasses}>
         <div className={`rounded-2xl shadow-sm ${overlayClass} ${pad} ${margin}`}>
           {children}
         </div>

@@ -72,9 +72,9 @@ export default function MembershipReview() {
 
   function Row({ label, value }) {
     return (
-      <div className="grid grid-cols-3 gap-2 text-sm">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 sm:gap-2 text-sm">
         <div className="text-ink/60">{label}</div>
-        <div className="col-span-2">{value || "—"}</div>
+        <div className="sm:col-span-2 break-words">{value || "—"}</div>
       </div>
     );
   }
@@ -150,7 +150,7 @@ export default function MembershipReview() {
               onChange={(e) => setNote(e.target.value)}
               maxLength={500}
             />
-            <div className="mt-3 flex gap-2">
+            <div className="mt-3 flex flex-col sm:flex-row gap-2">
               <button className="btn btn-primary" onClick={approve} disabled={saving}>Approve (Validate)</button>
               <button className="btn btn-outline" onClick={reject} disabled={saving}>Reject & Notify</button>
             </div>

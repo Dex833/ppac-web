@@ -1,57 +1,70 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    function isSignedIn() { return request.auth != null; }
+
+    // --- helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Admin via custom claim only
     function isAdmin() {
-      return isSignedIn() && (
-        request.auth.token.admin == true ||
-        exists(/databases/(default)/documents/users/$(request.auth.uid)) && (
-          get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          (
-            ('roles' in get(/databases/(default)/documents/users/$(request.auth.uid)).data) &&
-            get(/databases/(default)/documents/users/$(request.auth.uid)).data.roles.hasAny(['admin'])
-          )
-        )
-      );
+      return isSignedIn() && request.auth.token.admin == true;
     }
 
-    function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
-
-    function isImage(contentType) {
-      return contentType.matches('image/.*');
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
     }
 
-    function isPdf(contentType) {
-      return contentType == 'application/pdf';
+    // Allow common image types
+    function isAllowedImage() {
+      return request.resource.contentType == 'image/jpeg' ||
+             request.resource.contentType == 'image/png'  ||
+             request.resource.contentType == 'image/webp' ||
+             request.resource.contentType == 'image/heic' ||
+             request.resource.contentType == 'image/heif';
     }
 
-    function sizeOk() {
-      return request.resource.size <= 2 * 1024 * 1024; // 2MB
+    // Allow images OR PDF
+    function isImageOrPdf() {
+      return isAllowedImage() ||
+             request.resource.contentType == 'application/pdf';
     }
 
-    // Members-owned files under folder policy
+    // Max 2 MB (strictly less than)
+    function under2MB() {
+      return request.resource.size < 2 * 1024 * 1024;
+    }
+
+    // Members uploads at members/{uid}/{folder}/{filename}
+    // Allowed folders:
+    // - profile (image only)
+    // - id (image only)
+    // - paidUpProof (image/pdf)
+    // - caoCertification (image/pdf)
+    // - residencyProof (image/pdf)
+    // - authorizationLetter (image/pdf)
     match /members/{uid}/{folder}/{filename} {
       allow read: if isOwner(uid) || isAdmin();
 
-      allow write: if isOwner(uid) && sizeOk() && (
+      allow write: if isOwner(uid) && (
         (
-          folder == 'profile' && isImage(request.resource.contentType)
+          (folder == 'profile' || folder == 'id') &&
+          isAllowedImage() &&
+          under2MB()
         ) || (
-          folder == 'id' && isImage(request.resource.contentType)
-        ) || (
-          folder == 'paidUpProof' && (isImage(request.resource.contentType) || isPdf(request.resource.contentType))
-        ) || (
-          folder == 'caoCertification' && (isImage(request.resource.contentType) || isPdf(request.resource.contentType))
-        ) || (
-          folder == 'residencyProof' && (isImage(request.resource.contentType) || isPdf(request.resource.contentType))
-        ) || (
-          folder == 'authorizationLetter' && (isImage(request.resource.contentType) || isPdf(request.resource.contentType))
+          (folder == 'paidUpProof' ||
+           folder == 'caoCertification' ||
+           folder == 'residencyProof' ||
+           folder == 'authorizationLetter') &&
+          isImageOrPdf() &&
+          under2MB()
         )
       );
     }
 
     // Deny everything else
-    match /{path=**} {
+    match /{allPaths=**} {
       allow read, write: if false;
     }
   }
