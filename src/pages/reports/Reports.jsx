@@ -14,22 +14,46 @@ import useUserProfile from "../../hooks/useUserProfile";
 import PageBackground from "../../components/PageBackground";
 import DailyReportsUpdateButton from "../../components/DailyReportsUpdateButton";
 import RebuildTrialBalanceButton from "../../components/RebuildTrialBalanceButton";
+import RebuildIncomeStatementButton from "../../components/RebuildIncomeStatementButton";
 
 /* ----------------------------- background ----------------------------- */
 const reportsBg =
   "https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80";
 
 /* ----------------------------- helpers ----------------------------- */
-/** Canonical types used in `financialReports`:
- *  'income_statement' | 'balance_sheet' | 'cash_flow' | 'trial_balance'
+/** Canonical (internal) types we’ll show/filter by.
+ * We normalize any camelCase types coming from older/newer writers.
  */
-const TYPES = [
+const CANON = {
+  income_statement: "Income Statement",
+  balance_sheet: "Balance Sheet",
+  cash_flow: "Cash Flow",
+  trial_balance: "Trial Balance",
+};
+
+const FILTER_OPTIONS = [
   { val: "", label: "All types" },
-  { val: "income_statement", label: "Income Statement" },
-  { val: "balance_sheet", label: "Balance Sheet" },
-  { val: "cash_flow", label: "Cash Flow" },
-  { val: "trial_balance", label: "Trial Balance" },
+  { val: "income_statement", label: CANON.income_statement },
+  { val: "balance_sheet", label: CANON.balance_sheet },
+  { val: "cash_flow", label: CANON.cash_flow },
+  { val: "trial_balance", label: CANON.trial_balance },
 ];
+
+// Map any known variants → canonical snake_case used in UI
+function normalizeType(t) {
+  switch (t) {
+    case "incomeStatement":
+      return "income_statement";
+    case "balanceSheet":
+      return "balance_sheet";
+    case "cashFlow":
+      return "cash_flow";
+    case "trialBalance":
+      return "trial_balance";
+    default:
+      return t || "";
+  }
+}
 
 function tsToDate(v) {
   if (!v) return null;
@@ -54,15 +78,14 @@ function fmtPeriodDate(dateStr) {
   return `${month}/${day}/${year}`;
 }
 
-/** Unified period label:
- *  uses periodStart/periodEnd (new), falls back to from/to (legacy)
- *  Balance Sheet shows "as of <date>"
+/** Period label (supports both new periodStart/periodEnd and legacy from/to).
+ *  Balance Sheet shows "as of <date>".
  */
 function periodLabel(r) {
   if (!r) return "—";
+  const t = normalizeType(r.type);
   const L = r.periodStart || r.from || "—";
   const R = r.periodEnd || r.to || "—";
-  const t = r.type;
 
   if (t === "balance_sheet") {
     const asof = R || L || "—";
@@ -73,22 +96,17 @@ function periodLabel(r) {
 }
 
 function TypeBadge({ t }) {
-  const map = {
+  const tt = normalizeType(t);
+  const cls = {
     income_statement: "bg-blue-100 text-blue-800 border-blue-200",
     balance_sheet: "bg-emerald-100 text-emerald-800 border-emerald-200",
     cash_flow: "bg-amber-100 text-amber-800 border-amber-200",
     trial_balance: "bg-violet-100 text-violet-800 border-violet-200",
-  };
-  const label =
-    TYPES.find((x) => x.val === t)?.label || (t ? String(t) : "Unknown");
+  }[tt] || "bg-gray-100 text-gray-800 border-gray-200";
+
+  const label = CANON[tt] || (t ? String(t) : "Unknown");
   return (
-    <span
-      className={
-        "inline-block text-xs px-2 py-0.5 rounded border " +
-        (map[t] || "bg-gray-100 text-gray-800 border-gray-200")
-      }
-      title={t}
-    >
+    <span className={`inline-block text-xs px-2 py-0.5 rounded border ${cls}`} title={String(t || "")}>
       {label}
     </span>
   );
@@ -170,10 +188,12 @@ export default function Reports() {
   const filtered = useMemo(() => {
     const s = search.trim().toLowerCase();
     return userRows
-      .filter((r) => (typeFilter ? r.type === typeFilter : true))
+      .filter((r) =>
+        typeFilter ? normalizeType(r.type) === typeFilter : true
+      )
       .filter((r) => {
         if (!s) return true;
-        const hay = `${r.label || ""} ${r.type || ""} ${periodLabel(r)}`.toLowerCase();
+        const hay = `${r.label || ""} ${normalizeType(r.type) || ""} ${periodLabel(r)}`.toLowerCase();
         return hay.includes(s);
       });
   }, [userRows, search, typeFilter]);
@@ -188,8 +208,8 @@ export default function Reports() {
           vb = (b.label || "").toLowerCase();
           break;
         case "type":
-          va = a.type || "";
-          vb = b.type || "";
+          va = normalizeType(a.type) || "";
+          vb = normalizeType(b.type) || "";
           break;
         case "period":
           va = periodLabel(a);
@@ -251,7 +271,7 @@ export default function Reports() {
           </div>
         </div>
 
-        {/* Desktop table for daily */}
+        {/* Desktop table (now same look/columns as periodical) */}
         <div className="hidden sm:block card p-0 overflow-x-auto">
           <table className="min-w-full border border-gray-300 rounded text-sm">
             <thead className="bg-gray-50">
@@ -259,7 +279,8 @@ export default function Reports() {
                 <th className="text-left p-2 border-b border-r">Label</th>
                 <th className="text-left p-2 border-b border-r">Type</th>
                 <th className="text-left p-2 border-b border-r">Period</th>
-                <th className="text-left p-2 border-b">Created</th>
+                <th className="text-left p-2 border-b border-r">Created</th>
+                <th className="text-left p-2 border-b">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -270,39 +291,48 @@ export default function Reports() {
                   <tr key={r.id} className="odd:bg-white even:bg-gray-50">
                     <td className="p-2 border-b border-r">
                       <div className="font-medium">{dailyTitle(r)}</div>
-                      <div className="mt-1 flex items-center gap-2">
-                        <Link className="btn btn-outline btn-sm" to={`/reports/${r.id}`}>
-                          Open
-                        </Link>
-                        {isAdmin && r.id === "auto_TB" && (
-                          <RebuildTrialBalanceButton />
-                        )}
-                      </div>
                     </td>
                     <td className="p-2 border-b border-r">
                       <TypeBadge t={r.type} />
                     </td>
-                    <td className="p-2 border-b border-r font-mono">{periodLabel(r)}</td>
-                    <td className="p-2 border-b font-mono">{fmtDT(r.createdAt)}</td>
+                    <td className="p-2 border-b border-r font-mono">
+                      {periodLabel(r)}
+                    </td>
+                    <td className="p-2 border-b border-r font-mono">
+                      {fmtDT(r.createdAt)}
+                    </td>
+                    <td className="p-2 border-b">
+                      <div className="flex flex-wrap gap-2 items-center">
+                        <Link className="btn btn-outline btn-sm" to={`/reports/${r.id}`}>
+                          Open
+                        </Link>
+
+                        {/* Admin-only rebuilders for specific daily docs */}
+                        {isAdmin && r.id === "auto_TB" && <RebuildTrialBalanceButton />}
+                        {isAdmin && r.id === "auto_IS" && <RebuildIncomeStatementButton />}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               {!loading && dailyRows.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="p-4 text-center text-ink/60">
+                  <td colSpan={5} className="p-4 text-center text-ink/60">
                     No daily reports found.
                   </td>
                 </tr>
               )}
               {loading && (
                 <tr>
-                  <td colSpan={4} className="p-4 text-center">Loading…</td>
+                  <td colSpan={5} className="p-4 text-center">
+                    Loading…
+                  </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
 
-        {/* Mobile cards for daily */}
+        {/* Mobile cards for daily (kept consistent style with periodical cards) */}
         <div className="sm:hidden space-y-3">
           {["auto_IS", "auto_BS", "auto_CF", "auto_TB"]
             .map((id) => dailyRows.find((r) => r.id === id))
@@ -323,9 +353,8 @@ export default function Reports() {
                   <Link className="btn btn-outline btn-sm" to={`/reports/${r.id}`}>
                     Open
                   </Link>
-                  {isAdmin && r.id === "auto_TB" && (
-                    <RebuildTrialBalanceButton />
-                  )}
+                  {isAdmin && r.id === "auto_TB" && <RebuildTrialBalanceButton />}
+                  {isAdmin && r.id === "auto_IS" && <RebuildIncomeStatementButton />}
                 </div>
               </div>
             ))}
@@ -356,7 +385,7 @@ export default function Reports() {
               value={typeFilter}
               onChange={(e) => setTypeFilter(e.target.value)}
             >
-              {TYPES.map((t) => (
+              {FILTER_OPTIONS.map((t) => (
                 <option key={t.val} value={t.val}>
                   {t.label}
                 </option>
