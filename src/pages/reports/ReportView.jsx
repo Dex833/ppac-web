@@ -460,4 +460,76 @@ export default function ReportView() {
     const sections = payload.sections || [];
     const summary = payload.summary || { startCash: 0, netChangeCash: 0, endCash: 0 };
     return (
-      <div classNam
+      <div className="page-gutter">
+        {Header}
+        <div className="card p-3">
+          <div className="mb-2 text-sm text-ink/70">
+            <span className="font-semibold">Cash Flow</span> — read-only snapshot
+          </div>
+          {sections.map((sec) => (
+            <div key={sec.key || sec.title} className="mb-4">
+              <div className="font-semibold mb-1">{sec.title}</div>
+              {Array.isArray(sec.rows) && sec.rows.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full border border-gray-300 rounded text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="text-left p-2 border-b border-r">Code</th>
+                        <th className="text-left p-2 border-b border-r">Account</th>
+                        <th className="text-right p-2 border-b">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sec.rows.map((r, i) => (
+                        <tr key={i} className="odd:bg-white even:bg-gray-50">
+                          <td className="p-2 border-b border-r">{r.code || ""}</td>
+                          <td className="p-2 border-b border-r">{r.name || ""}</td>
+                          <td className="p-2 border-b text-right">{fmtNum(r.amount)}</td>
+                        </tr>
+                      ))}
+                      <tr className="font-bold bg-gray-100">
+                        <td colSpan={2} className="p-2 border-t text-right">Subtotal:</td>
+                        <td className="p-2 border-t text-right">{fmtNum(sec.total)}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="text-sm text-ink/60">No items</div>
+              )}
+            </div>
+          ))}
+          <div className="grid sm:grid-cols-3 gap-2 text-sm">
+            <div className="border rounded p-2 flex items-center justify-between">
+              <span>Start Cash</span>
+              <span className="font-mono">{fmtNum(summary.startCash)}</span>
+            </div>
+            <div className="border rounded p-2 flex items-center justify-between">
+              <span>Net Change</span>
+              <span className="font-mono">{fmtNum(summary.netChangeCash)}</span>
+            </div>
+            <div className="border rounded p-2 flex items-center justify-between font-semibold">
+              <span>End Cash</span>
+              <span className="font-mono">{fmtNum(summary.endCash)}</span>
+            </div>
+          </div>
+          <div className="mt-3">
+            <button className="btn" onClick={() => window.print()}>Print</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* Fallback (auto doc without payload yet) */
+  return (
+    <div className="page-gutter">
+      {Header}
+      <div className="card p-4">
+        <div className="text-ink/70">
+          This daily auto report has no structured payload yet. Rebuild it from the Reports page.
+        </div>
+      </div>
+    </div>
+  );
+}
