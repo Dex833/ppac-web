@@ -167,6 +167,7 @@ import MembershipReview from "./pages/admin/MembershipReview.jsx";
 import AdminPayments from "./pages/admin/Payments.jsx";
 import AccountingSettingsPage from "./pages/admin/AccountingSettings.jsx";
 import PaymentsPage from "./pages/Payments.jsx";
+import ReceiptPage from "./pages/Receipt.jsx";
 
 // Lazy load accounting pages
 const Accounting = lazy(() => import("./pages/accounting/index.jsx"));
@@ -375,6 +376,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <PaymentsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/receipt/:paymentId"
+            element={
+              <ProtectedRoute>
+                <ReceiptPage />
               </ProtectedRoute>
             }
           />

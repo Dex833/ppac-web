@@ -17,6 +17,9 @@ import {
 import { useAuth } from "../../AuthContext";
 import { httpsCallable, getFunctions } from "firebase/functions";
 import { buildMemberDisplayName } from "../../lib/names";
+import PostingResultDialog from "../../components/modals/PostingResultDialog.jsx";
+import { useNavigate } from "react-router-dom";
+import { yyyymmdd_hhmm, toISO } from "../../lib/format";
 
 const STATUS_OPTIONS = ["pending", "paid", "rejected"]; // default filter 'pending'
 const TYPE_OPTIONS = ["membership_fee", "share_capital", "purchase", "loan_repayment", "other"];
@@ -88,6 +91,51 @@ export default function AdminPaymentsList() {
       }
     );
     unsubRef.current = unsub;
+  }
+
+  async function exportCsv() {
+    // Recreate the same filtered query; for larger exports, page in chunks
+    let qBase = query(collection(db, "payments"));
+    if (status) qBase = query(qBase, where("status", "==", status));
+    if (type) qBase = query(qBase, where("type", "==", type));
+    if (method) qBase = query(qBase, where("method", "==", method));
+    if (from) qBase = query(qBase, where("createdAt", ">=", new Date(`${from}T00:00:00`)));
+    if (to) qBase = query(qBase, where("createdAt", "<=", new Date(`${to}T23:59:59`)));
+    qBase = query(qBase, orderBy("createdAt", "desc"), limit(5000));
+
+    const s = await getDocs(qBase);
+    const items = s.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const cols = [
+      "createdAt","confirmedAt","status","receiptNo","memberName","userId","type","method","referenceNo","amount","principalPortion","interestPortion","linkedId","confirmedBy","notes"
+    ];
+    const rows = items.map((p) => ({
+      createdAt: toISO(p.createdAt),
+      confirmedAt: toISO(p.confirmedAt),
+      status: p.status || "",
+      receiptNo: p.receiptNo || "",
+      memberName: p.memberName || p.userEmail || "",
+      userId: p.userId || p.uid || "",
+      type: p.type || "",
+      method: p.method || "",
+      referenceNo: p.referenceNo || p.refNo || "",
+      amount: Number(p.amount || 0),
+      principalPortion: p.type === "loan_repayment" ? Number(p.principalPortion || 0) : "",
+      interestPortion: p.type === "loan_repayment" ? Number(p.interestPortion || 0) : "",
+      linkedId: p.linkedId || "",
+      confirmedBy: p.confirmedBy || "",
+      notes: (p.notes || "").replace(/\r?\n/g, " ").trim(),
+    }));
+    const csvEscape = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const header = cols.map(csvEscape).join(",");
+    const body = rows.map((r) => cols.map((k) => csvEscape(r[k])).join(",")).join("\n");
+    const csv = header + "\n" + body;
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `payments_${yyyymmdd_hhmm()}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 500);
   }
 
   useEffect(() => {
@@ -170,6 +218,14 @@ export default function AdminPaymentsList() {
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-2xl font-bold">Payments</h2>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="btn btn-outline btn-sm"
+            onClick={exportCsv}
+            title="Export filtered payments to CSV"
+          >
+            Export CSV
+          </button>
           <button
             type="button"
             className="btn btn-outline btn-sm"
@@ -295,6 +351,29 @@ function PaymentDetail({ id, onClose, adminUid }) {
   const [cashAccounts, setCashAccounts] = useState([]);
   const [depositAccountId, setDepositAccountId] = useState("");
 
+  // Posting UX state
+  const [isApproving, setIsApproving] = useState(false);
+  const [resultOpen, setResultOpen] = useState(false);
+  const [resultVariant, setResultVariant] = useState("success");
+  const [resultInfo, setResultInfo] = useState({ receiptNo: null, journalNo: null, message: "" });
+  const navigate = useNavigate();
+  const postUnsubRef = useRef(null);
+  const postTimerRef = useRef(null);
+
+  function cleanupPostingWatch() {
+    if (postUnsubRef.current) {
+      try { postUnsubRef.current(); } catch {}
+      postUnsubRef.current = null;
+    }
+    if (postTimerRef.current) {
+      clearTimeout(postTimerRef.current);
+      postTimerRef.current = null;
+    }
+  }
+
+  // Ensure this hook is declared before any early return to keep hook order stable
+  useEffect(() => () => cleanupPostingWatch(), []);
+
   useEffect(() => {
     const ref = doc(db, "payments", id);
     const unsub = onSnapshot(ref, (s) => {
@@ -348,6 +427,54 @@ function PaymentDetail({ id, onClose, adminUid }) {
   const iNum = Number(interest || 0);
   const sumOk = !isLoan || Math.abs(pNum + iNum - amount) < 0.005;
 
+  function watchForPosting(paymentId) {
+    cleanupPostingWatch();
+    const pref = doc(db, "payments", paymentId);
+
+    // safety timeout: optimistic success and redirect
+    postTimerRef.current = setTimeout(() => {
+      setIsApproving(false);
+      setResultVariant("success");
+      setResultInfo({ receiptNo: null, journalNo: null, message: "" });
+      setResultOpen(true);
+      setTimeout(() => navigate("/admin/payments"), 1200);
+    }, 15000);
+
+    postUnsubRef.current = onSnapshot(
+      pref,
+      (snap) => {
+        const v = snap.data();
+        if (!v) return;
+        // Error from CF
+        if (v.postingError) {
+          cleanupPostingWatch();
+          setIsApproving(false);
+          setResultVariant("error");
+          const msg = v.postingError?.message || String(v.postingError);
+          setResultInfo({ receiptNo: null, journalNo: null, message: msg });
+          setResultOpen(true);
+          return;
+        }
+        // Success when receiptNo or journalNo present
+        if (v.status === "paid" && (v.receiptNo || v.journalNo)) {
+          cleanupPostingWatch();
+          setIsApproving(false);
+          setResultVariant("success");
+          setResultInfo({ receiptNo: v.receiptNo || null, journalNo: v.journalNo || null, message: "" });
+          setResultOpen(true);
+          setTimeout(() => navigate("/admin/payments?status=Pending"), 1200);
+        }
+      },
+      (e) => {
+        cleanupPostingWatch();
+        setIsApproving(false);
+        setResultVariant("error");
+        setResultInfo({ receiptNo: null, journalNo: null, message: e?.message || "Listener error" });
+        setResultOpen(true);
+      }
+    );
+  }
+
   async function approve() {
     setErr("");
     setSuccess("");
@@ -360,6 +487,7 @@ function PaymentDetail({ id, onClose, adminUid }) {
       return;
     }
     setBusy(true);
+    setIsApproving(true);
     try {
       const ref = doc(db, "payments", id);
       // First write: details + splits + optional deposit override
@@ -373,6 +501,9 @@ function PaymentDetail({ id, onClose, adminUid }) {
       // Second write: flip status (triggers CF)
       await updateDoc(ref, { status: "paid" });
 
+      // Start watcher for posting results
+      watchForPosting(id);
+
       // Audit log
       await addDoc(collection(db, "adminLogs"), {
         ts: serverTimestamp(),
@@ -384,10 +515,11 @@ function PaymentDetail({ id, onClose, adminUid }) {
         memberUid: p.userId || p.uid || null,
         ...(isLoan ? { principalPortion: pNum, interestPortion: iNum } : {}),
       });
-      setSuccess("Posted. Waiting for receipt…");
+      setSuccess("Posting…");
     } catch (e) {
       console.error(e);
       setErr(e?.message || String(e));
+      setIsApproving(false);
     } finally {
       setBusy(false);
     }
@@ -580,14 +712,27 @@ function PaymentDetail({ id, onClose, adminUid }) {
 
         {/* Actions */}
         <div className="flex flex-col sm:flex-row gap-2">
-          <button className="btn btn-primary" disabled={!canAct || (isLoan && !sumOk)} onClick={approve}>
-            {busy ? "Posting…" : "Approve & Post"}
+          <button className="btn btn-primary" disabled={!canAct || (isLoan && !sumOk) || isApproving} onClick={approve}>
+            {isApproving ? "Posting…" : "Approve & Post"}
           </button>
           <button className="btn btn-outline" disabled={!canAct} onClick={reject}>Reject</button>
           {success && <span className="text-sm text-emerald-700 sm:ml-2">{success}</span>}
           {err && <span className="text-sm text-rose-700 sm:ml-2">{err}</span>}
         </div>
       </div>
+
+      <PostingResultDialog
+        open={resultOpen}
+        variant={resultVariant}
+        receiptNo={resultInfo.receiptNo}
+        journalNo={resultInfo.journalNo}
+        message={resultInfo.message}
+  paymentId={id}
+        onClose={() => {
+          setResultOpen(false);
+          navigate("/admin/payments");
+        }}
+      />
     </div>
   );
 }

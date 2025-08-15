@@ -595,7 +595,7 @@ function PaymentHistory({ uid }) {
                   <div className="flex items-center gap-2">
                     <button className="btn btn-sm btn-outline" onClick={() => setActive(p)}>View</button>
                     {p.status === "paid" && p.receiptNo && (
-                      <button className="btn btn-sm btn-primary" onClick={() => window.print()}>Print Receipt</button>
+                      <a className="btn btn-sm btn-primary" href={`/receipt/${p.id}`}>View Receipt</a>
                     )}
                   </div>
                 </td>
