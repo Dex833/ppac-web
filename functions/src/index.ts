@@ -3,9 +3,10 @@ import { onDocumentWritten, onDocumentCreated } from "firebase-functions/v2/fire
 import { onCall, onRequest } from "firebase-functions/v2/https";
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore, FieldValue, Query } from "firebase-admin/firestore";
+import { pmFetch } from "./lib/paymongo.js";
+import * as functionsCompat from "firebase-functions";
 import { mirrorJournalToEntries } from "./lib/mirrorJournalEntries.js";
 import { postPayment } from "./lib/postPayment.js";
-import { pmFetch } from "./lib/paymongo.js";
 import * as logger from "firebase-functions/logger";
 import { defineSecret } from "firebase-functions/params";
 
@@ -592,7 +593,7 @@ export const scheduledPostingSweeper = onSchedule(
 // ------------------------- Online payments (PayMongo) -------------------------
 // Callable to create a checkout session for an existing pending payment
 // Input: { provider?: 'paymongo', paymentId: string, returnUrl?: string }
-export const createOnlinePayment = onCall({ region: "asia-east1", secrets: [PAYMONGO_SECRET_KEY] }, async (req) => {
+export const createOnlinePayment = onCall({ region: "asia-southeast1", secrets: [PAYMONGO_SECRET_KEY] }, async (req) => {
   const uid = req.auth?.uid || "";
   if (!uid) throw new Error("auth required");
   const provider = String((req.data as any)?.provider || "").toLowerCase();
@@ -705,53 +706,85 @@ export const paymongoWebhook = onRequest({ region: "asia-southeast1", secrets: [
 });
 
 // Dedicated callable to create a GCash Source and return redirect URL
-export const paymongoCreateGcashSource = onCall({ region: "asia-east1", secrets: [PAYMONGO_SECRET_KEY] }, async (req) => {
-  const uid = req.auth?.uid || "";
-  if (!uid) throw new Error("auth required");
-  const paymentId = String((req.data as any)?.paymentId || "").trim();
-  if (!paymentId) throw new Error("paymentId required");
+function getSecretCompat() {
+  const fromEnv = process.env.PAYMONGO_SECRET_KEY;
+  const fromCfg = (functionsCompat.config().paymongo as any)?.secret;
+  const v = fromEnv || fromCfg || "";
+  if (!v) throw new Error("Missing PAYMONGO secret: set PAYMONGO_SECRET_KEY or functions.config().paymongo.secret");
+  if (!/^sk_(test|live)_/i.test(v)) throw new Error("PAYMONGO secret looks wrong (expect sk_test_... or sk_live_...)");
+  return v;
+}
 
-  const ref = db.doc(`payments/${paymentId}`);
-  const snap = await ref.get();
-  if (!snap.exists) throw new Error("payment not found");
-  const p = snap.data() as any;
-  if ((p.status || "") !== "pending") throw new Error("payment not pending");
-  if (p.userId !== uid && !await isAdminLike(uid)) throw new Error("permission denied");
+export const paymongoCreateGcashSource = onCall({ region: "asia-southeast1", secrets: [PAYMONGO_SECRET_KEY] }, async (req) => {
+  try {
+    const uid = req.auth?.uid || "";
+    if (!uid) throw new Error("unauthenticated");
+    const paymentId = String((req.data as any)?.paymentId || "").trim();
+    if (!paymentId) throw new Error("paymentId required");
 
-  const cents = Math.round(Number(p.amount || 0) * 100);
-  const sSnap = await db.doc("settings/paymongo").get();
-  const s = (sSnap.exists ? sSnap.data() : {}) as any;
-  const success = s.successUrl || "https://example.com/paymongo/success";
-  const cancel = s.cancelUrl || "https://example.com/paymongo/cancel";
-  const idemKey = `pm_src_${paymentId}`;
+    const secret = getSecretCompat();
 
-  const body = {
-    data: {
-      attributes: {
-        type: "gcash",
-        amount: cents,
-        currency: "PHP",
-        redirect: { success, failed: cancel },
-        metadata: { paymentId, userId: p.userId },
+    const pref = db.doc(`payments/${paymentId}`);
+    const psnap = await pref.get();
+    if (!psnap.exists) throw new Error("payment not found");
+    const p = psnap.data() as any;
+    if ((p.status || "") !== "pending") throw new Error("payment not pending");
+    if (p.userId !== uid && !(await isAdminLike(uid))) throw new Error("permission denied");
+
+    const amountPhp = Number(p.amount);
+    const amountCents = Math.round(amountPhp * 100);
+    if (!Number.isFinite(amountPhp) || amountPhp <= 0) throw new Error("Invalid amount (must be > 0)");
+    if (amountCents < 100) throw new Error("Minimum is ₱1.00 for GCash");
+
+    const s = ((await db.doc("settings/paymongo").get()).data() || {}) as any;
+    let success = s.successUrl || "";
+    let cancel = s.cancelUrl || "";
+    const https = (u: string) => /^https:\/\//i.test(u || "");
+    if (!https(success) || !https(cancel)) {
+      success = "https://ppac-web.web.app/paymongo/success";
+      cancel = "https://ppac-web.web.app/paymongo/cancel";
+    }
+
+    const idemKey = `pm_src_${paymentId}`;
+    const body = {
+      data: {
+        attributes: {
+          type: "gcash",
+          amount: amountCents,
+          currency: "PHP",
+          redirect: { success, failed: cancel },
+          metadata: { paymentId, userId: p.userId || "" },
+        },
       },
-    },
-  };
+    };
 
-  const secret = PAYMONGO_SECRET_KEY.value();
-  if (!secret) throw new Error("PAYMONGO_SECRET_KEY not set");
-  const json: any = await pmFetch("/sources", secret, {
-    method: "POST",
-    body: JSON.stringify(body),
-    headers: { "Idempotency-Key": idemKey },
-  } as any);
+    logger.info("[PM] create source →", { paymentId, amountCents, success, cancel });
+    const json: any = await pmFetch("/sources", secret, {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "Idempotency-Key": idemKey },
+    } as any);
 
-  const srcId = json?.data?.id;
-  const checkoutUrl = json?.data?.attributes?.redirect?.checkout_url;
-  await ref.set({
-    gateway: { provider: "paymongo", type: "gcash", sourceId: srcId, checkoutUrl, createdAt: FieldValue.serverTimestamp() },
-  }, { merge: true });
+    const srcId = json?.data?.id;
+    const checkoutUrl = json?.data?.attributes?.redirect?.checkout_url;
+    logger.info("[PM] created source ✔", { srcId, hasUrl: !!checkoutUrl });
+    if (!srcId || !checkoutUrl) throw new Error("Unexpected PayMongo response");
 
-  return { ok: true, checkoutUrl };
+    await pref.update({
+      gateway: {
+        provider: "paymongo",
+        type: "gcash",
+        sourceId: srcId,
+        checkoutUrl,
+        createdAt: FieldValue.serverTimestamp(),
+      },
+    });
+
+    return { checkoutUrl };
+  } catch (e: any) {
+    logger.error("paymongoCreateGcashSource ❌", e?.stack || e);
+    throw e;
+  }
 });
 
 async function isAdminLike(uid: string) {
@@ -906,4 +939,74 @@ export const remirrorRecentJournals = onCall({ region: "asia-east1" }, async (re
     }
   }
   return { ok: true, scanned: docs.length, processed };
+});
+
+// ------------------------- Settlements posting -------------------------
+export const postSettlement = onCall({ region: "asia-southeast1" }, async (req) => {
+  const uid = req.auth?.uid || "";
+  if (!uid) throw new Error("auth required");
+  // basic admin check
+  const isAdmin = await isAdminLike(uid);
+  if (!isAdmin) throw new Error("permission denied");
+
+  const settlementId = String((req.data as any)?.settlementId || "").trim();
+  if (!settlementId) throw new Error("settlementId required");
+
+  const sref = db.doc(`settlements/${settlementId}`);
+  const ss = await sref.get();
+  if (!ss.exists) throw new Error("settlement not found");
+  const stl = ss.data() as any;
+
+  const settings = await getAccountingSettings();
+  const bankId = stl.bankAccountId || settings?.gateway?.defaultSettlementBankId || settings?.cashAccounts?.bankDefaultId || settings?.cashAccountId || "";
+  const clearingId = settings?.gateway?.clearingAccountId || "";
+  const feesId = settings?.gateway?.feesExpenseId || "";
+  const taxesId = settings?.gateway?.taxesExpenseId || "";
+  if (!bankId || !clearingId) throw new Error("Missing bank or clearing account in settings");
+
+  const gross = Number(stl.gross || 0);
+  const fees = Number(stl.fees || 0);
+  const taxes = Number(stl.taxes || 0);
+  const net = Number(stl.net || gross - fees - taxes);
+  if (net <= 0 || gross <= 0) throw new Error("Invalid settlement amounts");
+
+  const journalId = `stl_${settlementId}`;
+  const jref = db.doc(`journalEntries/${journalId}`);
+  const existing = await jref.get();
+  if (existing.exists) {
+    await sref.set({ posted: true, journalId, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    return { ok: true, journalId, alreadyPosted: true };
+  }
+
+  const date = stl.date ? (stl.date as any) : FieldValue.serverTimestamp();
+  const dateStr = typeof (date as any)?.toDate === "function" ? (date as any).toDate().toISOString().slice(0, 10) : ymd(new Date());
+
+  const lines: any[] = [];
+  // DR Bank (net)
+  lines.push({ accountId: bankId, debit: net, credit: 0, memo: "Settlement net" });
+  // DR Fees
+  if (fees > 0) {
+    if (!feesId) throw new Error("feesExpenseId not set in settings");
+    lines.push({ accountId: feesId, debit: fees, credit: 0, memo: "Gateway fees" });
+  }
+  // DR Taxes on Fees (optional)
+  if (taxes > 0) {
+    if (!taxesId) throw new Error("taxesExpenseId not set in settings");
+    lines.push({ accountId: taxesId, debit: taxes, credit: 0, memo: "Taxes on fees" });
+  }
+  // CR Clearing (gross)
+  lines.push({ accountId: clearingId, debit: 0, credit: gross, memo: "Clear gross" });
+
+  await db.runTransaction(async (tx) => {
+    tx.set(jref, {
+      date: dateStr,
+      description: `Settlement ${stl.provider || "gateway"} ${stl.reference || settlementId}`,
+      lines,
+      createdAt: FieldValue.serverTimestamp(),
+      createdByUid: uid,
+    });
+    tx.set(sref, { posted: true, journalId, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  });
+
+  return { ok: true, journalId };
 });

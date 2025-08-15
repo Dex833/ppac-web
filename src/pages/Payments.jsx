@@ -266,8 +266,9 @@ function MakePayment({ uid, settings, loadingSettings }) {
     e.preventDefault();
     if (!uid) return;
     if (!selectedMethod) return alert("Please choose a method.");
-    const amt = Number(amount);
-    if (!isFinite(amt) || amt <= 0) return alert("Enter a valid amount > 0.");
+  const amt = Number(amount);
+  if (!isFinite(amt) || amt <= 0) return alert("Enter a valid amount > 0.");
+  if (selectedMethod === "paymongo_gcash" && amt < 1) return alert("Minimum ₱1.00 for GCash.");
     const isManual = ["bank_transfer", "gcash_manual", "static_qr"].includes(selectedMethod);
     if (isManual && !referenceNo.trim()) return alert("Reference No is required.");
     if (isManual && !file) return alert("Proof file is required.");

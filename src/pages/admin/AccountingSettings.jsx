@@ -58,6 +58,7 @@ export default function AccountingSettingsPage() {
 
   const shareCapMain = useMemo(() => accounts.filter((a) => String(a.main).trim().toLowerCase() === "share capital"), [accounts]);
   const loanRecvMain = useMemo(() => accounts.filter((a) => String(a.main).trim().toLowerCase() === "loan receivable"), [accounts]);
+  const expenseCandidates = useMemo(() => accounts.filter((a) => String(a.type || "").toLowerCase() === "expense"), [accounts]);
 
   function onChange(field, val) {
     setSettings((s) => ({ ...(s || {}), [field]: val }));
@@ -68,7 +69,7 @@ export default function AccountingSettingsPage() {
     setMsg("");
     try {
       const ref = doc(db, "settings", "accounting");
-      await updateDoc(ref, { ...(settings || {}), updatedAt: serverTimestamp() });
+  await updateDoc(ref, { ...(settings || {}), updatedAt: serverTimestamp() });
       setMsg("Saved.");
     } catch (e) {
       setMsg(e?.message || String(e));
@@ -166,6 +167,65 @@ export default function AccountingSettingsPage() {
             ))}
           </select>
         </label>
+      </div>
+
+      <div className="card p-4 space-y-3">
+        <div className="font-semibold">Gateway / Settlements</div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label className="block">
+            <div className="text-xs text-ink/60">Clearing (Asset)</div>
+            <select
+              className="input"
+              value={settings?.gateway?.clearingAccountId || ""}
+              onChange={(e) => onChange("gateway", { ...(settings?.gateway || {}), clearingAccountId: e.target.value })}
+            >
+              <option value="">— Select —</option>
+              {cashCandidates.map((a) => (
+                <option key={a.id} value={a.id}><OptionLabel acc={a} /></option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <div className="text-xs text-ink/60">Gateway Fees (Expense)</div>
+            <select
+              className="input"
+              value={settings?.gateway?.feesExpenseId || ""}
+              onChange={(e) => onChange("gateway", { ...(settings?.gateway || {}), feesExpenseId: e.target.value })}
+            >
+              <option value="">— Select —</option>
+              {expenseCandidates.map((a) => (
+                <option key={a.id} value={a.id}><OptionLabel acc={a} /></option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <div className="text-xs text-ink/60">Taxes on Fees (Expense, optional)</div>
+            <select
+              className="input"
+              value={settings?.gateway?.taxesExpenseId || ""}
+              onChange={(e) => onChange("gateway", { ...(settings?.gateway || {}), taxesExpenseId: e.target.value })}
+            >
+              <option value="">— Select —</option>
+              {expenseCandidates.map((a) => (
+                <option key={a.id} value={a.id}><OptionLabel acc={a} /></option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <div className="text-xs text-ink/60">Default Settlement Bank (Asset)</div>
+            <select
+              className="input"
+              value={settings?.gateway?.defaultSettlementBankId || ""}
+              onChange={(e) => onChange("gateway", { ...(settings?.gateway || {}), defaultSettlementBankId: e.target.value })}
+            >
+              <option value="">— Select —</option>
+              {cashCandidates.map((a) => (
+                <option key={a.id} value={a.id}><OptionLabel acc={a} /></option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="text-xs text-ink/60">Payments via gateway post to Clearing; settlements move from Clearing to Bank with fees/taxes.</div>
       </div>
 
       <div className="card p-4 space-y-3">

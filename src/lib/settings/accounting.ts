@@ -10,6 +10,12 @@ export type AccountingSettings = {
   interestIncomeId?: string;
   shareCapitalMainId?: string;
   loanReceivableMainId?: string;
+  gateway?: {
+    clearingAccountId?: string; // Asset: PayMongo Clearing
+    feesExpenseId?: string;     // Expense: Payment Gateway Fees
+    taxesExpenseId?: string;    // Expense (optional): Taxes on fees
+    defaultSettlementBankId?: string; // Asset: default bank to receive settlements
+  };
   updatedAt?: any;
 };
 
@@ -49,6 +55,23 @@ export async function ensureAccountingSettings(): Promise<void> {
       static_qr: data.cashAccountMap.static_qr ?? "",
       paymongo_gcash: (data.cashAccountMap as any).paymongo_gcash ?? "",
     } as any;
+  }
+
+  if (data.gateway === undefined) {
+    (patch as any).gateway = {
+      clearingAccountId: "",
+      feesExpenseId: "",
+      taxesExpenseId: "",
+      defaultSettlementBankId: "",
+    };
+  } else {
+    // ensure subkeys exist without overwriting
+    (patch as any).gateway = {
+      clearingAccountId: (data.gateway as any).clearingAccountId ?? "",
+      feesExpenseId: (data.gateway as any).feesExpenseId ?? "",
+      taxesExpenseId: (data.gateway as any).taxesExpenseId ?? "",
+      defaultSettlementBankId: (data.gateway as any).defaultSettlementBankId ?? "",
+    };
   }
 
   if (Object.keys(patch).length > 0) {
