@@ -2,6 +2,8 @@
 import React from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import PageBackground from "../components/PageBackground";
+import useUserProfile from "../hooks/useUserProfile";
+import { ensurePaymentsSettings } from "../lib/settings/payments";
 
 const adminBg =
   "https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80";
@@ -28,6 +30,34 @@ function AdminNavItem({ to, children, onClick }) {
 
 export default function AdminLayout() {
   const [mobileOpen, setMobileOpen] = React.useState(false);
+  const { profile } = useUserProfile();
+  const isAdmin = Array.isArray(profile?.roles)
+    ? profile.roles.includes("admin")
+    : (profile?.role === "admin");
+
+  // Ensure payments settings exist when an admin opens Admin
+  const ensuredRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!isAdmin || ensuredRef.current) return;
+    ensuredRef.current = true;
+    ensurePaymentsSettings().catch(() => {});
+  }, [isAdmin]);
+
+  const [seedBusy, setSeedBusy] = React.useState(false);
+  const [seedMsg, setSeedMsg] = React.useState("");
+  async function onInitPaymentsSettings() {
+    setSeedBusy(true);
+    setSeedMsg("");
+    try {
+      await ensurePaymentsSettings();
+      setSeedMsg("Payments settings ensured.");
+    } catch (e) {
+      setSeedMsg(e?.message || String(e));
+    } finally {
+      setSeedBusy(false);
+      setTimeout(() => setSeedMsg(""), 3000);
+    }
+  }
 
   // Close on Escape
   React.useEffect(() => {
@@ -61,6 +91,22 @@ export default function AdminLayout() {
           <span className="i-hamburger" aria-hidden>☰</span>
           Menu
         </button>
+
+        {/* Quick init (desktop) */}
+        {isAdmin && (
+          <div className="hidden md:flex items-center gap-2 ml-2">
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium shadow-sm hover:bg-gray-50"
+              onClick={onInitPaymentsSettings}
+              disabled={seedBusy}
+              title="Creates default payments settings if missing"
+            >
+              {seedBusy ? "Seeding…" : "Init Payment Settings"}
+            </button>
+            {seedMsg && <span className="text-xs text-ink/60">{seedMsg}</span>}
+          </div>
+        )}
       </div>
 
       {/* Layout */}
@@ -72,6 +118,7 @@ export default function AdminLayout() {
               <AdminNavItem to="/admin/users">Users</AdminNavItem>
               <AdminNavItem to="/admin/edit-home">Edit Home</AdminNavItem>
               <AdminNavItem to="/admin/membership-status">Membership Status</AdminNavItem>
+              <AdminNavItem to="/admin/payments">Payments</AdminNavItem>
             </nav>
           </div>
         </aside>
@@ -116,6 +163,12 @@ export default function AdminLayout() {
                   onClick={() => setMobileOpen(false)}
                 >
                   Membership Status
+                </AdminNavItem>
+                <AdminNavItem
+                  to="/admin/payments"
+                  onClick={() => setMobileOpen(false)}
+                >
+                  Payments
                 </AdminNavItem>
               </nav>
             </div>

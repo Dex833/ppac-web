@@ -1,0 +1,9 @@
+{
+  "membershipFee": 0,
+  "initialShareCapitalMin": 0,
+  "instructionsBank": "Bank name: \nAccount name: \nAccount number: \nNote: Include your name and reference number.",
+  "instructionsGCash": "GCash name: \nGCash number: \nNote: Include your name and reference number.",
+  "staticQrUrl": "",
+  "allowedManualMethods": ["bank_transfer", "gcash_manual", "static_qr"],
+  "oneTimeMembership": true
+}

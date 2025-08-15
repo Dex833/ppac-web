@@ -164,6 +164,8 @@ import AdminUsers from "./pages/admin/Users.jsx";
 import EditHome from "./pages/admin/EditHome.jsx";
 import MembershipStatusAdmin from "./pages/admin/MembershipStatus.jsx";
 import MembershipReview from "./pages/admin/MembershipReview.jsx";
+import AdminPayments from "./pages/admin/Payments.jsx";
+import PaymentsPage from "./pages/Payments.jsx";
 
 // Lazy load accounting pages
 const Accounting = lazy(() => import("./pages/accounting/index.jsx"));
@@ -368,6 +370,14 @@ export default function App() {
             }
           />
           <Route
+            path="/payments"
+            element={
+              <ProtectedRoute>
+                <PaymentsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/profile"
             element={
               <ProtectedRoute requireVerified={true}>
@@ -418,6 +428,7 @@ export default function App() {
             <Route path="edit-home" element={<EditHome />} />
             <Route path="membership-status" element={<MembershipStatusAdmin />} />
             <Route path="membership-status/:uid" element={<MembershipReview />} />
+            <Route path="payments" element={<AdminPayments />} />
           </Route>
 
           {/* Accounting-only (nested) */}

@@ -452,6 +452,9 @@ export default function Dashboard() {
                   {memberComplete ? "Edit Profile" : "Complete Member Profile"}
                 </Link>
               )}
+              {isVerified && (
+                <Link to="/payments" className="btn btn-outline">Payments</Link>
+              )}
             </div>
           </div>
         </aside>

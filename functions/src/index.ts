@@ -1,4 +1,5 @@
 import { onSchedule } from "firebase-functions/v2/scheduler";
+import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import { onCall } from "firebase-functions/v2/https";
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore, FieldValue, Query } from "firebase-admin/firestore";
@@ -19,6 +20,114 @@ function ymd(d = new Date()): string {
 function startOfYear(): string {
   const d = new Date();
   return `${d.getFullYear()}-01-01`;
+}
+
+// --------------- common helpers (names, settings, sequences) ---------------
+function buildMemberDisplayName(v: any): string {
+  const first = String(v?.firstName || "").trim();
+  const mid = String(v?.middleName || "").trim();
+  const last = String(v?.lastName || "").trim();
+  const dn = String(v?.displayName || "").trim();
+  if (first && last) {
+    const mi = mid ? `${mid[0].toUpperCase()}.` : "";
+    return [first, mi, last].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  }
+  if (dn) return dn;
+  return [first, last].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+}
+
+async function getAccountingSettings(): Promise<any> {
+  const snap = await db.doc("settings/accounting").get();
+  return snap.exists ? snap.data() : {};
+}
+
+async function nextSequence(key: "receipts" | "journals") {
+  const ref = db.doc(`sequences/${key}`);
+  const res = await db.runTransaction(async (tx) => {
+    const cur = await tx.get(ref);
+    const v = cur.exists ? (cur.data() as any) : { next: 1 };
+    const next = Number(v.next || 1);
+    tx.set(ref, { next: next + 1, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    return next;
+  });
+  return res;
+}
+
+async function resolveMainAccountByName(mainName: "Share Capital" | "Loan Receivable") {
+  // Prefer a canonical main row where individual == ""
+  const q1 = await db
+    .collection("accounts")
+    .where("main", "==", mainName)
+    .where("individual", "==", "")
+    .limit(1)
+    .get();
+  if (!q1.empty) return { id: q1.docs[0].id, ...(q1.docs[0].data() as any) };
+  // Fallback: any row under the main
+  const q2 = await db.collection("accounts").where("main", "==", mainName).limit(1).get();
+  if (!q2.empty) return { id: q2.docs[0].id, ...(q2.docs[0].data() as any) };
+  throw new Error(`Main account not found: ${mainName}`);
+}
+
+async function getOrCreateMemberSubaccount(params: {
+  mainName: "Share Capital" | "Loan Receivable";
+  memberUid: string;
+  memberName: string;
+}) {
+  const { mainName, memberUid, memberName } = params;
+  const main = await resolveMainAccountByName(mainName);
+
+  // Try by ownerUid
+  const byOwner = await db
+    .collection("accounts")
+    .where("main", "==", mainName)
+    .where("ownerUid", "==", memberUid)
+    .limit(1)
+    .get();
+  if (!byOwner.empty) return { id: byOwner.docs[0].id, ...(byOwner.docs[0].data() as any) };
+
+  // Try by exact individual name
+  const byName = await db
+    .collection("accounts")
+    .where("main", "==", mainName)
+    .where("individual", "==", memberName)
+    .limit(1)
+    .get();
+  if (!byName.empty) return { id: byName.docs[0].id, ...(byName.docs[0].data() as any) };
+
+  // Determine next code among siblings
+  let nextCode: number | undefined = undefined;
+  try {
+    const sibs = await db
+      .collection("accounts")
+      .where("main", "==", mainName)
+      .orderBy("code", "desc")
+      .limit(25)
+      .get();
+    let max = 0;
+    let saw = false;
+    for (const d of sibs.docs) {
+      const c = (d.data() as any).code;
+      if (c != null) {
+        saw = true;
+        const n = typeof c === "number" ? c : parseInt(String(c).replace(/\D+/g, ""), 10);
+        if (!Number.isNaN(n)) max = Math.max(max, n);
+      }
+    }
+    if (saw) nextCode = max + 1;
+  } catch {}
+
+  const payload = {
+    code: nextCode,
+    main: mainName,
+    individual: memberName,
+    type: main.type || (mainName === "Share Capital" ? "Equity" : "Asset"),
+    description: "",
+    archived: false,
+    ownerUid: memberUid || null,
+    createdAt: FieldValue.serverTimestamp(),
+  } as any;
+  const ref = await db.collection("accounts").add(payload);
+  return { id: ref.id, ...payload };
 }
 
 async function getAccounts() {
@@ -395,3 +504,144 @@ export const rebuildAutosNow = onCall({ region: "asia-southeast1" }, async (_req
   await runAllAutos();
   return { ok: true };
 });
+
+// 3) Payments → Journal posting
+export const onPaymentStatusPaid = onDocumentWritten(
+  { region: "asia-east1", document: "payments/{paymentId}" },
+  async (event) => {
+    const before = event.data?.before?.data() as any;
+    const after = event.data?.after?.data() as any;
+    const paymentId = event.params?.paymentId as string;
+
+    if (!after) return; // deleted
+    const prevStatus = before?.status || "";
+    const nextStatus = after?.status || "";
+    if (prevStatus === "paid" || nextStatus !== "paid") return; // not our transition
+
+    // Idempotency: existing journal linked to this payment?
+    const existing = await db
+      .collection("journalEntries")
+      .where("linkedPaymentId", "==", paymentId)
+      .limit(1)
+      .get();
+    if (!existing.empty) return;
+
+    // Optional soft lock
+    const lockRef = db.doc(`locks/payments_${paymentId}`);
+    try {
+      await db.runTransaction(async (tx) => {
+        const l = await tx.get(lockRef);
+        if (l.exists) throw new Error("locked");
+        tx.set(lockRef, { at: FieldValue.serverTimestamp() });
+      });
+    } catch (e) {
+      // another worker is handling
+      return;
+    }
+
+    // Load member profile/name
+    const userId = after.userId || after.uid || after.memberUid;
+    let memberName = "";
+    try {
+      const m = await db.doc(`members/${userId}`).get();
+      if (m.exists) memberName = buildMemberDisplayName(m.data());
+      if (!memberName) {
+        const u = await db.doc(`users/${userId}`).get();
+        if (u.exists) memberName = buildMemberDisplayName(u.data());
+      }
+    } catch {}
+    memberName = memberName || "Member";
+
+    // Settings
+    const settings = await getAccountingSettings();
+    const cashId = settings?.cashAccountId;
+    const membershipFeeIncomeId = settings?.membershipFeeIncomeId;
+    const salesRevenueId = settings?.salesRevenueId;
+    const interestIncomeId = settings?.interestIncomeId;
+
+    // Build journal lines based on type
+    const type = String(after.type || "").toLowerCase();
+    const method = after.method || "cash";
+    const referenceNo = after.referenceNo || after.refNo || "";
+    const confirmedAt = after.confirmedAt || FieldValue.serverTimestamp();
+    const dateStr = after.confirmedAt ? ymd((after.confirmedAt as any).toDate?.() || new Date()) : ymd(new Date());
+    const amount = Number(after.amount || 0);
+
+    const lines: any[] = [];
+
+    // Ensure cash account
+    if (!cashId) {
+      await db.doc(`payments/${paymentId}`).set({ postingError: { at: FieldValue.serverTimestamp(), message: "Missing cashAccountId in settings/accounting" } }, { merge: true });
+      return;
+    }
+
+    function addDebit(accountId: string, value: number, memo?: string) {
+      if (value && value !== 0) lines.push({ accountId, debit: value, credit: 0, memo: memo || undefined });
+    }
+    function addCredit(accountId: string, value: number, memo?: string) {
+      if (value && value !== 0) lines.push({ accountId, debit: 0, credit: value, memo: memo || undefined });
+    }
+
+    try {
+      if (type === "membership_fee") {
+        if (!membershipFeeIncomeId) throw new Error("Missing membershipFeeIncomeId in settings/accounting");
+        addDebit(cashId, amount, `method: ${method}, ref: ${referenceNo}`);
+        addCredit(membershipFeeIncomeId, amount, "membership fee");
+      } else if (type === "share_capital") {
+        const sub = await getOrCreateMemberSubaccount({ mainName: "Share Capital", memberUid: userId, memberName });
+        addDebit(cashId, amount, `method: ${method}, ref: ${referenceNo}`);
+        addCredit(sub.id, amount, "share capital contribution");
+      } else if (type === "purchase") {
+        if (!salesRevenueId) throw new Error("Missing salesRevenueId in settings/accounting");
+        addDebit(cashId, amount, `method: ${method}, ref: ${referenceNo}`);
+        addCredit(salesRevenueId, amount, "sales");
+      } else if (type === "loan_repayment") {
+        const principal = Number(after.principalPortion ?? after.amount ?? 0);
+        const interest = Number(after.interestPortion ?? 0);
+        const total = principal + interest;
+        if (total <= 0) throw new Error("Loan repayment total is zero");
+        if (interest > 0 && !interestIncomeId) throw new Error("Missing interestIncomeId in settings/accounting");
+        const sub = await getOrCreateMemberSubaccount({ mainName: "Loan Receivable", memberUid: userId, memberName });
+        addDebit(cashId, total, `method: ${method}, ref: ${referenceNo}`);
+        addCredit(sub.id, principal, "loan principal repayment");
+        if (interest > 0) addCredit(interestIncomeId, interest, "loan interest");
+      } else {
+        // Other payments can be configured later
+        throw new Error(`Unsupported payment type: ${type}`);
+      }
+
+      const sumD = lines.reduce((s, l) => s + Number(l.debit || 0), 0);
+      const sumC = lines.reduce((s, l) => s + Number(l.credit || 0), 0);
+      if (Math.abs(sumD - sumC) > 0.0001) throw new Error("Unbalanced journal");
+
+      // Create journal with sequences and optional server-issued receiptNo
+      await db.runTransaction(async (tx) => {
+        const journalNo = await nextSequence("journals");
+        const receiptNo = await nextSequence("receipts");
+        const jRef = db.collection("journalEntries").doc();
+        tx.set(jRef, {
+          journalNo,
+          date: dateStr,
+          description: `Payment: ${type} | ref ${referenceNo} | user ${memberName} | method ${method}`,
+          linkedPaymentId: paymentId,
+          lines,
+          createdAt: FieldValue.serverTimestamp(),
+          createdByUid: after.confirmedBy || null,
+          confirmedAt: confirmedAt,
+        });
+        tx.set(db.doc(`payments/${paymentId}`), {
+          receiptNo: String(receiptNo),
+          postingError: FieldValue.delete(),
+        }, { merge: true });
+      });
+    } catch (e: any) {
+      await db.doc(`payments/${paymentId}`).set(
+        { postingError: { at: FieldValue.serverTimestamp(), message: e?.message || String(e) } },
+        { merge: true }
+      );
+    } finally {
+      // release lock
+      try { await db.recursiveDelete ? (db as any).recursiveDelete(lockRef) : lockRef.delete(); } catch {}
+    }
+  }
+);
