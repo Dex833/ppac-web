@@ -137,10 +137,9 @@ service cloud.firestore {
         (
           request.auth.uid == resource.data.userId &&
           resource.data.status == 'pending' &&
-          // owner cannot change status field
-          (
-            !request.resource.data.diff(resource.data).changedKeys().hasAny(['status'])
-          )
+          // owner cannot change status/userId/memberName/depositAccountId fields
+          !request.resource.data.diff(resource.data).changedKeys()
+            .hasAny(['status','userId','memberName','depositAccountId'])
         )
         ||
         isAdmin()
@@ -166,6 +165,13 @@ service cloud.firestore {
     // If you use a simple ledger UI
     match /journalEntries/{jid} {
       allow get, list: if canReadAccounting();
+      allow create, update, delete: if isStaff();
+    }
+
+    // Normalized per-line view for reporting
+    match /journalEntryLines/{lid} {
+      allow get, list: if canReadAccounting();
+      // Writes only via backend functions or admin tools
       allow create, update, delete: if isStaff();
     }
 

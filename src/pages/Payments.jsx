@@ -2,10 +2,12 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import PageBackground from "../components/PageBackground";
 import { useAuth } from "../AuthContext";
 import { db, storage } from "../lib/firebase";
+import { buildMemberDisplayName } from "../lib/names";
 import {
   addDoc,
   collection,
   doc,
+  getDoc,
   getDocs,
   limit,
   onSnapshot,
@@ -246,9 +248,17 @@ function MakePayment({ uid, settings, loadingSettings }) {
     setBusy(true);
     setUploadPct(0);
     try {
+      // Load a snapshot of the current user's profile/users doc for the name
+      let profileSnap = null;
+      try {
+        profileSnap = await onGetProfile(uid);
+      } catch {}
+      const memberName = buildMemberDisplayName(profileSnap || {});
+
       // 1) Create payment doc (pending)
       const payload = {
         userId: uid,
+        memberName: memberName || null,
         type,
         amount: Number(amt.toFixed(2)),
         method: selectedMethod,
@@ -454,6 +464,21 @@ function MakePayment({ uid, settings, loadingSettings }) {
       </aside>
     </div>
   );
+}
+
+// Helper: fetches users/{uid} then profiles/{uid} (fallback) to build display name
+async function onGetProfile(uid) {
+  try {
+    const uref = doc(db, "users", uid);
+    const us = await getDoc(uref);
+    if (us.exists()) return us.data();
+  } catch {}
+  try {
+    const pref = doc(db, "profiles", uid);
+    const ps = await getDoc(pref);
+    if (ps.exists()) return ps.data();
+  } catch {}
+  return {};
 }
 
 function StatusBadge({ s }) {

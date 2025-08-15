@@ -1,8 +1,9 @@
 import { onSchedule } from "firebase-functions/v2/scheduler";
-import { onDocumentWritten } from "firebase-functions/v2/firestore";
+import { onDocumentWritten, onDocumentCreated } from "firebase-functions/v2/firestore";
 import { onCall } from "firebase-functions/v2/https";
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore, FieldValue, Query } from "firebase-admin/firestore";
+import { mirrorJournalToEntries } from "./lib/mirrorJournalEntries.js";
 
 initializeApp();
 const db = getFirestore();
@@ -553,8 +554,7 @@ export const onPaymentStatusPaid = onDocumentWritten(
     memberName = memberName || "Member";
 
     // Settings
-    const settings = await getAccountingSettings();
-    const cashId = settings?.cashAccountId;
+  const settings = await getAccountingSettings();
     const membershipFeeIncomeId = settings?.membershipFeeIncomeId;
     const salesRevenueId = settings?.salesRevenueId;
     const interestIncomeId = settings?.interestIncomeId;
@@ -569,9 +569,20 @@ export const onPaymentStatusPaid = onDocumentWritten(
 
     const lines: any[] = [];
 
-    // Ensure cash account
+    // Determine cash account to debit
+    const overrideId = after.depositAccountId || null;
+    const mapId = settings?.cashAccountMap?.[method] || null;
+    const groupedId = method === 'gcash_manual'
+      ? settings?.cashAccounts?.gcashId
+      : method === 'bank_transfer'
+      ? settings?.cashAccounts?.bankDefaultId
+      : method === 'static_qr'
+      ? settings?.cashAccounts?.bankDefaultId
+      : null;
+    const legacyId = settings?.cashAccountId || null;
+    const cashId = overrideId || mapId || groupedId || legacyId;
     if (!cashId) {
-      await db.doc(`payments/${paymentId}`).set({ postingError: { at: FieldValue.serverTimestamp(), message: "Missing cashAccountId in settings/accounting" } }, { merge: true });
+      await db.doc(`payments/${paymentId}`).set({ postingError: { at: FieldValue.serverTimestamp(), message: `Missing cash account mapping for method "${method}". Configure in settings/accounting or set Deposit to on approval.` } }, { merge: true });
       return;
     }
 
@@ -645,3 +656,150 @@ export const onPaymentStatusPaid = onDocumentWritten(
     }
   }
 );
+
+// 4) Admin-triggered retry posting for a payment
+export const repostPayment = onCall({ region: "asia-east1" }, async (req) => {
+  const uid = req.auth?.uid || "";
+  if (!uid) throw new Error("auth required");
+  const paymentId = String((req.data as any)?.paymentId || "").trim();
+  if (!paymentId) throw new Error("paymentId required");
+
+  const ref = db.doc(`payments/${paymentId}`);
+  const snap = await ref.get();
+  if (!snap.exists) throw new Error("payment not found");
+  const data = snap.data() as any;
+
+  // Clear any previous error to surface fresh result
+  await ref.set({ postingError: FieldValue.delete() }, { merge: true });
+
+  // Nudge the trigger by flipping a no-op field
+  await ref.set({ _retryAt: FieldValue.serverTimestamp() }, { merge: true });
+  return { ok: true };
+});
+
+// 5) Mirror journal headers -> flat line items (denormalized view for reporting)
+// We mirror each journalEntries/{jid} document's lines[] into journalEntryLines/{jid}_{index}
+export const onJournalEntryCreated = onDocumentCreated(
+  { region: "asia-east1", document: "journalEntries/{journalId}" },
+  async (event) => {
+  const data = event.data?.data() as any;
+  const journalId = String(event.params?.journalId || "");
+  if (!data || !journalId) return;
+  // Enforce Timestamp date + zero-padded IDs via helper
+  await mirrorJournalToEntries(db, journalId, data);
+  }
+);
+
+// 6) Backfill: generate journalEntryLines for existing journalEntries headers
+export const backfillJournalEntryLines = onCall({ region: "asia-east1" }, async (req) => {
+  const uid = req.auth?.uid || "";
+  if (!uid) throw new Error("auth required");
+
+  // Optional basic role check (profiles/{uid}.roles contains 'admin' or 'staff')
+  try {
+    const prof = await db.doc(`profiles/${uid}`).get();
+    const roles = Array.isArray((prof.data() as any)?.roles) ? (prof.data() as any).roles : [];
+    if (!roles.includes("admin") && !roles.includes("staff")) {
+      // fallback: allow if user doc has admin
+      const u = await db.doc(`users/${uid}`).get();
+      const r2 = Array.isArray((u.data() as any)?.roles) ? (u.data() as any).roles : [];
+      if (!r2.includes("admin") && !r2.includes("staff")) {
+        throw new Error("permission denied");
+      }
+    }
+  } catch (e) {
+    throw new Error("permission denied");
+  }
+
+  // Optional days filter (not strictly needed; we process all for simplicity)
+  const days = Number((req.data as any)?.days || 0);
+  const cutoffDate = days > 0 ? new Date(Date.now() - days * 86400000) : null;
+  let scanned = 0;
+  let wrote = 0;
+
+  // Cache for accounts denorm
+  const accCache = new Map<string, { code?: any; main?: any; individual?: any }>();
+  async function getAcc(accId?: string) {
+    const id = String(accId || "");
+    if (!id) return null;
+    if (accCache.has(id)) return accCache.get(id)!;
+    try {
+      const snap = await db.doc(`accounts/${id}`).get();
+      const v = snap.exists ? (snap.data() as any) : null;
+      const denorm = v ? { code: v.code, main: v.main, individual: v.individual } : {};
+      accCache.set(id, denorm);
+      return denorm;
+    } catch {
+      const denorm = {} as any;
+      accCache.set(id, denorm);
+      return denorm;
+    }
+  }
+
+  // Read all headers (could be optimized with pagination if needed)
+  const snap = await db.collection("journalEntries").get();
+  for (const docSnap of snap.docs) {
+    const h = docSnap.data() as any;
+    scanned++;
+    if (cutoffDate) {
+      const createdAt = (h?.createdAt as any)?.toDate?.() || null;
+      if (createdAt && createdAt < cutoffDate) continue;
+    }
+    if (Array.isArray(h?.lines) && h.lines.length) {
+      await mirrorJournalToEntries(db, docSnap.id, h);
+      wrote += h.lines.length;
+    }
+  }
+  return { ok: true, scanned, wrote };
+});
+
+// 7) Optional: Remirror recent journals with Timestamp date normalization
+export const remirrorRecentJournals = onCall({ region: "asia-east1" }, async (req) => {
+  const uid = req.auth?.uid || "";
+  if (!uid) throw new Error("auth required");
+
+  // basic role check
+  try {
+    const prof = await db.doc(`profiles/${uid}`).get();
+    const roles = Array.isArray((prof.data() as any)?.roles) ? (prof.data() as any).roles : [];
+    if (!roles.includes("admin") && !roles.includes("staff")) {
+      const u = await db.doc(`users/${uid}`).get();
+      const r2 = Array.isArray((u.data() as any)?.roles) ? (u.data() as any).roles : [];
+      if (!r2.includes("admin") && !r2.includes("staff")) throw new Error("permission denied");
+    }
+  } catch {
+    throw new Error("permission denied");
+  }
+
+  const limit = Number((req.data as any)?.limit || 200);
+  const sinceDays = Number((req.data as any)?.sinceDays || 30);
+  const sinceMs = Date.now() - sinceDays * 24 * 60 * 60 * 1000;
+
+  // Prefer createdAt range when available; fall back to all and local filter
+  let docs: FirebaseFirestore.QueryDocumentSnapshot[] = [] as any;
+  try {
+    const q = db
+      .collection("journalEntries")
+      .where("createdAt", ">=", (FieldValue as any).serverTimestamp() as any); // placeholder; will fail
+    await q.get();
+  } catch {
+    // We’ll just read all and filter locally due to lack of a stable serverTimestamp compare in code
+  }
+  const snap = await db.collection("journalEntries").orderBy("createdAt", "desc").limit(limit).get().catch(async () => {
+    // Fallback if index/order missing
+    return await db.collection("journalEntries").get();
+  });
+  docs = snap.docs;
+
+  let processed = 0;
+  for (const d of docs) {
+    const j = d.data() as any;
+    const createdAt = (j?.createdAt as any)?.toDate?.() as Date | undefined;
+    if (createdAt && createdAt.getTime() < sinceMs) continue;
+    if (Array.isArray(j?.lines) && j.lines.length) {
+      await mirrorJournalToEntries(db, d.id, j);
+      processed++;
+    }
+  }
+  return { ok: true, scanned: docs.length, processed };
+});

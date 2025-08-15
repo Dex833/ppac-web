@@ -165,6 +165,7 @@ import EditHome from "./pages/admin/EditHome.jsx";
 import MembershipStatusAdmin from "./pages/admin/MembershipStatus.jsx";
 import MembershipReview from "./pages/admin/MembershipReview.jsx";
 import AdminPayments from "./pages/admin/Payments.jsx";
+import AccountingSettingsPage from "./pages/admin/AccountingSettings.jsx";
 import PaymentsPage from "./pages/Payments.jsx";
 
 // Lazy load accounting pages
@@ -429,6 +430,7 @@ export default function App() {
             <Route path="membership-status" element={<MembershipStatusAdmin />} />
             <Route path="membership-status/:uid" element={<MembershipReview />} />
             <Route path="payments" element={<AdminPayments />} />
+            <Route path="settings/accounting" element={<AccountingSettingsPage />} />
           </Route>
 
           {/* Accounting-only (nested) */}

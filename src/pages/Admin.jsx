@@ -4,6 +4,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import PageBackground from "../components/PageBackground";
 import useUserProfile from "../hooks/useUserProfile";
 import { ensurePaymentsSettings } from "../lib/settings/payments";
+import { ensureAccountingSettings } from "../lib/settings/accounting";
 
 const adminBg =
   "https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80";
@@ -41,6 +42,7 @@ export default function AdminLayout() {
     if (!isAdmin || ensuredRef.current) return;
     ensuredRef.current = true;
     ensurePaymentsSettings().catch(() => {});
+  ensureAccountingSettings().catch(() => {});
   }, [isAdmin]);
 
   const [seedBusy, setSeedBusy] = React.useState(false);
@@ -119,6 +121,7 @@ export default function AdminLayout() {
               <AdminNavItem to="/admin/edit-home">Edit Home</AdminNavItem>
               <AdminNavItem to="/admin/membership-status">Membership Status</AdminNavItem>
               <AdminNavItem to="/admin/payments">Payments</AdminNavItem>
+              <AdminNavItem to="/admin/settings/accounting">Accounting Settings</AdminNavItem>
             </nav>
           </div>
         </aside>
@@ -169,6 +172,12 @@ export default function AdminLayout() {
                   onClick={() => setMobileOpen(false)}
                 >
                   Payments
+                </AdminNavItem>
+                <AdminNavItem
+                  to="/admin/settings/accounting"
+                  onClick={() => setMobileOpen(false)}
+                >
+                  Accounting Settings
                 </AdminNavItem>
               </nav>
             </div>

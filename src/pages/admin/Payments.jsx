@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from "react";
 import { db } from "../../lib/firebase";
 import {
   collection,
+  getDoc,
+  getDocs,
   query,
   where,
   orderBy,
@@ -13,6 +15,8 @@ import {
   addDoc,
 } from "firebase/firestore";
 import { useAuth } from "../../AuthContext";
+import { httpsCallable, getFunctions } from "firebase/functions";
+import { buildMemberDisplayName } from "../../lib/names";
 
 const STATUS_OPTIONS = ["pending", "paid", "rejected"]; // default filter 'pending'
 const TYPE_OPTIONS = ["membership_fee", "share_capital", "purchase", "loan_repayment", "other"];
@@ -94,9 +98,90 @@ export default function AdminPaymentsList() {
 
   const [activeId, setActiveId] = useState("");
 
+  // Backfill names (admin utility)
+  const [bfBusy, setBfBusy] = useState(false);
+  const [bfMsg, setBfMsg] = useState("");
+  async function backfillNames() {
+    setBfBusy(true);
+    setBfMsg("");
+    try {
+      // 1) Try memberName == null
+      const qNull = query(collection(db, "payments"), where("memberName", "==", null), limit(100));
+      const sNull = await getDocs(qNull);
+      // 2) Try memberName == ""
+      const qEmpty = query(collection(db, "payments"), where("memberName", "==", ""), limit(100));
+      const sEmpty = await getDocs(qEmpty);
+      const seen = new Set();
+      let candidates = [...sNull.docs, ...sEmpty.docs].filter((d) => {
+        const ok = !seen.has(d.id);
+        seen.add(d.id);
+        return ok;
+      });
+      // 3) Fallback: take latest 200 and filter missing memberName field
+      if (candidates.length === 0) {
+        const qAny = query(collection(db, "payments"), orderBy("createdAt", "desc"), limit(200));
+        const sAny = await getDocs(qAny);
+        candidates = sAny.docs.filter((d) => {
+          const data = d.data() || {};
+          return !("memberName" in data) || data.memberName == null || String(data.memberName).trim() === "";
+        });
+      }
+
+      let done = 0;
+      for (const d of candidates) {
+        try {
+          const p = d.data() || {};
+          const uid = p.userId || p.uid;
+          if (!uid) continue;
+          // prefer users/{uid}; fallback to profiles/{uid}
+          let nameData = {};
+          try {
+            const uref = doc(db, "users", uid);
+            const us = await getDoc(uref);
+            if (us.exists()) nameData = us.data() || {};
+          } catch {}
+          if (!nameData || Object.keys(nameData).length === 0) {
+            try {
+              const pref = doc(db, "profiles", uid);
+              const ps = await getDoc(pref);
+              if (ps.exists()) nameData = ps.data() || {};
+            } catch {}
+          }
+          const memberName = buildMemberDisplayName(nameData);
+          if (memberName && memberName.trim()) {
+            await updateDoc(doc(db, "payments", d.id), { memberName });
+            done += 1;
+          }
+        } catch (e) {
+          console.warn("backfill one:", e);
+        }
+      }
+      setBfMsg(`Updated ${done} payment${done === 1 ? "" : "s"}.`);
+    } catch (e) {
+      setBfMsg(e?.message || String(e));
+    } finally {
+      setBfBusy(false);
+      setTimeout(() => setBfMsg(""), 4000);
+    }
+  }
+
   return (
     <div className="space-y-4">
-      <h2 className="text-2xl font-bold">Payments</h2>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-2xl font-bold">Payments</h2>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className="btn btn-outline btn-sm"
+            onClick={backfillNames}
+            disabled={bfBusy}
+            title="Fill memberName on recent payments"
+          >
+            {bfBusy ? "Backfilling…" : "Backfill Names"}
+          </button>
+          {bfMsg && <span className="text-xs text-ink/60">{bfMsg}</span>}
+        </div>
+      </div>
 
       {/* Filters */}
       <div className="card p-3 grid grid-cols-2 sm:grid-cols-6 gap-2">
@@ -178,7 +263,7 @@ export default function AdminPaymentsList() {
                   onClick={() => setActiveId(p.id)}
                 >
                   <td className="p-2 border-b">{fmtDT(p.createdAt)}</td>
-                  <td className="p-2 border-b">{p.memberName || p.userEmail || p.userId || p.uid || "—"}</td>
+                  <td className="p-2 border-b">{p.memberName || p.userName || p.userEmail || p.userId || p.uid || "—"}</td>
                   <td className="p-2 border-b">{p.type || "—"}</td>
                   <td className="p-2 border-b">{p.method || "—"}</td>
                   <td className="p-2 border-b text-right font-mono">{Number(p.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
@@ -206,6 +291,9 @@ function PaymentDetail({ id, onClose, adminUid }) {
   const [interest, setInterest] = useState("");
   const [notes, setNotes] = useState("");
   const [journal, setJournal] = useState(null); // find by linkedPaymentId
+  const [retryBusy, setRetryBusy] = useState(false);
+  const [cashAccounts, setCashAccounts] = useState([]);
+  const [depositAccountId, setDepositAccountId] = useState("");
 
   useEffect(() => {
     const ref = doc(db, "payments", id);
@@ -218,6 +306,7 @@ function PaymentDetail({ id, onClose, adminUid }) {
           setPrincipal(String(d.principalPortion ?? d.amount ?? ""));
           setInterest(String(d.interestPortion ?? 0));
         }
+  setDepositAccountId(d.depositAccountId || "");
       }
     });
     return () => unsub();
@@ -232,6 +321,23 @@ function PaymentDetail({ id, onClose, adminUid }) {
     });
     return () => unsub();
   }, [id]);
+
+  // Load candidate cash accounts (Asset or name contains Cash/Bank/GCash)
+  useEffect(() => {
+    const fn = async () => {
+      try {
+        const snap = await getDocs(collection(db, "accounts"));
+        const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const candidates = rows.filter((a) => {
+          const t = String(a.type || "").toLowerCase();
+          const n = `${a.main} ${a.individual || ""}`.toLowerCase();
+          return t === "asset" || n.includes("cash") || n.includes("bank") || n.includes("gcash");
+        });
+        setCashAccounts(candidates);
+      } catch {}
+    };
+    fn();
+  }, []);
 
   if (!p) return null;
   const amount = Number(p.amount || 0);
@@ -256,11 +362,12 @@ function PaymentDetail({ id, onClose, adminUid }) {
     setBusy(true);
     try {
       const ref = doc(db, "payments", id);
-      // First write: details + splits
+      // First write: details + splits + optional deposit override
       await updateDoc(ref, {
         confirmedBy: adminUid || null,
         confirmedAt: serverTimestamp(),
         notes: (notes || "").trim(),
+        ...(depositAccountId ? { depositAccountId } : {}),
         ...(isLoan ? { principalPortion: Number(Number(pNum).toFixed(2)), interestPortion: Number(Number(iNum).toFixed(2)) } : {}),
       });
       // Second write: flip status (triggers CF)
@@ -353,14 +460,31 @@ function PaymentDetail({ id, onClose, adminUid }) {
           {p.postingError && (
             <div className="mt-2 rounded border border-rose-200 bg-rose-50 text-rose-800 p-2 text-sm">
               Posting error: {p.postingError?.message || String(p.postingError)}
-              <div className="mt-1">
+              <div className="mt-1 flex flex-wrap gap-2 items-center">
                 <button
                   className="btn btn-sm btn-outline"
                   onClick={() => navigator.clipboard?.writeText(p.postingError?.message || String(p.postingError))}
                 >
                   Copy error
                 </button>
-                <a className="btn btn-sm btn-outline ml-2" href="/accounting" target="_self">Open Accounting Settings</a>
+                <a className="btn btn-sm btn-outline" href="/admin/settings/accounting" target="_self">Open Accounting Settings</a>
+                <button
+                  className="btn btn-sm btn-primary"
+                  onClick={async () => {
+                    setRetryBusy(true);
+                    try {
+                      const call = httpsCallable(getFunctions(undefined, "asia-east1"), "repostPayment");
+                      await call({ paymentId: p.id });
+                    } catch (e) {
+                      console.warn(e);
+                    } finally {
+                      setRetryBusy(false);
+                    }
+                  }}
+                  disabled={retryBusy}
+                >
+                  {retryBusy ? "Retrying…" : "Retry Post"}
+                </button>
               </div>
             </div>
           )}
@@ -396,6 +520,18 @@ function PaymentDetail({ id, onClose, adminUid }) {
             <div>
               <div className="text-ink/60">Notes</div>
               <textarea className="w-full border rounded px-2 py-1" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </div>
+            <div className="col-span-2">
+              <div className="text-ink/60">Deposit to (optional)</div>
+              <select className="input" value={depositAccountId} onChange={(e) => setDepositAccountId(e.target.value)}>
+                <option value="">— Default via settings —</option>
+                {cashAccounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {(a.code ? `${a.code} • ` : "") + a.main + (a.individual ? " / " + a.individual : "")}
+                  </option>
+                ))}
+              </select>
+              <div className="text-xs text-ink/60 mt-1">Overrides the cash account for this payment only.</div>
             </div>
           </div>
         </div>

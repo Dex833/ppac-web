@@ -1,7 +1,7 @@
 // src/pages/accounting/Ledger.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { db } from "../../lib/firebase";
-import { collection, query, orderBy, onSnapshot } from "firebase/firestore";
+import { collection, query, orderBy, onSnapshot, where } from "firebase/firestore";
 
 /* ----------------- helpers ----------------- */
 const fmtMoney = (n) =>
@@ -14,10 +14,16 @@ const fmtMoney = (n) =>
 
 const csvEscape = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
 
-function inRange(ymd, from, to) {
-  if (!ymd) return false;
-  if (from && ymd < from) return false;
-  if (to && ymd > to) return false;
+function toISODate(v) {
+  if (!v) return "";
+  if (typeof v === "string") return v.slice(0, 10);
+  if (typeof v?.toDate === "function") return v.toDate().toISOString().slice(0, 10);
+  return "";
+}
+function inRangeISO(dateStr, from, to) {
+  if (!dateStr) return false;
+  if (from && dateStr < from) return false;
+  if (to && dateStr > to) return false;
   return true;
 }
 
@@ -64,23 +70,41 @@ export default function Ledger() {
 
   const accounts = useAccounts();
 
-  // Load journal entries ordered by accounting date then refNumber
+  // Load journalEntries (headers) and flatten their lines for consistency
   useEffect(() => {
     setLoading(true);
-    const qEnt = query(
-      collection(db, "journalEntries"),
-      orderBy("date", "asc"),
-      orderBy("refNumber", "asc")
-    );
+    const qEnt = query(collection(db, "journalEntries"), orderBy("date", "asc"));
     const unsub = onSnapshot(
       qEnt,
       (snap) => {
-        setEntries(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        // Flatten headers → line items, with stable IDs per (journalId, index)
+        const rows = [];
+        snap.docs.forEach((d) => {
+          const h = { id: d.id, ...d.data() };
+          const hdrDate = toISODate(h.date) || ""; // journals use YYYY-MM-DD strings
+          const ref = h.journalNo ?? h.refNumber ?? "";
+          const createdBy = h.createdByUid || h.createdBy || "";
+          if (Array.isArray(h.lines)) {
+            h.lines.forEach((l, idx) => {
+              rows.push({
+                id: `${h.id}_${String(idx).padStart(3, "0")}`,
+                accountId: l.accountId,
+                debit: +l.debit || 0,
+                credit: +l.credit || 0,
+                date: hdrDate, // keep as string for filtering/sorting
+                refNumber: ref,
+                description: l.memo || h.description || "",
+                createdBy,
+              });
+            });
+          }
+        });
+        setEntries(rows);
         setLoading(false);
       },
       (err) => {
         console.error("journalEntries/onSnapshot error:", err);
-        alert("Failed to load journal entries: " + err.message);
+        alert("Failed to load journals: " + err.message);
         setLoading(false);
       }
     );
@@ -90,26 +114,27 @@ export default function Ledger() {
   // Build ledger map: accountId -> array of lines (sorted)
   const ledger = useMemo(() => {
     const map = {};
-    entries.forEach((entry) => {
-      (entry.lines || []).forEach((line) => {
-        const id = line.accountId;
-        if (!id) return;
-        if (!map[id]) map[id] = [];
-        map[id].push({
-          ...line,
-          entryId: entry.id,
-          refNumber: entry.refNumber,
-          date: entry.date, // "YYYY-MM-DD"
-          description: entry.description,
-          createdBy: entry.createdBy,
-        });
+    entries.forEach((line) => {
+      const id = line.accountId;
+      if (!id) return;
+      if (!map[id]) map[id] = [];
+      map[id].push({
+        // Normalize values for consistent UI/exports
+        debit: +line.debit || 0,
+        credit: +line.credit || 0,
+        date: toISODate(line.date), // keep as YYYY-MM-DD string
+        refNumber: line.journalNo || "",
+        description: line.description || "",
+        createdBy: line.createdBy || "",
       });
     });
     Object.keys(map).forEach((id) => {
       map[id].sort(
-        (a, b) =>
-          a.date.localeCompare(b.date) ||
-          String(a.refNumber).localeCompare(String(b.refNumber))
+        (a, b) => {
+          const ad = String(a.date || "");
+          const bd = String(b.date || "");
+          return ad.localeCompare(bd) || String(a.refNumber || "").localeCompare(String(b.refNumber || ""));
+        }
       );
     });
     return map;
@@ -137,10 +162,10 @@ export default function Ledger() {
       const allLines = (ledger[accId] || []).slice(); // sorted
       const opening = filter.from
         ? allLines
-            .filter((l) => l.date < filter.from)
+            .filter((l) => (l.date ? l.date < filter.from : false))
             .reduce((bal, l) => bal + (+l.debit || 0) - (+l.credit || 0), 0)
         : 0;
-      const lines = allLines.filter((l) => inRange(l.date, filter.from, filter.to));
+      const lines = allLines.filter((l) => inRangeISO(l.date, filter.from, filter.to));
       const totals = lines.reduce(
         (t, l) => ({
           debit: t.debit + (+l.debit || 0),

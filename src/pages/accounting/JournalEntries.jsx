@@ -17,6 +17,7 @@ import {
 } from "firebase/firestore";
 import { useAuth } from "../../AuthContext";
 import useUserProfile from "../../hooks/useUserProfile";
+import { getFunctions, httpsCallable } from "firebase/functions";
 
 // ----- Accounts for dropdown -----
 function useAccounts() {
@@ -84,6 +85,9 @@ export default function JournalEntries() {
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignEntry, setAssignEntry] = useState(null);
   const [assignName, setAssignName] = useState("");
+
+  // admin: backfill mirror lines
+  const [backfillingLines, setBackfillingLines] = useState(false);
 
   // dirty guard
   const [isDirty, setIsDirty] = useState(false);
@@ -371,6 +375,24 @@ export default function JournalEntries() {
         message: "Backfill failed: " + e.message,
       });
     } finally {
+      setTimeout(() => setNotif({ show: false, type: "", message: "" }), 2500);
+    }
+  }
+
+  // ----- Admin: backfill journalEntryLines mirror -----
+  async function backfillMirrorLines() {
+    if (!isAdmin) return;
+    if (!window.confirm("Backfill journalEntryLines from existing journal headers?")) return;
+    setBackfillingLines(true);
+    try {
+  const fn = httpsCallable(getFunctions(undefined, "asia-east1"), "backfillJournalEntryLines");
+      const res = await fn({ days: 0 });
+      const out = res?.data || {};
+      setNotif({ show: true, type: "success", message: `Mirror backfill done. Scanned ${out.scanned ?? 0}, wrote ${out.wrote ?? 0}.` });
+    } catch (e) {
+      setNotif({ show: true, type: "error", message: `Backfill failed: ${e?.message || e}` });
+    } finally {
+      setBackfillingLines(false);
       setTimeout(() => setNotif({ show: false, type: "", message: "" }), 2500);
     }
   }
@@ -702,13 +724,23 @@ export default function JournalEntries() {
       <div className="flex items-center justify-between mt-10 mb-4">
         <h3 className="text-xl font-semibold">Journal Entry History (latest 10)</h3>
         {isAdmin && (
-          <button
-            className="btn btn-sm btn-outline"
-            onClick={backfillCreatedBy}
-            title="Admin only"
-          >
-            Backfill creators
-          </button>
+          <div className="flex gap-2">
+            <button
+              className="btn btn-sm btn-outline"
+              onClick={backfillCreatedBy}
+              title="Admin only"
+            >
+              Backfill creators
+            </button>
+            <button
+              className="btn btn-sm btn-outline"
+              onClick={backfillMirrorLines}
+              disabled={backfillingLines}
+              title="Admin: mirror headers to journalEntryLines"
+            >
+              {backfillingLines ? "Backfilling…" : "Backfill lines"}
+            </button>
+          </div>
         )}
       </div>
 

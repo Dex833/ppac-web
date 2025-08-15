@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "journalEntryLines",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "posted", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
