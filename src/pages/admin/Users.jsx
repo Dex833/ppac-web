@@ -1,7 +1,6 @@
 // src/pages/admin/Users.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { getAuth } from "firebase/auth";
-import { db } from "../../lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import {
   collection,
   doc,
@@ -128,7 +127,7 @@ export default function Users() {
 
   async function writeAudit(action, targetUid, extra) {
     try {
-      const actor = getAuth().currentUser;
+  const actor = auth.currentUser;
       await addDoc(collection(db, "adminLogs"), {
         action,              // 'setRole' | 'toggleSuspend' | 'toggleAdminVerified'
         targetUid,

@@ -1,0 +1,81 @@
+import React, { useEffect, useState } from "react";
+import { collection, onSnapshot, orderBy, query, where } from "firebase/firestore";
+import { db } from "@/lib/firebase";
+import { Link } from "react-router-dom";
+
+export default function AdminOrders() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState("");
+
+  useEffect(() => {
+    let qBase = collection(db, "orders");
+    if (status) qBase = query(qBase, where("status", "==", status));
+    qBase = query(qBase, orderBy("createdAt", "desc"));
+    const unsub = onSnapshot(qBase, (s) => {
+      setRows(s.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setLoading(false);
+    }, () => setLoading(false));
+    return () => unsub();
+  }, [status]);
+
+  return (
+    <div className="mx-auto max-w-6xl p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Orders</h1>
+        <label className="flex items-center gap-2">
+          <span className="text-sm text-ink/60">Status</span>
+          <select className="input" value={status} onChange={(e)=>setStatus(e.target.value)}>
+            <option value="">All</option>
+            <option value="pending">Pending</option>
+            <option value="paid">Paid</option>
+            <option value="canceled">Canceled</option>
+          </select>
+        </label>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="min-w-[1000px] w-full border rounded">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="text-left p-2 border-b">Date</th>
+              <th className="text-left p-2 border-b">Items</th>
+              <th className="text-right p-2 border-b">Subtotal</th>
+              <th className="text-left p-2 border-b">Status</th>
+              <th className="text-left p-2 border-b">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading && <tr><td className="p-3" colSpan={5}>Loading…</td></tr>}
+            {!loading && rows.length === 0 && <tr><td className="p-3 text-ink/60" colSpan={5}>No orders.</td></tr>}
+            {!loading && rows.map((r) => (
+              <tr key={r.id} className="odd:bg-white even:bg-gray-50">
+                <td className="p-2 border-b">{fmtDT(r.createdAt)}</td>
+                <td className="p-2 border-b text-sm">
+                  <ul className="list-disc ml-4">
+                    {(r.items||[]).map((it,i)=>(<li key={i}>{it.qty} × {it.name}</li>))}
+                  </ul>
+                </td>
+                <td className="p-2 border-b text-right font-mono">₱{Number(r.subtotal||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+                <td className="p-2 border-b">{r.status||"pending"}</td>
+                <td className="p-2 border-b">
+                  <div className="flex items-center gap-2">
+                    {r.paymentId && <Link className="btn btn-sm btn-primary" to={`/receipt/${r.paymentId}`}>Open Receipt</Link>}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function fmtDT(v) {
+  try {
+    if (!v) return "—";
+    if (typeof v.toDate === "function") return v.toDate().toLocaleString();
+    return new Date(v).toLocaleString();
+  } catch { return String(v || "—"); }
+}

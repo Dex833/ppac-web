@@ -1,7 +1,7 @@
 // src/pages/reports/ReportView.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { db } from "../../lib/firebase";
+import { db } from "@/lib/firebase";
 import {
   doc,
   getDoc,

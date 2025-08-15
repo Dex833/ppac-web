@@ -1,7 +1,7 @@
 // src/pages/Profile.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../AuthContext";
-import { db, storage } from "../lib/firebase";
+import { db, storage } from "@/lib/firebase";
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp, onSnapshot } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { Navigate, useNavigate } from "react-router-dom";

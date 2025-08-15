@@ -1,5 +1,5 @@
 // src/pages/reports/saveSnapshot.js
-import { db } from "../../lib/firebase";
+import { db } from "@/lib/firebase";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 
 /**

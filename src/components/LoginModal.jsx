@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { signInWithEmailAndPassword } from "firebase/auth";
-import { auth, db } from "../lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
 
 export default function LoginModal({ open, onClose, onSuccess }) {

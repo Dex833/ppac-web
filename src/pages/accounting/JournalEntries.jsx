@@ -1,6 +1,6 @@
 // src/pages/accounting/JournalEntries.jsx
 import React, { useEffect, useState, useRef } from "react";
-import { db } from "../../lib/firebase";
+import { db } from "@/lib/firebase";
 import {
   collection,
   addDoc,
@@ -17,7 +17,8 @@ import {
 } from "firebase/firestore";
 import { useAuth } from "../../AuthContext";
 import useUserProfile from "../../hooks/useUserProfile";
-import { getFunctions, httpsCallable } from "firebase/functions";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "@/lib/firebase";
 
 // ----- Accounts for dropdown -----
 function useAccounts() {
@@ -385,7 +386,7 @@ export default function JournalEntries() {
     if (!window.confirm("Backfill journalEntryLines from existing journal headers?")) return;
     setBackfillingLines(true);
     try {
-  const fn = httpsCallable(getFunctions(undefined, "asia-east1"), "backfillJournalEntryLines");
+  const fn = httpsCallable(functions, "backfillJournalEntryLines");
       const res = await fn({ days: 0 });
       const out = res?.data || {};
       setNotif({ show: true, type: "success", message: `Mirror backfill done. Scanned ${out.scanned ?? 0}, wrote ${out.wrote ?? 0}.` });

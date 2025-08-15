@@ -1,7 +1,7 @@
 // src/pages/admin/MembershipStatus.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { collection, doc, onSnapshot, orderBy, query, updateDoc } from "firebase/firestore";
-import { db } from "../../lib/firebase";
+import { db } from "@/lib/firebase";
 import { useNavigate } from "react-router-dom";
 
 export default function MembershipStatusAdmin() {

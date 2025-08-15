@@ -1,6 +1,6 @@
 // src/pages/admin/EditHome.jsx
 import React, { useState, useEffect, useRef } from "react";
-import { db } from "../../lib/firebase";
+import { db } from "@/lib/firebase";
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 
 /* ---------------- Rich text editor (with tiny toolbar) ---------------- */

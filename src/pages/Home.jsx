@@ -1,7 +1,7 @@
 // src/pages/Home.jsx
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { db } from "../lib/firebase";
+import { db } from "@/lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
 import PageBackground from "../components/PageBackground";
 import { useAuth } from "../AuthContext";

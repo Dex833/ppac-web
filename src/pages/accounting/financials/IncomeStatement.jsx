@@ -1,6 +1,6 @@
 // src/pages/accounting/financials/IncomeStatement.jsx
 import React, { useEffect, useState, useRef } from "react";
-import { db } from "../../../lib/firebase";
+import { db } from "@/lib/firebase";
 import {
   collection,
   query,

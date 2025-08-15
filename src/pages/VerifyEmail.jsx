@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { auth } from "../lib/firebase";
+import { auth } from "@/lib/firebase";
 import { sendEmailVerification, reload } from "firebase/auth";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../AuthContext";

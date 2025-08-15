@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../AuthContext";
-import { db } from "../lib/firebase";
+import { db } from "@/lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
 
 export default function AdminRoute({ children }) {

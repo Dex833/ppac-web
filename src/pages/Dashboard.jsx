@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../AuthContext";
-import { db } from "../lib/firebase";
+import { db } from "@/lib/firebase";
 import {
   doc,
   getDoc,

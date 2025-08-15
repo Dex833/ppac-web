@@ -4,7 +4,9 @@ import { NavLink, Outlet } from "react-router-dom";
 import PageBackground from "../components/PageBackground";
 import useUserProfile from "../hooks/useUserProfile";
 import { ensurePaymentsSettings } from "../lib/settings/payments";
+import { ensurePaymongoSettings } from "../lib/settings/paymongo";
 import { ensureAccountingSettings } from "../lib/settings/accounting";
+import { ensureQrSettings } from "../lib/settings/qr";
 
 const adminBg =
   "https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80";
@@ -43,6 +45,8 @@ export default function AdminLayout() {
     ensuredRef.current = true;
     ensurePaymentsSettings().catch(() => {});
   ensureAccountingSettings().catch(() => {});
+  ensureQrSettings().catch(() => {});
+  ensurePaymongoSettings().catch(() => {});
   }, [isAdmin]);
 
   const [seedBusy, setSeedBusy] = React.useState(false);

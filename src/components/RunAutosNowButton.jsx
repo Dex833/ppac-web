@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { httpsCallable } from "firebase/functions";
-import { functions } from "../lib/firebase";
+import { functions } from "@/lib/firebase";
 import useUserProfile from "../hooks/useUserProfile";
 
 /** Admin-only button that calls the callable Cloud Function to rebuild all autos now. */

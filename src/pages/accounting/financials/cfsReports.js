@@ -1,4 +1,4 @@
-import { db } from "../../../lib/firebase";
+import { db } from "@/lib/firebase";
 import { collection, query, orderBy, addDoc, getDocs, serverTimestamp, deleteDoc, doc } from "firebase/firestore";
 
 export async function saveCashFlowStatementReport({ fromId, fromLabel, toId, toLabel, report }) {

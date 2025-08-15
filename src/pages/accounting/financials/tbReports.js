@@ -1,5 +1,5 @@
 // src/pages/accounting/financials/tbReports.js
-import { db } from "../../../lib/firebase";
+import { db } from "@/lib/firebase";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
 /**

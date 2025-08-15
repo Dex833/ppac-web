@@ -1,6 +1,6 @@
 // src/pages/accounting/Ledger.jsx
 import React, { useEffect, useMemo, useState } from "react";
-import { db } from "../../lib/firebase";
+import { db } from "@/lib/firebase";
 import { collection, query, orderBy, onSnapshot, where } from "firebase/firestore";
 
 /* ----------------- helpers ----------------- */

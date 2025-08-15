@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
-import { db } from "../../lib/firebase";
+import { db, functions } from "@/lib/firebase";
 import { collection, getDocs, query, where, orderBy, limit } from "firebase/firestore";
 import { Link } from "react-router-dom";
+import { httpsCallable } from "firebase/functions";
 
 function toISO(v) {
   try {
@@ -100,6 +101,17 @@ export default function OpsDashboard() {
                         <div className="flex gap-2">
                           <Link className="btn btn-sm btn-outline" to={`/admin/payments`} state={{ openId: p.id }}>Open payment</Link>
                           <Link className="btn btn-sm btn-primary" to={`/receipt/${p.id}`} target="_self">Open receipt</Link>
+                          <button
+                            className="btn btn-sm btn-primary"
+                            onClick={async () => {
+                              try {
+                                const call = httpsCallable(functions, "repostPayment");
+                                await call({ paymentId: p.id });
+                              } catch (e) {}
+                            }}
+                          >
+                            Retry
+                          </button>
                           <button className="btn btn-sm" onClick={() => { setSel(p); loadOps(p.id); }}>Attempts</button>
                         </div>
                       </td>

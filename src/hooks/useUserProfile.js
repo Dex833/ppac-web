@@ -1,7 +1,7 @@
 // src/hooks/useUserProfile.jsx
 import { useEffect, useState } from "react";
 import { doc, onSnapshot } from "firebase/firestore";
-import { db } from "../lib/firebase";
+import { db } from "@/lib/firebase";
 import { useAuth } from "../AuthContext";
 
 export default function useUserProfile() {

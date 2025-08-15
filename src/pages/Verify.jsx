@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { useAuth } from "../AuthContext";
 import { sendEmailVerification } from "firebase/auth";
-import { auth } from "../lib/firebase";
+import { auth } from "@/lib/firebase";
 import { useNavigate, Navigate } from "react-router-dom";
 import PageBackground from "../components/PageBackground";
 

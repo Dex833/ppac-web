@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { sendPasswordResetEmail } from "firebase/auth";
-import { auth } from "../lib/firebase";
+import { auth } from "@/lib/firebase";
 import { Link } from "react-router-dom";
 import PageBackground from "../components/PageBackground";
 

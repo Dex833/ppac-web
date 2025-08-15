@@ -169,6 +169,12 @@ import AccountingSettingsPage from "./pages/admin/AccountingSettings.jsx";
 import OpsDashboard from "./pages/admin/OpsDashboard.jsx";
 import PaymentsPage from "./pages/Payments.jsx";
 import ReceiptPage from "./pages/Receipt.jsx";
+import { PaymongoSuccess, PaymongoCancel } from "./pages/PaymongoResult.jsx";
+import Store from "./pages/store/Store.jsx";
+import Cart from "./pages/store/Cart.jsx";
+import Checkout from "./pages/store/Checkout.jsx";
+import AdminProducts from "./pages/admin/AdminProducts.jsx";
+import AdminOrders from "./pages/admin/AdminOrders.jsx";
 
 // Lazy load accounting pages
 const Accounting = lazy(() => import("./pages/accounting/index.jsx"));
@@ -266,6 +272,7 @@ export default function App() {
 
             {/* Reports tab visible to any signed-in not-suspended member; access enforced inside route */}
             {profile && notSuspended && <NavItem to="/reports">Reports</NavItem>}
+            {profile && notSuspended && <NavItem to="/store">Store</NavItem>}
 
             {isAdmin && notSuspended && <NavItem to="/admin/users">Admin</NavItem>}
             {(notSuspended && (isAdmin || isTreasurer || isManager)) && <NavItem to="/accounting">Accounting</NavItem>}
@@ -372,6 +379,31 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+          {/* Store */}
+          <Route
+            path="/store"
+            element={
+              <ProtectedRoute>
+                <Store />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/cart"
+            element={
+              <ProtectedRoute>
+                <Cart />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/checkout"
+            element={
+              <ProtectedRoute>
+                <Checkout />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/payments"
             element={
@@ -388,6 +420,8 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+          <Route path="/paymongo/success" element={<PaymongoSuccess />} />
+          <Route path="/paymongo/cancel" element={<PaymongoCancel />} />
           <Route
             path="/profile"
             element={
@@ -440,6 +474,8 @@ export default function App() {
             <Route path="membership-status" element={<MembershipStatusAdmin />} />
             <Route path="membership-status/:uid" element={<MembershipReview />} />
             <Route path="payments" element={<AdminPayments />} />
+            <Route path="products" element={<AdminProducts />} />
+            <Route path="orders" element={<AdminOrders />} />
             <Route path="settings/accounting" element={<AccountingSettingsPage />} />
             <Route path="ops" element={<OpsDashboard />} />
           </Route>
