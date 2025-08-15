@@ -25,9 +25,9 @@ export async function ensureAccountingSettings(): Promise<void> {
   if (!snap.exists()) {
     // CREATE ONLY (no merge) — first time
     await setDoc(ref, {
-      cashAccountId: "", // legacy
+  cashAccountId: "", // legacy
   cashAccounts: { onHandId: "", bankDefaultId: "", gcashId: "" },
-  cashAccountMap: { bank_transfer: "", gcash_manual: "", static_qr: "", paymongo_gcash: "" },
+  cashAccountMap: { bank_transfer: "", gcash_manual: "", static_qr: "" },
       membershipFeeIncomeId: "",
       salesRevenueId: "",
       interestIncomeId: "",
@@ -46,14 +46,13 @@ export async function ensureAccountingSettings(): Promise<void> {
     patch.cashAccounts = { onHandId: "", bankDefaultId: "", gcashId: "" };
   }
   if (data.cashAccountMap === undefined) {
-    patch.cashAccountMap = { bank_transfer: "", gcash_manual: "", static_qr: "", paymongo_gcash: "" };
+    patch.cashAccountMap = { bank_transfer: "", gcash_manual: "", static_qr: "" };
   } else {
     // ensure new keys exist without overwriting existing
     patch.cashAccountMap = {
       bank_transfer: data.cashAccountMap.bank_transfer ?? "",
       gcash_manual: data.cashAccountMap.gcash_manual ?? "",
       static_qr: data.cashAccountMap.static_qr ?? "",
-      paymongo_gcash: (data.cashAccountMap as any).paymongo_gcash ?? "",
     } as any;
   }
 

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import PageBackground from "../components/PageBackground";
 import { useAuth } from "../AuthContext";
-import { db, storage, functions } from "@/lib/firebase";
+import { db, storage } from "@/lib/firebase";
 import { buildMemberDisplayName } from "../lib/names";
 import {
   addDoc,
@@ -19,8 +19,7 @@ import {
   where,
 } from "firebase/firestore";
 import { ref as storageRef, uploadBytesResumable, getDownloadURL } from "firebase/storage";
-import { httpsCallable } from "firebase/functions";
-import QRCode from "qrcode";
+// removed gateway (online) flows; only manual methods remain
 
 const paymentsBg =
   "https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80";
@@ -124,17 +123,11 @@ function MakePayment({ uid, settings, loadingSettings }) {
   const [uploadPct, setUploadPct] = useState(0);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
-
-  // Feature flags: PayMongo + QR
-  const [paymongo, setPaymongo] = useState(null);
+  // Static QR settings only (for manual QR display)
   const [qr, setQr] = useState(null);
   useEffect(() => {
-    const u1 = onSnapshot(doc(db, "settings", "paymongo"), (s) => setPaymongo(s.data() || null));
-    const u2 = onSnapshot(doc(db, "settings", "qr"), (s) => setQr(s.data() || null));
-    return () => {
-      u1();
-      u2();
-    };
+    const u = onSnapshot(doc(db, "settings", "qr"), (s) => setQr(s.data() || null));
+    return () => u();
   }, []);
 
   // Membership one-time and share capital first-time detection
@@ -201,7 +194,7 @@ function MakePayment({ uid, settings, loadingSettings }) {
     // Fallback so users can still submit before settings are seeded
     const arr = Array.isArray(settings?.allowedManualMethods)
       ? settings.allowedManualMethods
-      : ["bank_transfer", "gcash_manual", "static_qr"]; // safe defaults
+  : ["bank_transfer", "gcash_manual", "static_qr"]; // safe defaults
     return arr.filter((m) => METHOD_LABELS[m]);
   }, [settings]);
 
@@ -249,26 +242,12 @@ function MakePayment({ uid, settings, loadingSettings }) {
     ? (qr?.static?.bank?.imageUrl || qr?.static?.gcash?.imageUrl ? "Scan the QR code and pay via your app. Upload your proof below." : "")
     : "";
 
-  // PayMongo dynamic QR state
-  const [checkoutUrl, setCheckoutUrl] = useState("");
-  const [pmPaymentId, setPmPaymentId] = useState("");
-  const [qrDataUrl, setQrDataUrl] = useState("");
-  useEffect(() => {
-    if (!checkoutUrl) return;
-    let alive = true;
-    QRCode.toDataURL(checkoutUrl).then((d) => alive && setQrDataUrl(d)).catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [checkoutUrl]);
-
   async function submit(e) {
     e.preventDefault();
     if (!uid) return;
     if (!selectedMethod) return alert("Please choose a method.");
   const amt = Number(amount);
   if (!isFinite(amt) || amt <= 0) return alert("Enter a valid amount > 0.");
-  if (selectedMethod === "paymongo_gcash" && amt < 1) return alert("Minimum ₱1.00 for GCash.");
     const isManual = ["bank_transfer", "gcash_manual", "static_qr"].includes(selectedMethod);
     if (isManual && !referenceNo.trim()) return alert("Reference No is required.");
     if (isManual && !file) return alert("Proof file is required.");
@@ -286,42 +265,8 @@ function MakePayment({ uid, settings, loadingSettings }) {
       } catch {}
       const memberName = buildMemberDisplayName(profileSnap || {});
 
-      if (selectedMethod === "paymongo_gcash") {
-        // 1) Create payment (pending) — no proof
-        const payload = {
-          userId: uid,
-          memberName: memberName || null,
-          type,
-          amount: Number(amt.toFixed(2)),
-          method: "paymongo_gcash",
-          referenceNo: referenceNo.trim() || null,
-          status: "pending",
-          createdAt: serverTimestamp(),
-        };
-        if (type === "loan_repayment" && loanId) payload.linkedId = loanId;
-        if (note.trim()) payload.notes = note.trim();
-
-        const created = await addDoc(collection(db, "payments"), payload);
-        setPmPaymentId(created.id);
-
-        // 2) Ask backend for PayMongo Source and checkoutUrl
-        const createSrc = httpsCallable(functions, "paymongoCreateGcashSource");
-        const res = await createSrc({ paymentId: created.id });
-        const url = res?.data?.checkoutUrl || "";
-        setCheckoutUrl(url);
-
-        // 3) Watch for paid then go to receipt
-        const unsub = onSnapshot(doc(db, "payments", created.id), (s) => {
-          const v = s.data() || {};
-          if (v.status === "paid") {
-            unsub();
-            setTimeout(() => navigate(`/receipt/${created.id}`), 600);
-          }
-        });
-
-        return; // don't fall through
-      } else {
-        // Manual paths (bank_transfer, gcash_manual, static_qr)
+      {
+        // Manual paths only (bank_transfer, gcash_manual, static_qr)
         // 1) Create payment doc (pending)
         const payload = {
           userId: uid,
@@ -450,19 +395,6 @@ function MakePayment({ uid, settings, loadingSettings }) {
                   {METHOD_LABELS[m] || m}
                 </button>
               ))}
-              {/* Dynamic PayMongo option */}
-              {paymongo?.enabled && Array.isArray(paymongo?.allowedMethods) && paymongo.allowedMethods.includes("gcash") && (
-                <button
-                  type="button"
-                  className={
-                    "px-3 py-2 rounded-lg border text-sm " +
-                    (selectedMethod === "paymongo_gcash" ? "bg-brand-600 text-white border-brand-600" : "bg-white hover:bg-brand-50")
-                  }
-                  onClick={() => setMethod("paymongo_gcash")}
-                >
-                  GCash (PayMongo)
-                </button>
-              )}
             </div>
           </div>
 
@@ -490,8 +422,8 @@ function MakePayment({ uid, settings, loadingSettings }) {
             <input className="input" value={referenceNo} onChange={(e) => setReferenceNo(e.target.value)} />
           </label>
 
-          {/* Proof (hidden for PayMongo dynamic) */}
-          {selectedMethod !== "paymongo_gcash" && (
+          {/* Proof (required for manual methods) */}
+          {true && (
             <div>
               <div className="text-xs text-ink/60 mb-1">Proof (JPG/PNG/WEBP/PDF, ≤ {MAX_MB}MB)</div>
               <input type="file" accept={ALLOWED_EXT.map((e) => "." + e).join(",")} onChange={onFileChange} />
@@ -543,14 +475,6 @@ function MakePayment({ uid, settings, loadingSettings }) {
               {!qr?.static?.gcash?.imageUrl && !qr?.static?.bank?.imageUrl && (
                 <div className="text-sm text-ink/60">No static QR set.</div>
               )}
-            </div>
-          )}
-          {selectedMethod === "paymongo_gcash" && checkoutUrl && (
-            <div className="space-y-2">
-              <p className="text-sm">Scan with your GCash app or open the link below.</p>
-              {qrDataUrl && <img src={qrDataUrl} alt="Pay with GCash" className="max-w-[240px] h-auto rounded border" />}
-              <button type="button" className="btn btn-outline btn-sm" onClick={() => window.open(checkoutUrl, "_blank")}>Open GCash Checkout</button>
-              <p className="text-xs text-ink/60">This will update automatically when payment completes.</p>
             </div>
           )}
           <div className="text-xs text-ink/60">Fixed fees and reminders may be shown here.</div>

@@ -169,7 +169,7 @@ import AccountingSettingsPage from "./pages/admin/AccountingSettings.jsx";
 import OpsDashboard from "./pages/admin/OpsDashboard.jsx";
 import PaymentsPage from "./pages/Payments.jsx";
 import ReceiptPage from "./pages/Receipt.jsx";
-import { PaymongoSuccess, PaymongoCancel } from "./pages/PaymongoResult.jsx";
+// removed gateway result routes
 import Store from "./pages/store/Store.jsx";
 import Cart from "./pages/store/Cart.jsx";
 import Checkout from "./pages/store/Checkout.jsx";
@@ -420,8 +420,7 @@ export default function App() {
               </ProtectedRoute>
             }
           />
-          <Route path="/paymongo/success" element={<PaymongoSuccess />} />
-          <Route path="/paymongo/cancel" element={<PaymongoCancel />} />
+          {/* gateway routes removed */}
           <Route
             path="/profile"
             element={

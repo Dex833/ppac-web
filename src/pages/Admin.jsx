@@ -4,7 +4,6 @@ import { NavLink, Outlet } from "react-router-dom";
 import PageBackground from "../components/PageBackground";
 import useUserProfile from "../hooks/useUserProfile";
 import { ensurePaymentsSettings } from "../lib/settings/payments";
-import { ensurePaymongoSettings } from "../lib/settings/paymongo";
 import { ensureAccountingSettings } from "../lib/settings/accounting";
 import { ensureQrSettings } from "../lib/settings/qr";
 
@@ -46,7 +45,6 @@ export default function AdminLayout() {
     ensurePaymentsSettings().catch(() => {});
   ensureAccountingSettings().catch(() => {});
   ensureQrSettings().catch(() => {});
-  ensurePaymongoSettings().catch(() => {});
   }, [isAdmin]);
 
   const [seedBusy, setSeedBusy] = React.useState(false);

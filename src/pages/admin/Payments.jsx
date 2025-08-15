@@ -321,7 +321,7 @@ export default function AdminPaymentsList() {
                   <td className="p-2 border-b">{fmtDT(p.createdAt)}</td>
                   <td className="p-2 border-b">{p.memberName || p.userName || p.userEmail || p.userId || p.uid || "—"}</td>
                   <td className="p-2 border-b">{p.type || "—"}</td>
-                  <td className="p-2 border-b">{p.method === "static_qr" ? "QR (manual)" : p.method === "paymongo_gcash" ? "GCash (PayMongo)" : (p.method || "—")}</td>
+                  <td className="p-2 border-b">{p.method === "static_qr" ? "QR (manual)" : (p.method || "—")}</td>
                   <td className="p-2 border-b text-right font-mono">{Number(p.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   <td className="p-2 border-b">{p.referenceNo || p.refNo || "—"}</td>
                   <td className="p-2 border-b"><StatusBadge s={p.status || "pending"} /></td>
@@ -566,7 +566,7 @@ function PaymentDetail({ id, onClose, adminUid }) {
         <div className="flex items-start justify-between mb-3">
           <div>
             <div className="text-lg font-semibold">{p.memberName || p.userEmail || p.userId || p.uid || "Member"}</div>
-            <div className="text-sm text-ink/60">{p.type || "—"} • {p.method === "static_qr" ? "QR (manual)" : p.method === "paymongo_gcash" ? "GCash (PayMongo)" : (p.method || "—")}</div>
+            <div className="text-sm text-ink/60">{p.type || "—"} • {p.method === "static_qr" ? "QR (manual)" : (p.method || "—")}</div>
           </div>
           <div className="flex items-center gap-2">
             <StatusBadge s={p.status || "pending"} />

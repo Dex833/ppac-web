@@ -20,18 +20,3 @@ export async function ensurePaymentsSettings(): Promise<void> {
     await setDoc(ref, DEFAULT_PAYMENTS_SETTINGS);
   }
 }
-
-// Optional: ensure settings/paymongo shell so Admins can set success/cancel URLs
-export async function ensurePaymongoSettings(): Promise<void> {
-  const ref = doc(db, "settings", "paymongo");
-  const snap = await getDoc(ref);
-  if (!snap.exists()) {
-    await setDoc(ref, {
-      enabled: true,
-      allowedMethods: ["gcash"],
-      successUrl: "/paymongo/success",
-      cancelUrl: "/paymongo/cancel",
-      updatedAt: serverTimestamp(),
-    } as any);
-  }
-}

@@ -3,18 +3,16 @@ import { onDocumentWritten, onDocumentCreated } from "firebase-functions/v2/fire
 import { onCall, onRequest } from "firebase-functions/v2/https";
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore, FieldValue, Query } from "firebase-admin/firestore";
-import { pmFetch } from "./lib/paymongo.js";
-import * as functionsCompat from "firebase-functions";
+// gateway integrations removed
+// compat import removed
 import { mirrorJournalToEntries } from "./lib/mirrorJournalEntries.js";
 import { postPayment } from "./lib/postPayment.js";
 import * as logger from "firebase-functions/logger";
-import { defineSecret } from "firebase-functions/params";
+// import { defineSecret } from "firebase-functions/params";
 
 initializeApp();
 const db = getFirestore();
-// Secrets for PayMongo
-const PAYMONGO_SECRET_KEY = defineSecret("PAYMONGO_SECRET_KEY");
-const PAYMONGO_WEBHOOK_SECRET = defineSecret("PAYMONGO_WEBHOOK_SECRET");
+// No gateway secrets
 
 // ------------------------- tiny utils -------------------------
 const TZ = "Asia/Manila";
@@ -500,6 +498,20 @@ async function runAllAutos() {
   await rebuildCF(today, is.netIncome);
 }
 
+// basic role helper used by some callables
+async function isAdminLike(uid: string): Promise<boolean> {
+  try {
+    const prof = await db.doc(`profiles/${uid}`).get();
+    const roles = Array.isArray((prof.data() as any)?.roles) ? (prof.data() as any).roles : [];
+    if (roles.includes("admin") || roles.includes("staff") || roles.includes("treasurer")) return true;
+    const u = await db.doc(`users/${uid}`).get();
+    const r2 = Array.isArray((u.data() as any)?.roles) ? (u.data() as any).roles : [];
+    return r2.includes("admin") || r2.includes("staff") || r2.includes("treasurer");
+  } catch {
+    return false;
+  }
+}
+
 // 1) Scheduled: every 1:00 AM Asia/Manila
 export const scheduledDailyAutoReports = onSchedule(
   { schedule: "0 1 * * *", timeZone: TZ, region: "asia-southeast1" },
@@ -590,232 +602,9 @@ export const scheduledPostingSweeper = onSchedule(
   }
 );
 
-// ------------------------- Online payments (PayMongo) -------------------------
-// Callable to create a checkout session for an existing pending payment
-// Input: { provider?: 'paymongo', paymentId: string, returnUrl?: string }
-export const createOnlinePayment = onCall({ region: "asia-southeast1", secrets: [PAYMONGO_SECRET_KEY] }, async (req) => {
-  const uid = req.auth?.uid || "";
-  if (!uid) throw new Error("auth required");
-  const provider = String((req.data as any)?.provider || "").toLowerCase();
-  const paymentId = String((req.data as any)?.paymentId || "").trim();
-  const returnUrl = String((req.data as any)?.returnUrl || "").trim() || undefined;
-  if (!paymentId) throw new Error("paymentId required");
-  if (provider && provider !== "paymongo") throw new Error("invalid provider");
+// Online payment integrations removed (PayMongo/Xendit).
 
-  const ref = db.doc(`payments/${paymentId}`);
-  const snap = await ref.get();
-  if (!snap.exists) throw new Error("payment not found");
-  const p = snap.data() as any;
-  if (p.userId !== uid && !await isAdminLike(uid)) throw new Error("permission denied");
-  if ((p.status || "") !== "pending") throw new Error("payment not pending");
-
-  const amount = Number(p.amount || 0);
-  if (!Number.isFinite(amount) || amount <= 0) throw new Error("invalid amount");
-  const memberName = p.memberName || "Member";
-  const externalId = `pay_${paymentId}`;
-
-  // Default and only supported provider: PayMongo
-  const key = PAYMONGO_SECRET_KEY.value();
-  if (!key) throw new Error("PAYMONGO_SECRET_KEY not set");
-  // Minimal Checkout Session
-  const res = await fetch("https://api.paymongo.com/v1/checkout_sessions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: "Basic " + Buffer.from(`${key}:`).toString("base64"),
-    },
-    body: JSON.stringify({
-      data: {
-        attributes: {
-          send_email_receipt: false,
-          show_description: true,
-          description: `Payment for ${memberName}`,
-          cancel_url: returnUrl,
-          success_url: returnUrl,
-          line_items: [
-            {
-              name: p.type || "Payment",
-              amount: Math.round(amount * 100),
-              currency: "PHP",
-              quantity: 1,
-            },
-          ],
-          payment_method_types: ["gcash", "card"],
-          reference_number: externalId,
-        },
-      },
-    }),
-  });
-  if (!res.ok) throw new Error(`paymongo error ${res.status}`);
-  const j = await res.json();
-  const url = j?.data?.attributes?.checkout_url;
-  await ref.set({ provider: "paymongo", providerExternalId: externalId }, { merge: true });
-  return { ok: true, provider: "paymongo", url, id: j?.data?.id };
-});
-
-// Xendit webhook: marks payments/{id} paid when invoice paid
-// Xendit removed
-
-// PayMongo webhook: marks payments/{id} paid when checkout session completes
-// Minimal HMAC verifier for PayMongo webhook
-import * as nodeCrypto from "node:crypto";
-
-function verifySignature(raw: string, header: string, secret: string): boolean {
-  try {
-    const parts = Object.fromEntries(header.split(",").map((kv) => kv.trim().split("=")));
-    const payload = `${parts.t}.${raw}`;
-  const h = nodeCrypto.createHmac("sha256", secret).update(payload, "utf8").digest("hex");
-    return h === parts.s;
-  } catch {
-    return false;
-  }
-}
-
-export const paymongoWebhook = onRequest({ region: "asia-southeast1", secrets: [PAYMONGO_WEBHOOK_SECRET, PAYMONGO_SECRET_KEY] }, async (req, res) => {
-  try {
-    if (req.method !== "POST") {
-      res.status(405).send("Method not allowed");
-      return;
-    }
-    // verify signature
-    const raw = (req as any).rawBody?.toString("utf8") || JSON.stringify(req.body || {});
-    const sig = req.get("Paymongo-Signature") || "";
-    const okSig = verifySignature(raw, sig, PAYMONGO_WEBHOOK_SECRET.value() || "");
-    if (!okSig) {
-      res.status(401).send("bad signature");
-      return;
-    }
-    const body = req.body || {};
-    const type = body?.data?.attributes?.type || body?.type || "";
-    // For simplicity, treat payment.paid or checkout_session.payment.paid as success
-    if (String(type).includes("paid")) {
-      // PayMongo often nests reference in data.attributes.data.attributes.reference_number
-      const refNum = body?.data?.attributes?.data?.attributes?.reference_number ||
-        body?.data?.attributes?.reference_number || "";
-      const paymentId = String(refNum || "").replace(/^pay_/, "");
-      if (paymentId) await markPaidFromProvider(paymentId, {
-        method: "paymongo",
-        referenceNo: body?.data?.id || null,
-      });
-    }
-    res.status(200).send({ ok: true });
-  } catch (e: any) {
-    logger.error("paymongoWebhook", e);
-    res.status(500).send("error");
-  }
-});
-
-// Dedicated callable to create a GCash Source and return redirect URL
-function getSecretCompat() {
-  const fromEnv = process.env.PAYMONGO_SECRET_KEY;
-  const fromCfg = (functionsCompat.config().paymongo as any)?.secret;
-  const v = fromEnv || fromCfg || "";
-  if (!v) throw new Error("Missing PAYMONGO secret: set PAYMONGO_SECRET_KEY or functions.config().paymongo.secret");
-  if (!/^sk_(test|live)_/i.test(v)) throw new Error("PAYMONGO secret looks wrong (expect sk_test_... or sk_live_...)");
-  return v;
-}
-
-export const paymongoCreateGcashSource = onCall({ region: "asia-southeast1", secrets: [PAYMONGO_SECRET_KEY] }, async (req) => {
-  try {
-    const uid = req.auth?.uid || "";
-    if (!uid) throw new Error("unauthenticated");
-    const paymentId = String((req.data as any)?.paymentId || "").trim();
-    if (!paymentId) throw new Error("paymentId required");
-
-    const secret = getSecretCompat();
-
-    const pref = db.doc(`payments/${paymentId}`);
-    const psnap = await pref.get();
-    if (!psnap.exists) throw new Error("payment not found");
-    const p = psnap.data() as any;
-    if ((p.status || "") !== "pending") throw new Error("payment not pending");
-    if (p.userId !== uid && !(await isAdminLike(uid))) throw new Error("permission denied");
-
-    const amountPhp = Number(p.amount);
-    const amountCents = Math.round(amountPhp * 100);
-    if (!Number.isFinite(amountPhp) || amountPhp <= 0) throw new Error("Invalid amount (must be > 0)");
-    if (amountCents < 100) throw new Error("Minimum is ₱1.00 for GCash");
-
-    const s = ((await db.doc("settings/paymongo").get()).data() || {}) as any;
-    let success = s.successUrl || "";
-    let cancel = s.cancelUrl || "";
-    const https = (u: string) => /^https:\/\//i.test(u || "");
-    if (!https(success) || !https(cancel)) {
-      success = "https://ppac-web.web.app/paymongo/success";
-      cancel = "https://ppac-web.web.app/paymongo/cancel";
-    }
-
-    const idemKey = `pm_src_${paymentId}`;
-    const body = {
-      data: {
-        attributes: {
-          type: "gcash",
-          amount: amountCents,
-          currency: "PHP",
-          redirect: { success, failed: cancel },
-          metadata: { paymentId, userId: p.userId || "" },
-        },
-      },
-    };
-
-    logger.info("[PM] create source →", { paymentId, amountCents, success, cancel });
-    const json: any = await pmFetch("/sources", secret, {
-      method: "POST",
-      body: JSON.stringify(body),
-      headers: { "Idempotency-Key": idemKey },
-    } as any);
-
-    const srcId = json?.data?.id;
-    const checkoutUrl = json?.data?.attributes?.redirect?.checkout_url;
-    logger.info("[PM] created source ✔", { srcId, hasUrl: !!checkoutUrl });
-    if (!srcId || !checkoutUrl) throw new Error("Unexpected PayMongo response");
-
-    await pref.update({
-      gateway: {
-        provider: "paymongo",
-        type: "gcash",
-        sourceId: srcId,
-        checkoutUrl,
-        createdAt: FieldValue.serverTimestamp(),
-      },
-    });
-
-    return { checkoutUrl };
-  } catch (e: any) {
-    logger.error("paymongoCreateGcashSource ❌", e?.stack || e);
-    throw e;
-  }
-});
-
-async function isAdminLike(uid: string) {
-  try {
-    const prof = await db.doc(`profiles/${uid}`).get();
-    const roles = Array.isArray((prof.data() as any)?.roles) ? (prof.data() as any).roles : [];
-    if (roles.some((r: string) => ["admin", "staff", "treasurer"].includes(r))) return true;
-    const u = await db.doc(`users/${uid}`).get();
-    const r2 = Array.isArray((u.data() as any)?.roles) ? (u.data() as any).roles : [];
-    return r2.some((r: string) => ["admin", "staff", "treasurer"].includes(r));
-  } catch {
-    return false;
-  }
-}
-
-async function markPaidFromProvider(paymentId: string, meta: { method: string; referenceNo?: string | null }) {
-  const ref = db.doc(`payments/${paymentId}`);
-  const snap = await ref.get();
-  if (!snap.exists) return;
-  const cur = snap.data() as any;
-  if ((cur.status || "") === "paid") return; // idempotent
-  await ref.set({
-    method: cur.method || meta.method,
-    referenceNo: meta.referenceNo || cur.referenceNo || null,
-    confirmedAt: FieldValue.serverTimestamp(),
-    status: "paid",
-  }, { merge: true });
-}
-
-// 5) Mirror journal headers -> flat line items (denormalized view for reporting)
-// We mirror each journalEntries/{jid} document's lines[] into journalEntryLines/{jid}_{index}
+// Journal entry mirror remains
 export const onJournalEntryCreated = onDocumentCreated(
   { region: "asia-east1", document: "journalEntries/{journalId}" },
   async (event) => {
