@@ -589,6 +589,9 @@ function PaymentDetail({ id, onClose, adminUid }) {
               </>
             )}
           </div>
+          <div className="mt-2 text-xs text-ink/60">
+            Posting: {(p.posting?.status || "—")} • Attempts: {p.posting?.attempts || 0}
+          </div>
           {p.postingError && (
             <div className="mt-2 rounded border border-rose-200 bg-rose-50 text-rose-800 p-2 text-sm">
               Posting error: {p.postingError?.message || String(p.postingError)}
@@ -618,6 +621,48 @@ function PaymentDetail({ id, onClose, adminUid }) {
                   {retryBusy ? "Retrying…" : "Retry Post"}
                 </button>
               </div>
+            </div>
+          )}
+          {p.posting?.status === "failed" && (
+            <div className="mt-2 rounded border border-rose-200 bg-rose-50 text-rose-800 p-2 text-sm">
+              Posting error: {p.posting?.error || "Unknown"}
+              <div className="mt-1 flex flex-wrap gap-2 items-center">
+                <button
+                  className="btn btn-sm btn-outline"
+                  onClick={() => navigator.clipboard?.writeText(p.posting?.error || "")}
+                >
+                  Copy error
+                </button>
+                <a className="btn btn-sm btn-outline" href="/admin/settings/accounting" target="_self">Open Accounting Settings</a>
+                <button
+                  className="btn btn-sm btn-primary"
+                  onClick={async () => {
+                    setRetryBusy(true);
+                    try {
+                      const call = httpsCallable(getFunctions(undefined, "asia-east1"), "repostPayment");
+                      await call({ paymentId: p.id });
+                    } catch (e) {
+                      console.warn(e);
+                    } finally {
+                      setRetryBusy(false);
+                    }
+                  }}
+                  disabled={retryBusy}
+                >
+                  {retryBusy ? "Retrying…" : "Retry Post"}
+                </button>
+              </div>
+            </div>
+          )}
+          {p.status === "paid" && p.receiptNo && (
+            <div className="mt-3 flex gap-2">
+              <a className="btn btn-sm btn-outline" href={`/receipt/${p.id}`} target="_self">View Receipt</a>
+              <button
+                className="btn btn-sm btn-outline"
+                onClick={() => navigator.clipboard?.writeText(`${location.origin}/receipt/${p.id}`)}
+              >
+                Copy receipt link
+              </button>
             </div>
           )}
         </div>

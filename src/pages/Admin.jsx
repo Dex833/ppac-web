@@ -122,6 +122,7 @@ export default function AdminLayout() {
               <AdminNavItem to="/admin/membership-status">Membership Status</AdminNavItem>
               <AdminNavItem to="/admin/payments">Payments</AdminNavItem>
               <AdminNavItem to="/admin/settings/accounting">Accounting Settings</AdminNavItem>
+              <AdminNavItem to="/admin/ops">Ops</AdminNavItem>
             </nav>
           </div>
         </aside>
@@ -178,6 +179,12 @@ export default function AdminLayout() {
                   onClick={() => setMobileOpen(false)}
                 >
                   Accounting Settings
+                </AdminNavItem>
+                <AdminNavItem
+                  to="/admin/ops"
+                  onClick={() => setMobileOpen(false)}
+                >
+                  Ops
                 </AdminNavItem>
               </nav>
             </div>

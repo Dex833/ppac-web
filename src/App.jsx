@@ -166,6 +166,7 @@ import MembershipStatusAdmin from "./pages/admin/MembershipStatus.jsx";
 import MembershipReview from "./pages/admin/MembershipReview.jsx";
 import AdminPayments from "./pages/admin/Payments.jsx";
 import AccountingSettingsPage from "./pages/admin/AccountingSettings.jsx";
+import OpsDashboard from "./pages/admin/OpsDashboard.jsx";
 import PaymentsPage from "./pages/Payments.jsx";
 import ReceiptPage from "./pages/Receipt.jsx";
 
@@ -440,6 +441,7 @@ export default function App() {
             <Route path="membership-status/:uid" element={<MembershipReview />} />
             <Route path="payments" element={<AdminPayments />} />
             <Route path="settings/accounting" element={<AccountingSettingsPage />} />
+            <Route path="ops" element={<OpsDashboard />} />
           </Route>
 
           {/* Accounting-only (nested) */}

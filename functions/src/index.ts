@@ -4,6 +4,8 @@ import { onCall } from "firebase-functions/v2/https";
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore, FieldValue, Query } from "firebase-admin/firestore";
 import { mirrorJournalToEntries } from "./lib/mirrorJournalEntries.js";
+import { postPayment } from "./lib/postPayment.js";
+import * as logger from "firebase-functions/logger";
 
 initializeApp();
 const db = getFirestore();
@@ -519,141 +521,7 @@ export const onPaymentStatusPaid = onDocumentWritten(
     const nextStatus = after?.status || "";
     if (prevStatus === "paid" || nextStatus !== "paid") return; // not our transition
 
-    // Idempotency: existing journal linked to this payment?
-    const existing = await db
-      .collection("journalEntries")
-      .where("linkedPaymentId", "==", paymentId)
-      .limit(1)
-      .get();
-    if (!existing.empty) return;
-
-    // Optional soft lock
-    const lockRef = db.doc(`locks/payments_${paymentId}`);
-    try {
-      await db.runTransaction(async (tx) => {
-        const l = await tx.get(lockRef);
-        if (l.exists) throw new Error("locked");
-        tx.set(lockRef, { at: FieldValue.serverTimestamp() });
-      });
-    } catch (e) {
-      // another worker is handling
-      return;
-    }
-
-    // Load member profile/name
-    const userId = after.userId || after.uid || after.memberUid;
-    let memberName = "";
-    try {
-      const m = await db.doc(`members/${userId}`).get();
-      if (m.exists) memberName = buildMemberDisplayName(m.data());
-      if (!memberName) {
-        const u = await db.doc(`users/${userId}`).get();
-        if (u.exists) memberName = buildMemberDisplayName(u.data());
-      }
-    } catch {}
-    memberName = memberName || "Member";
-
-    // Settings
-  const settings = await getAccountingSettings();
-    const membershipFeeIncomeId = settings?.membershipFeeIncomeId;
-    const salesRevenueId = settings?.salesRevenueId;
-    const interestIncomeId = settings?.interestIncomeId;
-
-    // Build journal lines based on type
-    const type = String(after.type || "").toLowerCase();
-    const method = after.method || "cash";
-    const referenceNo = after.referenceNo || after.refNo || "";
-    const confirmedAt = after.confirmedAt || FieldValue.serverTimestamp();
-    const dateStr = after.confirmedAt ? ymd((after.confirmedAt as any).toDate?.() || new Date()) : ymd(new Date());
-    const amount = Number(after.amount || 0);
-
-    const lines: any[] = [];
-
-    // Determine cash account to debit
-    const overrideId = after.depositAccountId || null;
-    const mapId = settings?.cashAccountMap?.[method] || null;
-    const groupedId = method === 'gcash_manual'
-      ? settings?.cashAccounts?.gcashId
-      : method === 'bank_transfer'
-      ? settings?.cashAccounts?.bankDefaultId
-      : method === 'static_qr'
-      ? settings?.cashAccounts?.bankDefaultId
-      : null;
-    const legacyId = settings?.cashAccountId || null;
-    const cashId = overrideId || mapId || groupedId || legacyId;
-    if (!cashId) {
-      await db.doc(`payments/${paymentId}`).set({ postingError: { at: FieldValue.serverTimestamp(), message: `Missing cash account mapping for method "${method}". Configure in settings/accounting or set Deposit to on approval.` } }, { merge: true });
-      return;
-    }
-
-    function addDebit(accountId: string, value: number, memo?: string) {
-      if (value && value !== 0) lines.push({ accountId, debit: value, credit: 0, memo: memo || undefined });
-    }
-    function addCredit(accountId: string, value: number, memo?: string) {
-      if (value && value !== 0) lines.push({ accountId, debit: 0, credit: value, memo: memo || undefined });
-    }
-
-    try {
-      if (type === "membership_fee") {
-        if (!membershipFeeIncomeId) throw new Error("Missing membershipFeeIncomeId in settings/accounting");
-        addDebit(cashId, amount, `method: ${method}, ref: ${referenceNo}`);
-        addCredit(membershipFeeIncomeId, amount, "membership fee");
-      } else if (type === "share_capital") {
-        const sub = await getOrCreateMemberSubaccount({ mainName: "Share Capital", memberUid: userId, memberName });
-        addDebit(cashId, amount, `method: ${method}, ref: ${referenceNo}`);
-        addCredit(sub.id, amount, "share capital contribution");
-      } else if (type === "purchase") {
-        if (!salesRevenueId) throw new Error("Missing salesRevenueId in settings/accounting");
-        addDebit(cashId, amount, `method: ${method}, ref: ${referenceNo}`);
-        addCredit(salesRevenueId, amount, "sales");
-      } else if (type === "loan_repayment") {
-        const principal = Number(after.principalPortion ?? after.amount ?? 0);
-        const interest = Number(after.interestPortion ?? 0);
-        const total = principal + interest;
-        if (total <= 0) throw new Error("Loan repayment total is zero");
-        if (interest > 0 && !interestIncomeId) throw new Error("Missing interestIncomeId in settings/accounting");
-        const sub = await getOrCreateMemberSubaccount({ mainName: "Loan Receivable", memberUid: userId, memberName });
-        addDebit(cashId, total, `method: ${method}, ref: ${referenceNo}`);
-        addCredit(sub.id, principal, "loan principal repayment");
-        if (interest > 0) addCredit(interestIncomeId, interest, "loan interest");
-      } else {
-        // Other payments can be configured later
-        throw new Error(`Unsupported payment type: ${type}`);
-      }
-
-      const sumD = lines.reduce((s, l) => s + Number(l.debit || 0), 0);
-      const sumC = lines.reduce((s, l) => s + Number(l.credit || 0), 0);
-      if (Math.abs(sumD - sumC) > 0.0001) throw new Error("Unbalanced journal");
-
-      // Create journal with sequences and optional server-issued receiptNo
-      await db.runTransaction(async (tx) => {
-        const journalNo = await nextSequence("journals");
-        const receiptNo = await nextSequence("receipts");
-        const jRef = db.collection("journalEntries").doc();
-        tx.set(jRef, {
-          journalNo,
-          date: dateStr,
-          description: `Payment: ${type} | ref ${referenceNo} | user ${memberName} | method ${method}`,
-          linkedPaymentId: paymentId,
-          lines,
-          createdAt: FieldValue.serverTimestamp(),
-          createdByUid: after.confirmedBy || null,
-          confirmedAt: confirmedAt,
-        });
-        tx.set(db.doc(`payments/${paymentId}`), {
-          receiptNo: String(receiptNo),
-          postingError: FieldValue.delete(),
-        }, { merge: true });
-      });
-    } catch (e: any) {
-      await db.doc(`payments/${paymentId}`).set(
-        { postingError: { at: FieldValue.serverTimestamp(), message: e?.message || String(e) } },
-        { merge: true }
-      );
-    } finally {
-      // release lock
-      try { await db.recursiveDelete ? (db as any).recursiveDelete(lockRef) : lockRef.delete(); } catch {}
-    }
+    await postPayment(paymentId).catch((e) => logger.error("onPaymentStatusPaid error", { paymentId, error: e?.message || String(e) }));
   }
 );
 
@@ -664,18 +532,57 @@ export const repostPayment = onCall({ region: "asia-east1" }, async (req) => {
   const paymentId = String((req.data as any)?.paymentId || "").trim();
   if (!paymentId) throw new Error("paymentId required");
 
-  const ref = db.doc(`payments/${paymentId}`);
-  const snap = await ref.get();
-  if (!snap.exists) throw new Error("payment not found");
-  const data = snap.data() as any;
+  // basic role check: admin or staff
+  try {
+    const prof = await db.doc(`profiles/${uid}`).get();
+    const roles = Array.isArray((prof.data() as any)?.roles) ? (prof.data() as any).roles : [];
+    if (!roles.includes("admin") && !roles.includes("staff") && !roles.includes("treasurer")) {
+      const u = await db.doc(`users/${uid}`).get();
+      const r2 = Array.isArray((u.data() as any)?.roles) ? (u.data() as any).roles : [];
+      if (!r2.includes("admin") && !r2.includes("staff") && !r2.includes("treasurer")) throw new Error("permission denied");
+    }
+  } catch {
+    throw new Error("permission denied");
+  }
 
-  // Clear any previous error to surface fresh result
-  await ref.set({ postingError: FieldValue.delete() }, { merge: true });
-
-  // Nudge the trigger by flipping a no-op field
-  await ref.set({ _retryAt: FieldValue.serverTimestamp() }, { merge: true });
-  return { ok: true };
+  const res = await postPayment(paymentId).catch((e) => {
+    logger.error("repostPayment failed", { paymentId, error: e?.message || String(e) });
+    return { ok: false } as any;
+  });
+  return res || { ok: false };
 });
+
+// Scheduled sweeper to retry failed/stuck postings every 10 minutes
+export const scheduledPostingSweeper = onSchedule(
+  { schedule: "*/10 * * * *", timeZone: TZ, region: "asia-southeast1" },
+  async () => {
+    const now = Date.now();
+    const fiveMinAgo = now - 5 * 60 * 1000;
+    const snap = await db
+      .collection("payments")
+      .where("status", "==", "paid")
+      .limit(500)
+      .get();
+    let scanned = 0,
+      retried = 0;
+    for (const d of snap.docs) {
+      scanned++;
+      const p = d.data() as any;
+      const posting = p.posting || {};
+      const attempts = Number(posting.attempts || 0);
+      if (attempts >= 5) continue;
+      const st = String(posting.status || "");
+      const lastStartedAt = (posting.lastStartedAt as any)?.toDate?.() as Date | undefined;
+      const lastStartedMs = lastStartedAt ? lastStartedAt.getTime() : 0;
+      const shouldRetry = st === "failed" || st === "" || (st === "posting" && lastStartedMs && lastStartedMs < fiveMinAgo);
+      if (shouldRetry) {
+        await postPayment(d.id).catch(() => {});
+        retried++;
+      }
+    }
+    logger.info("scheduledPostingSweeper done", { scanned, retried });
+  }
+);
 
 // 5) Mirror journal headers -> flat line items (denormalized view for reporting)
 // We mirror each journalEntries/{jid} document's lines[] into journalEntryLines/{jid}_{index}

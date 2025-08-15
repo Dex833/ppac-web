@@ -156,6 +156,17 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Ops logs: admin read-only
+    match /payments/{pid}/ops/{logId} {
+      allow read: if isAdmin();
+      allow create, update, delete: if false; // Functions bypass rules
+    }
+
+    // Locks: hidden from clients
+    match /locks/{lockId} {
+      allow read, write: if false; // Functions only
+    }
+
     /* ------------------------------ accounting --------------------------- */
     match /accounts/{id} {
       allow get, list: if canReadAccounting();
