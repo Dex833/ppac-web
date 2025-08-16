@@ -2,6 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Quick modal animations */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes scaleIn {
+  from { transform: scale(0.95); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
 /* Subtle fade at the left/right edges while horizontally scrolling tables */
 .table-scroll {
   position: relative;

@@ -3,7 +3,7 @@ import { collection, query, where, orderBy, limit, getDocs, startAfter, doc, get
 
 const PAGE_SIZE = 24;
 
-export async function fetchProductsPage({ category = "", after = null } = {}) {
+export async function fetchProductsPage({ category = "", after = null, pageSize } = {}) {
   // Prefer: active == true; optional: categories array-contains; order by createdAt desc.
   // Fall back to name ordering or no ordering if composite index is missing.
   const base = [collection(db, "products"), where("active", "==", true)];
@@ -12,10 +12,11 @@ export async function fetchProductsPage({ category = "", after = null } = {}) {
     base.push(where("categories", "array-contains", category));
   }
 
+  const size = Math.max(1, Math.min(100, pageSize || PAGE_SIZE));
   let q = query(
     ...base,
     orderBy("createdAt", "desc"),
-    limit(PAGE_SIZE)
+    limit(size)
   );
   if (after) q = query(q, startAfter(after));
 
@@ -34,12 +35,12 @@ export async function fetchProductsPage({ category = "", after = null } = {}) {
     // Likely missing composite index (failed-precondition)
     if (e && e.code === "failed-precondition") {
       try {
-        let q2 = query(...base, orderBy("name"), limit(PAGE_SIZE));
+  let q2 = query(...base, orderBy("name"), limit(size));
         if (after) q2 = query(q2, startAfter(after));
         return await run(q2);
       } catch (e2) {
         // As a last resort, drop ordering and client-sort by createdAt desc then name
-        let q3 = query(...base, limit(PAGE_SIZE));
+  let q3 = query(...base, limit(size));
         if (after) q3 = query(q3, startAfter(after));
         const res = await run(q3);
         const items = [...res.items].sort((a, b) => {
