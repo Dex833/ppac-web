@@ -13,6 +13,7 @@ import {
   doc,
   serverTimestamp,
   addDoc,
+  startAfter,
 } from "firebase/firestore";
 import { useAuth } from "../../AuthContext";
 import { httpsCallable } from "firebase/functions";
@@ -33,12 +34,27 @@ function StatusBadge({ s }) {
       : s === "rejected"
       ? "bg-rose-50 text-rose-800 border-rose-200"
       : "bg-amber-50 text-amber-800 border-amber-200";
-  return <span className={`inline-block text-xs px-2 py-0.5 rounded border ${cls}`}>{s}</span>;
+  const icon =
+    s === "paid"
+      ? (
+          <svg className="inline mr-1" width="14" height="14" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="10" fill="#34d399"/><path d="M6 10.5l3 3 5-6" stroke="#065f46" strokeWidth="2" fill="none"/></svg>
+        )
+      : s === "rejected"
+      ? (
+          <svg className="inline mr-1" width="14" height="14" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="10" fill="#f87171"/><path d="M7 7l6 6M13 7l-6 6" stroke="#7f1d1d" strokeWidth="2" fill="none"/></svg>
+        )
+      : (
+          <svg className="inline mr-1" width="14" height="14" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="10" fill="#fbbf24"/><path d="M10 5v5m0 3h.01" stroke="#92400e" strokeWidth="2" fill="none"/></svg>
+        );
+  return <span className={`inline-block text-xs px-2 py-0.5 rounded border ${cls}`}>{icon}{s}</span>;
 }
 
 // centralized date formatting
 
 export default function AdminPaymentsList() {
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState([]);
+  const [selectAll, setSelectAll] = useState(false);
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
 
@@ -53,38 +69,55 @@ export default function AdminPaymentsList() {
   const [loading, setLoading] = useState(true);
   const unsubRef = useRef(() => {});
 
-  function listen() {
-    unsubRef.current?.();
+  // Pagination state
+  const [page, setPage] = useState(0);
+  const [hasNext, setHasNext] = useState(false);
+  const [hasPrev, setHasPrev] = useState(false);
+  const [cursors, setCursors] = useState([]); // array of last doc per page
+
+  async function fetchPage(pageNum, direction) {
     setLoading(true);
     let q = query(collection(db, "payments"));
-
-    // Status
-    if (status) {
-      q = query(q, where("status", "==", status));
-    }
-    // Type
+    if (status) q = query(q, where("status", "==", status));
     if (type) q = query(q, where("type", "==", type));
-    // Method
     if (method) q = query(q, where("method", "==", method));
-    // Date range on createdAt
     if (from) q = query(q, where("createdAt", ">=", new Date(`${from}T00:00:00`)));
     if (to) q = query(q, where("createdAt", "<=", new Date(`${to}T23:59:59`)));
+    q = query(q, orderBy("createdAt", "desc"), limit(101)); // fetch one extra to check next
+    if (direction === "next" && cursors[pageNum - 1]) {
+      q = query(q, startAfter(cursors[pageNum - 1]));
+    } else if (direction === "prev" && cursors[pageNum - 2]) {
+      q = query(q, startAfter(cursors[pageNum - 2]));
+    }
+    const snap = await getDocs(q);
+    let docs = snap.docs;
+    setHasNext(docs.length > 100);
+    setHasPrev(pageNum > 0);
+    if (docs.length > 100) docs = docs.slice(0, 100);
+    setRows(docs.map((d) => ({ id: d.id, ...d.data() })));
+    setLoading(false);
+    // Update cursors
+    if (docs.length) {
+      const newCursors = [...cursors];
+      newCursors[pageNum] = docs[docs.length - 1];
+      setCursors(newCursors);
+    }
+  }
 
-    // Order newest first
-    q = query(q, orderBy("createdAt", "desc"), limit(100));
+  useEffect(() => {
+    setPage(0);
+    setCursors([]);
+    fetchPage(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, type, method, from, to]);
 
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        setRows(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setLoading(false);
-      },
-      (err) => {
-        console.error("payments/onSnapshot:", err);
-        setLoading(false);
-      }
-    );
-    unsubRef.current = unsub;
+  async function handleNextPage() {
+    await fetchPage(page + 1, "next");
+    setPage((p) => p + 1);
+  }
+  async function handlePrevPage() {
+    await fetchPage(page - 1, "prev");
+    setPage((p) => p - 1);
   }
 
   async function exportCsv() {
@@ -132,11 +165,7 @@ export default function AdminPaymentsList() {
     setTimeout(() => URL.revokeObjectURL(url), 500);
   }
 
-  useEffect(() => {
-    listen();
-    return () => unsubRef.current?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, type, method, from, to]);
+
 
   // Open a payment drawer if ?open=<id> is present
   useEffect(() => {
@@ -148,11 +177,51 @@ export default function AdminPaymentsList() {
 
   // removed backfill admin utility
 
+  // Bulk actions
+  function handleSelectAll(e) {
+    setSelectAll(e.target.checked);
+    setSelected(e.target.checked ? rows.map((r) => r.id) : []);
+  }
+  function handleSelectRow(id) {
+    setSelected((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  }
+  async function bulkApprove() {
+    if (!selected.length) return;
+    if (!window.confirm(`Approve ${selected.length} payments?`)) return;
+    for (const id of selected) {
+      try {
+        await updateDoc(doc(db, "payments", id), { status: "paid", confirmedBy: user?.uid || null, confirmedAt: serverTimestamp() });
+      } catch {}
+    }
+    setSelected([]);
+    setSelectAll(false);
+  }
+  async function bulkReject() {
+    if (!selected.length) return;
+    const reason = window.prompt("Reason for rejection (applies to all):");
+    if (!reason || !reason.trim()) return;
+    for (const id of selected) {
+      try {
+        await updateDoc(doc(db, "payments", id), { status: "rejected", confirmedBy: user?.uid || null, confirmedAt: serverTimestamp(), notes: `Rejected: ${reason.trim()}` });
+      } catch {}
+    }
+    setSelected([]);
+    setSelectAll(false);
+  }
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <h2 className="text-2xl font-bold">Payments</h2>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col sm:flex-row gap-2 items-center">
+          <input
+            className="input"
+            style={{ minWidth: 180 }}
+            type="text"
+            placeholder="Search user, email, ref..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search payments"
+          />
           <button
             type="button"
             className="btn btn-outline btn-sm"
@@ -161,7 +230,13 @@ export default function AdminPaymentsList() {
           >
             Export CSV
           </button>
-          {/* Backfill button removed */}
+          {selected.length > 0 && (
+            <>
+              <button className="btn btn-primary btn-sm" onClick={bulkApprove}>Approve Selected</button>
+              <button className="btn btn-outline btn-sm" onClick={bulkReject}>Reject Selected</button>
+              <span className="text-xs text-ink/60">{selected.length} selected</span>
+            </>
+          )}
         </div>
       </div>
 
@@ -233,6 +308,7 @@ export default function AdminPaymentsList() {
         <table className="min-w-[900px] w-full border rounded">
           <thead className="bg-gray-50">
             <tr>
+              <th className="p-2 border-b"><input type="checkbox" checked={selectAll} onChange={handleSelectAll} aria-label="Select all" /></th>
               <th className="text-left p-2 border-b">Created</th>
               <th className="text-left p-2 border-b">Member</th>
               <th className="text-left p-2 border-b">Type</th>
@@ -240,41 +316,114 @@ export default function AdminPaymentsList() {
               <th className="text-right p-2 border-b">Amount</th>
               <th className="text-left p-2 border-b">Ref No</th>
               <th className="text-left p-2 border-b">Status</th>
+              <th className="text-left p-2 border-b">Quick Action</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
               <tr>
-                <td className="p-3" colSpan={7}>
+                <td className="p-3" colSpan={9}>
                   Loading…
                 </td>
               </tr>
             )}
             {!loading && rows.length === 0 && (
               <tr>
-                <td className="p-3 text-ink/60" colSpan={7}>
+                <td className="p-3 text-ink/60" colSpan={9}>
                   No payments found.
                 </td>
               </tr>
             )}
             {!loading &&
               rows.map((p) => (
-                <tr
-                  key={p.id}
-                  className="odd:bg-white even:bg-gray-50 cursor-pointer hover:bg-brand-50"
-                  onClick={() => setActiveId(p.id)}
-                >
-                  <td className="p-2 border-b">{formatDT(p.createdAt)}</td>
-                  <td className="p-2 border-b">{p.memberName || p.userName || p.userEmail || p.userId || p.uid || "—"}</td>
-                  <td className="p-2 border-b">{p.type || "—"}</td>
-                  <td className="p-2 border-b">{p.method === "static_qr" ? "QR (manual)" : (p.method || "—")}</td>
-                  <td className="p-2 border-b text-right font-mono">{Number(p.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                  <td className="p-2 border-b">{p.referenceNo || p.refNo || "—"}</td>
-                  <td className="p-2 border-b"><StatusBadge s={p.status || "pending"} /></td>
-                </tr>
+                (() => {
+                  let rowStatus = p.status || "pending";
+                  let rowClass =
+                    rowStatus === "paid"
+                      ? "bg-emerald-50/40 hover:bg-emerald-100/60"
+                      : rowStatus === "rejected"
+                      ? "bg-rose-50/40 hover:bg-rose-100/60"
+                      : "bg-amber-50/40 hover:bg-amber-100/60";
+                  if (selected.includes(p.id)) rowClass += " bg-blue-50";
+                  // Odd/even fallback for zebra
+                  rowClass += " odd:bg-white even:bg-gray-50";
+                  return (
+                    <tr
+                      key={p.id}
+                      className={rowClass + " cursor-pointer"}
+                      onClick={(e) => {
+                        if (e.target.type !== "checkbox" && e.target.nodeName !== "SELECT" && e.target.nodeName !== "BUTTON" && e.target.nodeName !== "TEXTAREA") setActiveId(p.id);
+                      }}
+                    >
+                      <td className="p-2 border-b">
+                        <input
+                          type="checkbox"
+                          checked={selected.includes(p.id)}
+                          onChange={() => handleSelectRow(p.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={`Select payment ${p.id}`}
+                        />
+                      </td>
+                      <td className="p-2 border-b">{formatDT(p.createdAt)}</td>
+                      <td className="p-2 border-b">{p.memberName || p.userName || p.userEmail || p.userId || p.uid || "—"}</td>
+                      <td className="p-2 border-b">{p.type || "—"}</td>
+                      <td className="p-2 border-b">{p.method === "static_qr" ? "QR (manual)" : (p.method || "—")}</td>
+                      <td className="p-2 border-b text-right font-mono">{Number(p.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className="p-2 border-b">{p.referenceNo || p.refNo || "—"}</td>
+                      <td className="p-2 border-b"><StatusBadge s={p.status || "pending"} /></td>
+                      <td className="p-2 border-b">
+                        {p.status === "pending" ? (
+                          <div className="flex flex-col gap-1">
+                            <select
+                              className="input input-xs"
+                              value={p._inlineStatus || p.status}
+                              onChange={async (e) => {
+                                const newStatus = e.target.value;
+                                if (newStatus === p.status) return;
+                                let note = window.prompt("Optional note for this action:", p.notes || "");
+                                await updateDoc(doc(db, "payments", p.id), {
+                                  status: newStatus,
+                                  confirmedBy: user?.uid || null,
+                                  confirmedAt: serverTimestamp(),
+                                  notes: (note || "").trim(),
+                                });
+                              }}
+                              aria-label="Update status"
+                            >
+                              <option value="pending">Pending</option>
+                              <option value="paid">Approve</option>
+                              <option value="rejected">Reject</option>
+                            </select>
+                            <textarea
+                              className="input input-xs mt-1"
+                              rows={1}
+                              placeholder="Add note..."
+                              defaultValue={p.notes || ""}
+                              onBlur={async (e) => {
+                                const val = e.target.value;
+                                if (val !== (p.notes || "")) {
+                                  await updateDoc(doc(db, "payments", p.id), { notes: val });
+                                }
+                              }}
+                              aria-label="Quick note"
+                            />
+                          </div>
+                        ) : (
+                          <span className="text-xs text-ink/60">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })()
               ))}
           </tbody>
         </table>
+        {/* Pagination controls */}
+        <div className="flex justify-end gap-2 mt-2">
+          <button className="btn btn-sm btn-outline" onClick={handlePrevPage} disabled={!hasPrev}>Prev</button>
+          <span className="text-xs text-ink/60">Page {page + 1}</span>
+          <button className="btn btn-sm btn-outline" onClick={handleNextPage} disabled={!hasNext}>Next</button>
+        </div>
       </div>
 
       {activeId && (
@@ -306,6 +455,10 @@ function PaymentDetail({ id, onClose, adminUid }) {
   const [voidBusy, setVoidBusy] = useState(false);
   const [cashAccounts, setCashAccounts] = useState([]);
   const [depositAccountId, setDepositAccountId] = useState("");
+
+  // Audit log state
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [auditLoading, setAuditLoading] = useState(true);
 
   // Posting UX state
   const [isApproving, setIsApproving] = useState(false);
@@ -353,6 +506,26 @@ function PaymentDetail({ id, onClose, adminUid }) {
     const q = query(collection(db, "journalEntries"), where("linkedPaymentId", "==", id), limit(1));
     const unsub = onSnapshot(q, (s) => {
       setJournal(s.empty ? null : { id: s.docs[0].id, ...s.docs[0].data() });
+    });
+    return () => unsub();
+  }, [id]);
+
+  // Fetch audit/admin logs for this payment
+  useEffect(() => {
+    if (!id) return;
+    setAuditLoading(true);
+    const q = query(
+      collection(db, "adminLogs"),
+      where("paymentId", "==", id),
+      orderBy("ts", "desc"),
+      limit(20)
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      setAuditLogs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setAuditLoading(false);
+    }, (err) => {
+      setAuditLogs([]);
+      setAuditLoading(false);
     });
     return () => unsub();
   }, [id]);
@@ -632,6 +805,28 @@ function PaymentDetail({ id, onClose, adminUid }) {
                 Copy receipt link
               </button>
             </div>
+          )}
+        </div>
+
+        {/* Audit Trail */}
+        <div className="card p-3 mb-3">
+          <div className="text-sm font-semibold mb-2">Audit Trail</div>
+          {auditLoading ? (
+            <div className="text-xs text-ink/60">Loading…</div>
+          ) : auditLogs.length === 0 ? (
+            <div className="text-xs text-ink/60">No admin actions found.</div>
+          ) : (
+            <ul className="space-y-1">
+              {auditLogs.map((log) => (
+                <li key={log.id} className="text-xs flex gap-2 items-center">
+                  <span className="text-ink/60">{log.ts?.toDate ? formatDT(log.ts.toDate()) : "—"}</span>
+                  <span className="font-mono bg-gray-100 rounded px-1">{log.action}</span>
+                  <span className="text-ink/80">{log.actorUid || "?"}</span>
+                  {log.reason && <span className="text-ink/60">{log.reason}</span>}
+                  {log.amount != null && <span className="text-ink/60">₱{Number(log.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>}
+                </li>
+              ))}
+            </ul>
           )}
         </div>
 

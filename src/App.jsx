@@ -177,10 +177,11 @@ import OpsDashboard from "./pages/admin/OpsDashboard.jsx";
 import PaymentsPage from "./pages/Payments.jsx";
 import ReceiptPage from "./pages/Receipt.jsx";
 // removed gateway result routes
-import Store from "./pages/store/Store.jsx";
-import Cart from "./pages/store/Cart.jsx";
+import Storefront from "./pages/store/Storefront.jsx";
+import ProductDetail from "./pages/store/ProductDetail.jsx";
+import CartPage from "./pages/store/CartPage.jsx";
 import Checkout from "./pages/store/Checkout.jsx";
-import Product from "./pages/store/Product.jsx";
+import { CartProvider } from "@/contexts/CartContext.jsx";
 import AdminProducts from "./pages/admin/AdminProducts.jsx";
 import AdminOrders from "./pages/admin/AdminOrders.jsx";
 
@@ -234,7 +235,8 @@ export default function App() {
   const onAccountingRoute = location.pathname.startsWith("/accounting");
 
   return (
-    <div className="min-h-screen text-ink">
+    <CartProvider>
+      <div className="min-h-screen text-ink">
       {/* Top info bar (desktop only) */}
       <div className="hidden sm:flex w-full bg-brand-50 border-b border-brand-100 text-xs text-ink/70 py-1 px-2 items-center justify-between gap-2">
         <div className="flex gap-6">
@@ -423,39 +425,16 @@ export default function App() {
               </ProtectedRoute>
             }
           />
-          {/* Store */}
-          <Route
-            path="/store"
-            element={
-              <ProtectedRoute>
-                <Store />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/store/product/:id"
-            element={
-              <ProtectedRoute>
-                <Product />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/cart"
-            element={
-              <ProtectedRoute>
-                <Cart />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/checkout"
-            element={
-              <ProtectedRoute>
-                <Checkout />
-              </ProtectedRoute>
-            }
-          />
+
+          {/* Storefront public routes */}
+          <Route path="/store" element={<Storefront />} />
+          <Route path="/store/:slug" element={<ProductDetail />} />
+          <Route path="/cart" element={<CartPage />} />
+
+          {/* Checkout route */}
+          <Route path="/checkout" element={<Checkout />} />
+
+          {/* Auth-only */}
           <Route
             path="/payments"
             element={
@@ -633,6 +612,7 @@ export default function App() {
           © {new Date().getFullYear()} Puerto Princesa Agriculture Cooperative
         </div>
       </footer>
-    </div>
+  </div>
+  </CartProvider>
   );
 }
