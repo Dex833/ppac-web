@@ -11,7 +11,7 @@ export type AccountingSettings = {
   shareCapitalMainId?: string;
   loanReceivableMainId?: string;
   gateway?: {
-    clearingAccountId?: string; // Asset: PayMongo Clearing
+    clearingAccountId?: string; // Asset: Gateway Clearing (legacy)
     feesExpenseId?: string;     // Expense: Payment Gateway Fees
     taxesExpenseId?: string;    // Expense (optional): Taxes on fees
     defaultSettlementBankId?: string; // Asset: default bank to receive settlements

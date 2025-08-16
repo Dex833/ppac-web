@@ -1,6 +1,6 @@
-import { initializeApp } from "firebase/app";
+import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { getFirestore, initializeFirestore, setLogLevel, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 import { getFunctions } from "firebase/functions";
 
@@ -14,12 +14,24 @@ const firebaseConfig = {
   appId: "1:702419735324:web:688939e74ad7b8aa9820d9",
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
+// Initialize Firebase (single app instance)
+const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
 // Export initialized services (used across the app)
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+// Prefer initializeFirestore to allow long polling in flaky networks/ad-blockers
+export const db = initializeFirestore(app, {
+  experimentalAutoDetectLongPolling: true,
+  // Prefer Fetch streams when available in the SDK/runtime
+  useFetchStreams: true,
+  // Optional offline cache and multi-tab coordination
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+});
+
+// Reduce noisy networking logs in dev while still surfacing warnings/errors
+try {
+  if (import.meta?.env?.DEV) setLogLevel("warn");
+} catch (_) {}
 export const storage = getStorage(app);
 // Functions default region is us-central1; lock to asia-southeast1 per backend deploy
 export const functions = getFunctions(app, "asia-southeast1");

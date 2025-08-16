@@ -9,6 +9,7 @@ import {
 } from "firebase/firestore";
 import PageBackground from "../../components/PageBackground";
 import useUserProfile from "../../hooks/useUserProfile";
+import { formatDT } from "@/utils/dates";
 
 /* ---------------- utils ---------------- */
 const fmt2 = (n) =>
@@ -17,17 +18,7 @@ const fmt2 = (n) =>
     maximumFractionDigits: 2,
   });
 
-function tsToDate(v) {
-  if (!v) return null;
-  if (typeof v.toDate === "function") return v.toDate();
-  if (typeof v.seconds === "number") return new Date(v.seconds * 1000);
-  if (typeof v === "string" || typeof v === "number") return new Date(v);
-  return null;
-}
-function fmtDT(v) {
-  const d = tsToDate(v);
-  return d ? d.toLocaleString() : "—";
-}
+// use shared formatDT for timestamps
 function normalizeType(t) {
   switch (t) {
     case "incomeStatement": return "income_statement";
@@ -473,7 +464,7 @@ export default function ReportView() {
         <h2 className="text-xl font-semibold">{docData?.label || "Daily auto report"}</h2>
         <div className="text-sm text-ink/60">
           Period: <span className="font-mono">{perLabel}</span> — Created:{" "}
-          <span className="font-mono">{fmtDT(docData?.createdAt)}</span>
+          <span className="font-mono">{formatDT(docData?.createdAt)}</span>
           {isAdmin && !id.startsWith("auto_") && (
             <>
               {" "}

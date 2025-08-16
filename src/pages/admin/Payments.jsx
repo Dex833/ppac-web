@@ -18,8 +18,9 @@ import { useAuth } from "../../AuthContext";
 import { httpsCallable } from "firebase/functions";
 import { buildMemberDisplayName } from "../../lib/names";
 import PostingResultDialog from "../../components/modals/PostingResultDialog.jsx";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { yyyymmdd_hhmm, toISO } from "../../lib/format";
+import { formatDT } from "@/utils/dates";
 
 const STATUS_OPTIONS = ["pending", "paid", "rejected"]; // default filter 'pending'
 const TYPE_OPTIONS = ["membership_fee", "share_capital", "purchase", "loan_repayment", "other"];
@@ -35,18 +36,11 @@ function StatusBadge({ s }) {
   return <span className={`inline-block text-xs px-2 py-0.5 rounded border ${cls}`}>{s}</span>;
 }
 
-function fmtDT(v) {
-  try {
-    if (!v) return "—";
-    if (typeof v.toDate === "function") return v.toDate().toLocaleString();
-    return new Date(v).toLocaleString();
-  } catch {
-    return String(v || "—");
-  }
-}
+// centralized date formatting
 
 export default function AdminPaymentsList() {
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
 
   // Filters
   const [status, setStatus] = useState("pending");
@@ -144,74 +138,15 @@ export default function AdminPaymentsList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, type, method, from, to]);
 
+  // Open a payment drawer if ?open=<id> is present
+  useEffect(() => {
+    const openId = searchParams.get("open");
+    if (openId) setActiveId(openId);
+  }, [searchParams]);
+
   const [activeId, setActiveId] = useState("");
 
-  // Backfill names (admin utility)
-  const [bfBusy, setBfBusy] = useState(false);
-  const [bfMsg, setBfMsg] = useState("");
-  async function backfillNames() {
-    setBfBusy(true);
-    setBfMsg("");
-    try {
-      // 1) Try memberName == null
-      const qNull = query(collection(db, "payments"), where("memberName", "==", null), limit(100));
-      const sNull = await getDocs(qNull);
-      // 2) Try memberName == ""
-      const qEmpty = query(collection(db, "payments"), where("memberName", "==", ""), limit(100));
-      const sEmpty = await getDocs(qEmpty);
-      const seen = new Set();
-      let candidates = [...sNull.docs, ...sEmpty.docs].filter((d) => {
-        const ok = !seen.has(d.id);
-        seen.add(d.id);
-        return ok;
-      });
-      // 3) Fallback: take latest 200 and filter missing memberName field
-      if (candidates.length === 0) {
-        const qAny = query(collection(db, "payments"), orderBy("createdAt", "desc"), limit(200));
-        const sAny = await getDocs(qAny);
-        candidates = sAny.docs.filter((d) => {
-          const data = d.data() || {};
-          return !("memberName" in data) || data.memberName == null || String(data.memberName).trim() === "";
-        });
-      }
-
-      let done = 0;
-      for (const d of candidates) {
-        try {
-          const p = d.data() || {};
-          const uid = p.userId || p.uid;
-          if (!uid) continue;
-          // prefer users/{uid}; fallback to profiles/{uid}
-          let nameData = {};
-          try {
-            const uref = doc(db, "users", uid);
-            const us = await getDoc(uref);
-            if (us.exists()) nameData = us.data() || {};
-          } catch {}
-          if (!nameData || Object.keys(nameData).length === 0) {
-            try {
-              const pref = doc(db, "profiles", uid);
-              const ps = await getDoc(pref);
-              if (ps.exists()) nameData = ps.data() || {};
-            } catch {}
-          }
-          const memberName = buildMemberDisplayName(nameData);
-          if (memberName && memberName.trim()) {
-            await updateDoc(doc(db, "payments", d.id), { memberName });
-            done += 1;
-          }
-        } catch (e) {
-          console.warn("backfill one:", e);
-        }
-      }
-      setBfMsg(`Updated ${done} payment${done === 1 ? "" : "s"}.`);
-    } catch (e) {
-      setBfMsg(e?.message || String(e));
-    } finally {
-      setBfBusy(false);
-      setTimeout(() => setBfMsg(""), 4000);
-    }
-  }
+  // removed backfill admin utility
 
   return (
     <div className="space-y-4">
@@ -226,16 +161,7 @@ export default function AdminPaymentsList() {
           >
             Export CSV
           </button>
-          <button
-            type="button"
-            className="btn btn-outline btn-sm"
-            onClick={backfillNames}
-            disabled={bfBusy}
-            title="Fill memberName on recent payments"
-          >
-            {bfBusy ? "Backfilling…" : "Backfill Names"}
-          </button>
-          {bfMsg && <span className="text-xs text-ink/60">{bfMsg}</span>}
+          {/* Backfill button removed */}
         </div>
       </div>
 
@@ -318,7 +244,7 @@ export default function AdminPaymentsList() {
                   className="odd:bg-white even:bg-gray-50 cursor-pointer hover:bg-brand-50"
                   onClick={() => setActiveId(p.id)}
                 >
-                  <td className="p-2 border-b">{fmtDT(p.createdAt)}</td>
+                  <td className="p-2 border-b">{formatDT(p.createdAt)}</td>
                   <td className="p-2 border-b">{p.memberName || p.userName || p.userEmail || p.userId || p.uid || "—"}</td>
                   <td className="p-2 border-b">{p.type || "—"}</td>
                   <td className="p-2 border-b">{p.method === "static_qr" ? "QR (manual)" : (p.method || "—")}</td>
@@ -348,6 +274,16 @@ function PaymentDetail({ id, onClose, adminUid }) {
   const [notes, setNotes] = useState("");
   const [journal, setJournal] = useState(null); // find by linkedPaymentId
   const [retryBusy, setRetryBusy] = useState(false);
+  // padding helper (same look as JournalEntries)
+  const pad5 = (v) => (v != null ? String(v).padStart(5, "0") : "");
+  // Refund/Void modal state
+  const [showRefund, setShowRefund] = useState(false);
+  const [refundReason, setRefundReason] = useState("");
+  const [refundBusy, setRefundBusy] = useState(false);
+  const [refundInfo, setRefundInfo] = useState({ ok: false, journalId: "", already: false });
+  const [showVoid, setShowVoid] = useState(false);
+  const [voidReason, setVoidReason] = useState("");
+  const [voidBusy, setVoidBusy] = useState(false);
   const [cashAccounts, setCashAccounts] = useState([]);
   const [depositAccountId, setDepositAccountId] = useState("");
 
@@ -418,10 +354,19 @@ function PaymentDetail({ id, onClose, adminUid }) {
     fn();
   }, []);
 
+  // Prefer journal's Ref# as the single source of truth
+  const journalRefNumber =
+    (journal && (journal.refNumber || (journal.journalNo != null ? pad5(journal.journalNo) : ""))) || "";
+
+  // For display only; keep receipt as separate concept (not used as Ref#)
+  const receiptNo = p?.receiptNo || "";
+
   if (!p) return null;
   const amount = Number(p.amount || 0);
   const isLoan = p.type === "loan_repayment";
   const canAct = p.status === "pending" && !busy;
+  const canRefund = p.status === "paid" && !refundBusy;
+  const canVoid = p.status === "pending" && !voidBusy;
 
   const pNum = Number(principal || 0);
   const iNum = Number(interest || 0);
@@ -579,13 +524,16 @@ function PaymentDetail({ id, onClose, adminUid }) {
           <div className="text-sm text-ink/60">Amount</div>
           <div className="text-2xl font-bold">₱{Number(p.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
           <div className="mt-2 text-sm">
-            {p.receiptNo && (
-              <span className="mr-4">Receipt No: <b>{p.receiptNo}</b></span>
+            {/* Show Journal Ref# (refNumber or padded journalNo) as the single source of truth */}
+            <span className="mr-4">
+              Ref#: <b>{journalRefNumber || "—"}</b>
+            </span>
+            {receiptNo && (
+              <span className="mr-4">Receipt: <b>{receiptNo}</b></span>
             )}
-            {journal?.journalNo && (
+            {journalRefNumber && (
               <>
-                <span>Journal No: <b>{journal.journalNo}</b></span>
-                {/* Placeholder link to journals viewer if available */}
+                <span>Journal No: <b>{journalRefNumber}</b></span>
               </>
             )}
           </div>
@@ -676,7 +624,7 @@ function PaymentDetail({ id, onClose, adminUid }) {
             </div>
             <div>
               <div className="text-ink/60">Created</div>
-              <div>{fmtDT(p.createdAt)}</div>
+              <div>{formatDT(p.createdAt)}</div>
             </div>
             <div>
               <div className="text-ink/60">Linked</div>
@@ -761,9 +709,35 @@ function PaymentDetail({ id, onClose, adminUid }) {
             {isApproving ? "Posting…" : "Approve & Post"}
           </button>
           <button className="btn btn-outline" disabled={!canAct} onClick={reject}>Reject</button>
+          {/* Refund / Void */}
+          {p.status === "paid" && (
+            <button className="btn btn-outline btn-amber" disabled={!canRefund} onClick={() => setShowRefund(true)}>
+              Refund
+            </button>
+          )}
+          {p.status === "pending" && (
+            <button className="btn btn-outline" disabled={!canVoid} onClick={() => setShowVoid(true)}>
+              Void
+            </button>
+          )}
           {success && <span className="text-sm text-emerald-700 sm:ml-2">{success}</span>}
           {err && <span className="text-sm text-rose-700 sm:ml-2">{err}</span>}
         </div>
+
+        {/* Status banners */}
+        {p.status === "refunded" && (
+          <div className="mt-3 rounded border border-amber-200 bg-amber-50 text-amber-800 p-2 text-sm">
+            Refunded{p.refundJournalId ? (
+              <> • Journal: <a className="underline" href={`/admin/journals/${p.refundJournalId}`}>{p.refundJournalId}</a></>
+            ) : null}
+            {p.refundReason ? <> • Reason: {p.refundReason}</> : null}
+          </div>
+        )}
+        {p.status === "voided" && (
+          <div className="mt-3 rounded border border-gray-200 bg-gray-50 text-gray-800 p-2 text-sm">
+            Voided{p.voidReason ? <> • Reason: {p.voidReason}</> : null}
+          </div>
+        )}
       </div>
 
       <PostingResultDialog
@@ -778,6 +752,80 @@ function PaymentDetail({ id, onClose, adminUid }) {
           navigate("/admin/payments");
         }}
       />
+
+      {/* Refund Modal */}
+      {showRefund && (
+        <div className="fixed inset-0 z-[1000]">
+          <div className="absolute inset-0 bg-black/40" onClick={() => !refundBusy && setShowRefund(false)} />
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-xl shadow-2xl w-[480px] max-w-[95vw] p-4">
+            <div className="text-lg font-semibold mb-2">Refund Payment</div>
+            <div className="text-sm text-ink/60 mb-2">Provide a reason. This posts a reversing journal.</div>
+            <label className="block mb-3">
+              <div className="text-xs text-ink/60">Reason</div>
+              <input className="input w-full" value={refundReason} onChange={(e) => setRefundReason(e.target.value)} maxLength={200} />
+            </label>
+            <div className="flex justify-end gap-2">
+              <button className="btn btn-outline" disabled={refundBusy} onClick={() => setShowRefund(false)}>Cancel</button>
+              <button
+                className="btn btn-amber"
+                disabled={!refundReason.trim() || refundBusy}
+                onClick={async () => {
+                  setRefundBusy(true);
+                  try {
+                    const call = httpsCallable(functions, "refundPayment");
+                    const { data } = await call({ paymentId: id, reason: refundReason.trim() });
+                    const r = data || {};
+                    setRefundInfo({ ok: !!r.ok, journalId: r.refundJournalId || "", already: !!r.already });
+                    setShowRefund(false);
+                  } catch (e) {
+                    alert(e?.message || String(e));
+                  } finally {
+                    setRefundBusy(false);
+                  }
+                }}
+              >
+                {refundBusy ? "Refunding…" : "Confirm Refund"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Void Modal */}
+      {showVoid && (
+        <div className="fixed inset-0 z-[1000]">
+          <div className="absolute inset-0 bg-black/40" onClick={() => !voidBusy && setShowVoid(false)} />
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-white rounded-xl shadow-2xl w-[480px] max-w-[95vw] p-4">
+            <div className="text-lg font-semibold mb-2">Void Payment</div>
+            <div className="text-sm text-ink/60 mb-2">Provide a reason. No journals will be created.</div>
+            <label className="block mb-3">
+              <div className="text-xs text-ink/60">Reason</div>
+              <input className="input w-full" value={voidReason} onChange={(e) => setVoidReason(e.target.value)} maxLength={200} />
+            </label>
+            <div className="flex justify-end gap-2">
+              <button className="btn btn-outline" disabled={voidBusy} onClick={() => setShowVoid(false)}>Cancel</button>
+              <button
+                className="btn btn-primary"
+                disabled={!voidReason.trim() || voidBusy}
+                onClick={async () => {
+                  setVoidBusy(true);
+                  try {
+                    const call = httpsCallable(functions, "voidPayment");
+                    await call({ paymentId: id, reason: voidReason.trim() });
+                    setShowVoid(false);
+                  } catch (e) {
+                    alert(e?.message || String(e));
+                  } finally {
+                    setVoidBusy(false);
+                  }
+                }}
+              >
+                {voidBusy ? "Voiding…" : "Confirm Void"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

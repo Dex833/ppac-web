@@ -65,7 +65,7 @@ export default function ReceiptPage() {
       <div className="text-center mb-4">
         <div className="text-2xl font-bold">Official Receipt</div>
         {p.receiptNo ? (
-          <div className="text-sm text-ink/60 mt-1">Receipt No: <b>{p.receiptNo}</b></div>
+            <div className="text-sm text-ink/60 mt-1">Ref#: <b>{p.receiptNo}</b></div>
         ) : (
           <div className="text-sm text-ink/60 mt-1">—</div>
         )}

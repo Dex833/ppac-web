@@ -1,5 +1,6 @@
 // src/pages/accounting/financials/IncomeStatement.jsx
 import React, { useEffect, useState, useRef } from "react";
+import { formatD } from "@/utils/dates";
 import { db } from "@/lib/firebase";
 import {
   collection,
@@ -422,7 +423,7 @@ function IncomeStatementInner() {
                 ) : (
                   rows.map((r, i) => (
                     <tr key={i} className="odd:bg-white even:bg-gray-50">
-                      <td className="p-2">{r.date}</td>
+                      <td className="p-2">{formatD(r.date)}</td>
                       <td className="p-2 font-mono">{r.ref}</td>
                       <td className="p-2">{r.desc}</td>
                       <td className="p-2 text-right">

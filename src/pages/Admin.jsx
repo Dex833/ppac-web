@@ -47,21 +47,7 @@ export default function AdminLayout() {
   ensureQrSettings().catch(() => {});
   }, [isAdmin]);
 
-  const [seedBusy, setSeedBusy] = React.useState(false);
-  const [seedMsg, setSeedMsg] = React.useState("");
-  async function onInitPaymentsSettings() {
-    setSeedBusy(true);
-    setSeedMsg("");
-    try {
-      await ensurePaymentsSettings();
-      setSeedMsg("Payments settings ensured.");
-    } catch (e) {
-      setSeedMsg(e?.message || String(e));
-    } finally {
-      setSeedBusy(false);
-      setTimeout(() => setSeedMsg(""), 3000);
-    }
-  }
+  // removed init button/state
 
   // Close on Escape
   React.useEffect(() => {
@@ -96,21 +82,7 @@ export default function AdminLayout() {
           Menu
         </button>
 
-        {/* Quick init (desktop) */}
-        {isAdmin && (
-          <div className="hidden md:flex items-center gap-2 ml-2">
-            <button
-              type="button"
-              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium shadow-sm hover:bg-gray-50"
-              onClick={onInitPaymentsSettings}
-              disabled={seedBusy}
-              title="Creates default payments settings if missing"
-            >
-              {seedBusy ? "Seeding…" : "Init Payment Settings"}
-            </button>
-            {seedMsg && <span className="text-xs text-ink/60">{seedMsg}</span>}
-          </div>
-        )}
+  {/* Quick init button removed */}
       </div>
 
       {/* Layout */}
@@ -123,6 +95,8 @@ export default function AdminLayout() {
               <AdminNavItem to="/admin/edit-home">Edit Home</AdminNavItem>
               <AdminNavItem to="/admin/membership-status">Membership Status</AdminNavItem>
               <AdminNavItem to="/admin/payments">Payments</AdminNavItem>
+              <AdminNavItem to="/admin/products">Products</AdminNavItem>
+              <AdminNavItem to="/admin/orders">Orders</AdminNavItem>
               <AdminNavItem to="/admin/settings/accounting">Accounting Settings</AdminNavItem>
               <AdminNavItem to="/admin/ops">Ops</AdminNavItem>
             </nav>
@@ -175,6 +149,18 @@ export default function AdminLayout() {
                   onClick={() => setMobileOpen(false)}
                 >
                   Payments
+                </AdminNavItem>
+                <AdminNavItem
+                  to="/admin/products"
+                  onClick={() => setMobileOpen(false)}
+                >
+                  Products
+                </AdminNavItem>
+                <AdminNavItem
+                  to="/admin/orders"
+                  onClick={() => setMobileOpen(false)}
+                >
+                  Orders
                 </AdminNavItem>
                 <AdminNavItem
                   to="/admin/settings/accounting"

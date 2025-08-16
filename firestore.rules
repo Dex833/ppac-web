@@ -156,6 +156,27 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    /* ------------------------------- store v0 ---------------------------- */
+    // Public catalog; admins manage
+    match /products/{pid} {
+      allow get, list: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Member carts (per-user doc). Optional helper for UX; not security-critical.
+    match /carts/{uid} {
+      allow get, list: if isSignedIn() && request.auth.uid == uid;
+      allow create, update, delete: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Orders: member creates; only admin lists/updates. Owner can get.
+    match /orders/{oid} {
+      allow create: if isSignedIn();
+      allow get: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if isAdmin();
+      allow update, delete: if isAdmin();
+    }
+
     /* ---------------------------- settlements ---------------------------- */
     match /settlements/{sid} {
       allow get, list: if isAdmin();

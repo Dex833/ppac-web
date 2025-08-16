@@ -63,6 +63,12 @@ service firebase.storage {
       );
     }
 
+    // Optional: product images managed by admin-only tools
+    match /product-images/{file=**} {
+      allow read: if true;
+      allow write: if isAdmin() && isImageOrPdf() && under2MB();
+    }
+
     // Deny everything else
     match /{allPaths=**} {
       allow read, write: if false;

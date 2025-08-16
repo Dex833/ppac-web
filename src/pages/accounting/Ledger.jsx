@@ -1,5 +1,6 @@
 // src/pages/accounting/Ledger.jsx
 import React, { useEffect, useMemo, useState } from "react";
+import { formatD } from "@/utils/dates";
 import { db } from "@/lib/firebase";
 import { collection, query, orderBy, onSnapshot, where } from "firebase/firestore";
 
@@ -82,7 +83,7 @@ export default function Ledger() {
         snap.docs.forEach((d) => {
           const h = { id: d.id, ...d.data() };
           const hdrDate = toISODate(h.date) || ""; // journals use YYYY-MM-DD strings
-          const ref = h.journalNo ?? h.refNumber ?? "";
+          const ref = h.refNumber || (h.journalNo ? String(h.journalNo).padStart(5, "0") : "");
           const createdBy = h.createdByUid || h.createdBy || "";
           if (Array.isArray(h.lines)) {
             h.lines.forEach((l, idx) => {
@@ -123,7 +124,7 @@ export default function Ledger() {
         debit: +line.debit || 0,
         credit: +line.credit || 0,
         date: toISODate(line.date), // keep as YYYY-MM-DD string
-        refNumber: line.journalNo || "",
+  refNumber: line.refNumber || "",
         description: line.description || "",
         createdBy: line.createdBy || "",
       });
@@ -447,7 +448,7 @@ thead{background:#f7f7f7}
                     running += d - c;
                     return (
                       <tr key={idx} className="odd:bg-white even:bg-gray-50">
-                        <td className="p-2 border-b border-r border-gray-200">{line.date}</td>
+                        <td className="p-2 border-b border-r border-gray-200">{formatD(line.date)}</td>
                         <td className="p-2 border-b border-r border-gray-200 font-mono">{line.refNumber}</td>
                         <td className="p-2 border-b border-r border-gray-200">{line.description}</td>
                         <td className="p-2 border-b border-r border-gray-200 text-right">

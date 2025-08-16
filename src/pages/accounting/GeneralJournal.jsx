@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from "react";
+import SafeText from "@/components/SafeText";
+import { formatD, formatDT } from "@/utils/dates";
 import { db } from "@/lib/firebase";
 import {
   collection,
@@ -33,6 +35,7 @@ export default function GeneralJournal() {
   const [filter, setFilter] = useState({ ref: "", date: "", account: "" });
   const [sortBy, setSortBy] = useState("date");
   const [sortDir, setSortDir] = useState("desc");
+  const [grouped, setGrouped] = useState(false); // headers-only view
 
   const [notif, setNotif] = useState({ show: false, type: "", message: "" });
 
@@ -85,7 +88,8 @@ export default function GeneralJournal() {
 
   // --------- Filtering ----------
   function entryMatchesFilters(e) {
-    if (filter.ref && !(e.refNumber || "").includes(filter.ref)) return false;
+    const refStr = e.refNumber || (e.journalNo ? String(e.journalNo).padStart(5, "0") : "");
+    if (filter.ref && !refStr.includes(filter.ref)) return false;
     if (filter.date && e.date !== filter.date) return false;
     if (
       filter.account &&
@@ -110,7 +114,7 @@ export default function GeneralJournal() {
       (entry.lines || []).map((line) => ({
         ...line,
         entryId: entry.id,
-        refNumber: entry.refNumber,
+        refNumber: entry.refNumber || (entry.journalNo ? String(entry.journalNo).padStart(5, "0") : ""),
         date: entry.date,
         description: entry.description,
         comments: entry.comments,
@@ -145,6 +149,59 @@ export default function GeneralJournal() {
 
   // --------- Mobile cards: group per entry ----------
   const mobileEntries = entries.filter(entryMatchesFilters);
+
+  // --------- Grouped (headers-only) rows ----------
+  const groupedRows = mobileEntries.map((e) => {
+    const refNumber = e.refNumber || (e.journalNo ? String(e.journalNo).padStart(5, "0") : "");
+    const debitTotal = (e.lines || []).reduce((s, l) => s + (parseFloat(l.debit) || 0), 0);
+    const creditTotal = (e.lines || []).reduce((s, l) => s + (parseFloat(l.credit) || 0), 0);
+    return {
+      id: e.id,
+      refNumber,
+      date: e.date,
+      description: e.description,
+      comments: e.comments,
+      createdBy: e.createdBy,
+      debitTotal,
+      creditTotal,
+      linesCount: (e.lines || []).length,
+    };
+  });
+  const groupedSorted = [...groupedRows].sort((a, b) => {
+    // Reuse sortBy/sortDir; map unsupported fields to reasonable defaults
+    const key = ["refNumber", "date", "description", "debit", "credit"].includes(sortBy)
+      ? sortBy
+      : sortBy === "debit"
+      ? "debit"
+      : sortBy === "credit"
+      ? "credit"
+      : "date";
+    let v1;
+    let v2;
+    if (key === "refNumber") {
+      v1 = a.refNumber;
+      v2 = b.refNumber;
+    } else if (key === "date") {
+      v1 = a.date;
+      v2 = b.date;
+    } else if (key === "description") {
+      v1 = a.description || "";
+      v2 = b.description || "";
+    } else if (key === "debit") {
+      v1 = a.debitTotal;
+      v2 = b.debitTotal;
+    } else if (key === "credit") {
+      v1 = a.creditTotal;
+      v2 = b.creditTotal;
+    }
+    if (v1 < v2) return sortDir === "asc" ? -1 : 1;
+    if (v1 > v2) return sortDir === "asc" ? 1 : -1;
+    return 0;
+  });
+  const groupedTotals = groupedRows.reduce(
+    (t, r) => ({ debit: t.debit + r.debitTotal, credit: t.credit + r.creditTotal }),
+    { debit: 0, credit: 0 }
+  );
 
   // ---- Full Edit (entry + lines) ----
   function openEdit(entryId) {
@@ -268,7 +325,7 @@ export default function GeneralJournal() {
       )}
 
       {/* Filters */}
-      <div className="mb-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
+      <div className="mb-2 grid grid-cols-1 sm:grid-cols-3 gap-2">
         <input
           className="border rounded px-2 py-2"
           placeholder="Filter by Ref#"
@@ -289,12 +346,25 @@ export default function GeneralJournal() {
           onChange={(e) => setFilter((f) => ({ ...f, account: e.target.value }))}
         />
       </div>
+      <div className="mb-4 flex items-center justify-between">
+        <div className="text-sm text-ink/60">
+          View: {grouped ? "Grouped (one row per entry)" : "Lines (two+ rows per entry)"}
+        </div>
+        <button
+          className="btn btn-sm btn-outline"
+          onClick={() => setGrouped((v) => !v)}
+          title={grouped ? "Show line-level rows" : "Show one row per journal entry"}
+        >
+          {grouped ? "Switch to Lines View" : "Group by Entry"}
+        </button>
+      </div>
 
       {loading ? (
         <div>Loading entries…</div>
       ) : (
         <>
           {/* Desktop table */}
+          {!grouped && (
           <div className="hidden sm:block overflow-x-auto">
             <table className="min-w-full border rounded text-sm">
               <thead className="bg-gray-50">
@@ -349,7 +419,7 @@ export default function GeneralJournal() {
                   return (
                     <tr key={line.entryId + "-" + idx} className="odd:bg-white even:bg-gray-50">
                       <td className="p-2 border-b font-mono">{line.refNumber}</td>
-                      <td className="p-2 border-b whitespace-nowrap">{line.date}</td>
+                      <td className="p-2 border-b whitespace-nowrap">{formatD(line.date)}</td>
                       <td className="p-2 border-b">{line.description}</td>
                       <td className="p-2 border-b">{getAccountName(line.accountId)}</td>
                       <td className="p-2 border-b">{getAccountType(line.accountId)}</td>
@@ -404,6 +474,63 @@ export default function GeneralJournal() {
               </tfoot>
             </table>
           </div>
+          )}
+
+          {/* Grouped (headers-only) desktop table */}
+          {grouped && (
+          <div className="hidden sm:block overflow-x-auto">
+            <table className="min-w-full border rounded text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("refNumber")}>
+                    Ref# {sortBy === "refNumber" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                  </th>
+                  <th className="text-left p-2 border-b cursor-pointer whitespace-nowrap" onClick={() => handleSort("date")}>
+                    Date {sortBy === "date" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                  </th>
+                  <th className="text-left p-2 border-b cursor-pointer" onClick={() => handleSort("description")}>
+                    Description {sortBy === "description" ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                  </th>
+                  <th className="text-left p-2 border-b">Lines</th>
+                  <th className="text-right p-2 border-b cursor-pointer" onClick={() => handleSort("debit")}>Debit {sortBy === "debit" ? (sortDir === "asc" ? "▲" : "▼") : ""}</th>
+                  <th className="text-right p-2 border-b cursor-pointer" onClick={() => handleSort("credit")}>Credit {sortBy === "credit" ? (sortDir === "asc" ? "▲" : "▼") : ""}</th>
+                  <th className="text-left p-2 border-b">Created By</th>
+                  <th className="text-left p-2 border-b">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {groupedSorted.map((row) => (
+                  <tr key={row.id} className="odd:bg-white even:bg-gray-50">
+                    <td className="p-2 border-b font-mono">{row.refNumber}</td>
+                    <td className="p-2 border-b whitespace-nowrap">{formatD(row.date)}</td>
+                    <td className="p-2 border-b">{row.description}</td>
+                    <td className="p-2 border-b">{row.linesCount}</td>
+                    <td className="p-2 border-b text-right">{row.debitTotal ? fmt(row.debitTotal) : ""}</td>
+                    <td className="p-2 border-b text-right">{row.creditTotal ? fmt(row.creditTotal) : ""}</td>
+                    <td className="p-2 border-b">{row.createdBy || "-"}</td>
+                    <td className="p-2 border-b">
+                      <button className="btn btn-sm btn-outline mr-1" onClick={() => openEdit(row.id)}>Edit</button>
+                      <button className="btn btn-sm btn-outline" onClick={() => deleteEntry(row.id)}>Delete</button>
+                    </td>
+                  </tr>
+                ))}
+                {groupedSorted.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="p-4 text-gray-500 text-center">No journal entries found.</td>
+                  </tr>
+                )}
+              </tbody>
+              <tfoot>
+                <tr className="font-bold bg-gray-100">
+                  <td colSpan={4} className="p-2 border-t text-right">Totals:</td>
+                  <td className="p-2 border-t text-right">{fmt(groupedTotals.debit)}</td>
+                  <td className="p-2 border-t text-right">{fmt(groupedTotals.credit)}</td>
+                  <td colSpan={2} className="p-2 border-t"></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          )}
 
           {/* Mobile cards (per entry) */}
           <div className="sm:hidden space-y-4">
@@ -424,9 +551,9 @@ export default function GeneralJournal() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="text-xs uppercase text-ink/50">Ref#</div>
-                      <div className="font-mono">{entry.refNumber}</div>
+                      <div className="font-mono">{entry.refNumber || (entry.journalNo ? String(entry.journalNo).padStart(5, "0") : "")}</div>
                       <div className="text-xs uppercase text-ink/50 mt-2">Date</div>
-                      <div className="whitespace-nowrap">{entry.date}</div>
+                      <div className="whitespace-nowrap">{formatD(entry.date)}</div>
                     </div>
                     <div className="text-right">
                       <div className="text-xs uppercase text-ink/50">Created By</div>

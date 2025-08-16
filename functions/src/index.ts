@@ -14,6 +14,8 @@ initializeApp();
 const db = getFirestore();
 // No gateway secrets
 
+// refNumber sequence helper moved to lib/sequences
+
 // ------------------------- tiny utils -------------------------
 const TZ = "Asia/Manila";
 const S = (v: any) => String(v ?? "");
@@ -616,119 +618,7 @@ export const onJournalEntryCreated = onDocumentCreated(
   }
 );
 
-// 6) Backfill: generate journalEntryLines for existing journalEntries headers
-export const backfillJournalEntryLines = onCall({ region: "asia-east1" }, async (req) => {
-  const uid = req.auth?.uid || "";
-  if (!uid) throw new Error("auth required");
-
-  // Optional basic role check (profiles/{uid}.roles contains 'admin' or 'staff')
-  try {
-    const prof = await db.doc(`profiles/${uid}`).get();
-    const roles = Array.isArray((prof.data() as any)?.roles) ? (prof.data() as any).roles : [];
-    if (!roles.includes("admin") && !roles.includes("staff")) {
-      // fallback: allow if user doc has admin
-      const u = await db.doc(`users/${uid}`).get();
-      const r2 = Array.isArray((u.data() as any)?.roles) ? (u.data() as any).roles : [];
-      if (!r2.includes("admin") && !r2.includes("staff")) {
-        throw new Error("permission denied");
-      }
-    }
-  } catch (e) {
-    throw new Error("permission denied");
-  }
-
-  // Optional days filter (not strictly needed; we process all for simplicity)
-  const days = Number((req.data as any)?.days || 0);
-  const cutoffDate = days > 0 ? new Date(Date.now() - days * 86400000) : null;
-  let scanned = 0;
-  let wrote = 0;
-
-  // Cache for accounts denorm
-  const accCache = new Map<string, { code?: any; main?: any; individual?: any }>();
-  async function getAcc(accId?: string) {
-    const id = String(accId || "");
-    if (!id) return null;
-    if (accCache.has(id)) return accCache.get(id)!;
-    try {
-      const snap = await db.doc(`accounts/${id}`).get();
-      const v = snap.exists ? (snap.data() as any) : null;
-      const denorm = v ? { code: v.code, main: v.main, individual: v.individual } : {};
-      accCache.set(id, denorm);
-      return denorm;
-    } catch {
-      const denorm = {} as any;
-      accCache.set(id, denorm);
-      return denorm;
-    }
-  }
-
-  // Read all headers (could be optimized with pagination if needed)
-  const snap = await db.collection("journalEntries").get();
-  for (const docSnap of snap.docs) {
-    const h = docSnap.data() as any;
-    scanned++;
-    if (cutoffDate) {
-      const createdAt = (h?.createdAt as any)?.toDate?.() || null;
-      if (createdAt && createdAt < cutoffDate) continue;
-    }
-    if (Array.isArray(h?.lines) && h.lines.length) {
-      await mirrorJournalToEntries(db, docSnap.id, h);
-      wrote += h.lines.length;
-    }
-  }
-  return { ok: true, scanned, wrote };
-});
-
-// 7) Optional: Remirror recent journals with Timestamp date normalization
-export const remirrorRecentJournals = onCall({ region: "asia-east1" }, async (req) => {
-  const uid = req.auth?.uid || "";
-  if (!uid) throw new Error("auth required");
-
-  // basic role check
-  try {
-    const prof = await db.doc(`profiles/${uid}`).get();
-    const roles = Array.isArray((prof.data() as any)?.roles) ? (prof.data() as any).roles : [];
-    if (!roles.includes("admin") && !roles.includes("staff")) {
-      const u = await db.doc(`users/${uid}`).get();
-      const r2 = Array.isArray((u.data() as any)?.roles) ? (u.data() as any).roles : [];
-      if (!r2.includes("admin") && !r2.includes("staff")) throw new Error("permission denied");
-    }
-  } catch {
-    throw new Error("permission denied");
-  }
-
-  const limit = Number((req.data as any)?.limit || 200);
-  const sinceDays = Number((req.data as any)?.sinceDays || 30);
-  const sinceMs = Date.now() - sinceDays * 24 * 60 * 60 * 1000;
-
-  // Prefer createdAt range when available; fall back to all and local filter
-  let docs: FirebaseFirestore.QueryDocumentSnapshot[] = [] as any;
-  try {
-    const q = db
-      .collection("journalEntries")
-      .where("createdAt", ">=", (FieldValue as any).serverTimestamp() as any); // placeholder; will fail
-    await q.get();
-  } catch {
-    // We’ll just read all and filter locally due to lack of a stable serverTimestamp compare in code
-  }
-  const snap = await db.collection("journalEntries").orderBy("createdAt", "desc").limit(limit).get().catch(async () => {
-    // Fallback if index/order missing
-    return await db.collection("journalEntries").get();
-  });
-  docs = snap.docs;
-
-  let processed = 0;
-  for (const d of docs) {
-    const j = d.data() as any;
-    const createdAt = (j?.createdAt as any)?.toDate?.() as Date | undefined;
-    if (createdAt && createdAt.getTime() < sinceMs) continue;
-    if (Array.isArray(j?.lines) && j.lines.length) {
-      await mirrorJournalToEntries(db, d.id, j);
-      processed++;
-    }
-  }
-  return { ok: true, scanned: docs.length, processed };
-});
+// Backfill and remirroring callables removed
 
 // ------------------------- Settlements posting -------------------------
 export const postSettlement = onCall({ region: "asia-southeast1" }, async (req) => {
@@ -799,3 +689,177 @@ export const postSettlement = onCall({ region: "asia-southeast1" }, async (req) 
 
   return { ok: true, journalId };
 });
+
+// ------------------------- Refunds & Voids (v1) -------------------------
+// Refund a PAID payment by reversing its posted journal
+export const refundPayment = onCall(
+  { region: "asia-southeast1", timeoutSeconds: 30, memory: "256MiB" },
+  async (req) => {
+    const uid = req.auth?.uid || "";
+    if (!uid) throw new Error("auth required");
+    const allowed = await isAdminLike(uid);
+    if (!allowed) throw new Error("permission denied");
+
+    const paymentId = String((req.data as any)?.paymentId || "").trim();
+    const reason = String((req.data as any)?.reason || "");
+    if (!paymentId) throw new Error("paymentId required");
+
+    const pRef = db.doc(`payments/${paymentId}`);
+    const ps = await pRef.get();
+    if (!ps.exists) throw new Error("payment not found");
+    const p = ps.data() as any;
+
+    if ((p.status || "") !== "paid") throw new Error("Only PAID payments can be refunded.");
+
+    // Idempotency: if already marked with refundJournalId, return
+    if (p.refundJournalId) return { ok: true, already: true, refundJournalId: p.refundJournalId } as any;
+
+    // Find original journal
+    let origJournalId: string | null = String(p.posting?.journalId || p.journalId || "") || null;
+    if (!origJournalId) {
+      // Fallback: search by linkedPaymentId
+      const q = await db
+        .collection("journalEntries")
+        .where("linkedPaymentId", "==", paymentId)
+        .limit(1)
+        .get();
+      if (!q.empty) origJournalId = q.docs[0].id;
+    }
+    if (!origJournalId) throw new Error("Missing original journalId.");
+
+    const jRef = db.doc(`journalEntries/${origJournalId}`);
+    const jSnap = await jRef.get();
+    if (!jSnap.exists) throw new Error("Original journal not found.");
+    const j = jSnap.data() as any;
+
+    // Build reversal lines: swap debit/credit on each split/line
+    const origLines: any[] = Array.isArray(j.lines) ? j.lines : Array.isArray(j.splits) ? j.splits : [];
+    if (!Array.isArray(origLines) || origLines.length === 0) throw new Error("Original journal has no lines.");
+    const revLines = origLines.map((ln: any) => {
+      const debit = Number(ln?.debit || 0);
+      const credit = Number(ln?.credit || 0);
+      let _debit = debit;
+      let _credit = credit;
+      if (!debit && !credit) {
+        const amt = Number(ln?.amount || 0);
+        _debit = amt;
+        _credit = 0;
+      }
+      return {
+        accountId: ln.accountId,
+        accountName: ln.accountName || null,
+        debit: _credit, // swap
+        credit: _debit, // swap
+        memo: `${ln.memo || ln.note || ""} (refund reversal)`.trim(),
+      };
+    });
+
+    const refundKey = `refund_${paymentId}`;
+    const refundJournalId = `refund_${paymentId}`; // deterministic doc id for idempotency
+    const newJRef = db.doc(`journalEntries/${refundJournalId}`);
+    const existing = await newJRef.get();
+
+    if (existing.exists) {
+      await pRef.set(
+        {
+          status: "refunded",
+          refundReason: reason || "",
+          refundedBy: uid,
+          refundedAt: FieldValue.serverTimestamp(),
+          refundJournalId: refundJournalId,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+      return { ok: true, already: true, refundJournalId } as any;
+    }
+
+    // Create reversal journal then update payment in a transaction
+    await db.runTransaction(async (tx) => {
+      tx.set(newJRef, {
+        type: "refund",
+        reference: refundKey,
+        sourcePaymentId: paymentId,
+        memo: `Refund of ${(p.type || "payment")} ${paymentId}${reason ? " – " + reason : ""}`,
+        date: FieldValue.serverTimestamp(),
+        lines: revLines,
+        status: "posted",
+        postedAt: FieldValue.serverTimestamp(),
+        postedByUid: uid,
+        createdAt: FieldValue.serverTimestamp(),
+        createdByUid: uid,
+      });
+      tx.set(
+        pRef,
+        {
+          status: "refunded",
+          refundReason: reason || "",
+          refundedBy: uid,
+          refundedAt: FieldValue.serverTimestamp(),
+          refundJournalId: refundJournalId,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    });
+
+    // Optional admin log (best effort)
+    try {
+      await db.collection("adminLogs").add({
+        at: FieldValue.serverTimestamp(),
+        by: uid,
+        action: "refund",
+        paymentId,
+        refundJournalId,
+        reason: reason || "",
+      });
+    } catch {}
+
+    return { ok: true, refundJournalId } as any;
+  }
+);
+
+// Void a PENDING payment; no journals created
+export const voidPayment = onCall(
+  { region: "asia-southeast1", timeoutSeconds: 15, memory: "128MiB" },
+  async (req) => {
+    const uid = req.auth?.uid || "";
+    if (!uid) throw new Error("auth required");
+    const allowed = await isAdminLike(uid);
+    if (!allowed) throw new Error("permission denied");
+
+    const paymentId = String((req.data as any)?.paymentId || "").trim();
+    const reason = String((req.data as any)?.reason || "");
+    if (!paymentId) throw new Error("paymentId required");
+
+    const pRef = db.doc(`payments/${paymentId}`);
+    const ps = await pRef.get();
+    if (!ps.exists) throw new Error("payment not found");
+    const p = ps.data() as any;
+
+    if ((p.status || "") !== "pending") throw new Error("Only PENDING payments can be voided.");
+
+    await pRef.set(
+      {
+        status: "voided",
+        voidReason: reason || "",
+        voidedBy: uid,
+        voidedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    try {
+      await db.collection("adminLogs").add({
+        at: FieldValue.serverTimestamp(),
+        by: uid,
+        action: "void",
+        paymentId,
+        reason: reason || "",
+      });
+    } catch {}
+
+    return { ok: true } as any;
+  }
+);

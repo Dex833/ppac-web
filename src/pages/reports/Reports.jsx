@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { db } from "@/lib/firebase";
+import { formatDT, tsToDate } from "@/utils/dates";
 import {
   collection,
   query,
@@ -58,18 +59,7 @@ function normalizeType(t) {
   }
 }
 
-function tsToDate(v) {
-  if (!v) return null;
-  if (typeof v.toDate === "function") return v.toDate();
-  if (typeof v.seconds === "number") return new Date(v.seconds * 1000);
-  if (typeof v === "string" || typeof v === "number") return new Date(v);
-  return null;
-}
-
-function fmtDT(v) {
-  const d = tsToDate(v);
-  return d ? d.toLocaleString() : "—";
-}
+// date formatting now via utils/dates
 
 function fmtPeriodDate(dateStr) {
   if (!dateStr || dateStr === "—") return "—";
@@ -307,7 +297,7 @@ export default function Reports() {
                       {periodLabel(r)}
                     </td>
                     <td className="p-2 border-b border-r font-mono">
-                      {fmtDT(r.createdAt)}
+                      {formatDT(r.createdAt)}
                     </td>
                     <td className="p-2 border-b">
                       <div className="flex flex-wrap gap-2 items-center">
@@ -365,7 +355,7 @@ export default function Reports() {
                   Period: <span className="font-mono">{periodLabel(r)}</span>
                 </div>
                 <div className="mt-1 text-xs text-ink/60">
-                  Created: <span className="font-mono">{fmtDT(r.createdAt)}</span>
+                  Created: <span className="font-mono">{formatDT(r.createdAt)}</span>
                 </div>
                 <div className="mt-3 flex items-center gap-2">
                   <Link className="btn btn-outline btn-sm" to={`/reports/${r.id}`}>
@@ -501,7 +491,7 @@ export default function Reports() {
                 <td className="p-2 border-b border-r font-mono">
                   {periodLabel(r)}
                 </td>
-                <td className="p-2 border-b font-mono">{fmtDT(r.createdAt)}</td>
+                <td className="p-2 border-b font-mono">{formatDT(r.createdAt)}</td>
                 <td className="p-2 border-b">
                   <div className="flex gap-2">
                     <Link className="btn btn-outline btn-sm" to={`/reports/${r.id}`}>
@@ -549,7 +539,7 @@ export default function Reports() {
               Period: <span className="font-mono">{periodLabel(r)}</span>
             </div>
             <div className="mt-1 text-xs text-ink/60">
-              Created: <span className="font-mono">{fmtDT(r.createdAt)}</span>
+              Created: <span className="font-mono">{formatDT(r.createdAt)}</span>
             </div>
             <div className="mt-3 flex gap-2">
               <Link className="btn btn-outline btn-sm" to={`/reports/${r.id}`}>

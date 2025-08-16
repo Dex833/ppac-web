@@ -1,5 +1,6 @@
 // src/pages/accounting/financials/CashFlowStatement.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { formatD } from "@/utils/dates";
 import { db } from "@/lib/firebase";
 import {
   collection,
@@ -259,7 +260,7 @@ function CashFlowInner() {
                   <tr><td className="p-3 text-gray-500 text-center" colSpan={5}>No matching entries in the selected period.</td></tr>
                 ) : rows.map((r,i)=>(
                   <tr key={i} className="odd:bg-white even:bg-gray-50">
-                    <td className="p-2">{r.date}</td>
+                    <td className="p-2">{formatD(r.date)}</td>
                     <td className="p-2 font-mono">{r.ref}</td>
                     <td className="p-2">{r.desc}</td>
                     <td className="p-2 text-right">{fmt(r.debit)}</td>

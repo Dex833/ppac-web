@@ -19,6 +19,7 @@ import {
   where,
 } from "firebase/firestore";
 import { ref as storageRef, uploadBytesResumable, getDownloadURL } from "firebase/storage";
+import { formatDT } from "@/utils/dates";
 // removed gateway (online) flows; only manual methods remain
 
 const paymentsBg =
@@ -509,15 +510,7 @@ function StatusBadge({ s }) {
   return <span className={`inline-block text-xs px-2 py-0.5 rounded border ${cls}`}>{s}</span>;
 }
 
-function fmtDT(v) {
-  try {
-    if (!v) return "—";
-    if (typeof v.toDate === "function") return v.toDate().toLocaleString();
-    return new Date(v).toLocaleString();
-  } catch {
-    return String(v || "—");
-  }
-}
+// using shared date utils (formatDT)
 
 function PaymentHistory({ uid }) {
   const [rows, setRows] = useState([]);
@@ -603,7 +596,7 @@ function PaymentHistory({ uid }) {
             )}
             {!loading && rows.map((p) => (
               <tr key={p.id} className="odd:bg-white even:bg-gray-50">
-                <td className="p-2 border-b">{fmtDT(p.createdAt)}</td>
+                <td className="p-2 border-b">{formatDT(p.createdAt)}</td>
                 <td className="p-2 border-b">{p.type || "—"}</td>
                 <td className="p-2 border-b">{p.method || "—"}</td>
                 <td className="p-2 border-b text-right font-mono">{Number(p.amount || 0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
@@ -651,7 +644,7 @@ function PaymentDetailModal({ p, onClose }) {
           <div className="text-2xl font-bold">₱{Number(p.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
           <div className="mt-2 text-sm">
             <span className="mr-4">Ref: <b>{p.referenceNo || p.refNo || "—"}</b></span>
-            {p.receiptNo && <span>Receipt: <b>{p.receiptNo}</b></span>}
+            {p.receiptNo && <span>Ref#: <b>{p.receiptNo}</b></span>}
           </div>
         </div>
 

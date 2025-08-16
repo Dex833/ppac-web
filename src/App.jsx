@@ -173,6 +173,7 @@ import ReceiptPage from "./pages/Receipt.jsx";
 import Store from "./pages/store/Store.jsx";
 import Cart from "./pages/store/Cart.jsx";
 import Checkout from "./pages/store/Checkout.jsx";
+import Product from "./pages/store/Product.jsx";
 import AdminProducts from "./pages/admin/AdminProducts.jsx";
 import AdminOrders from "./pages/admin/AdminOrders.jsx";
 
@@ -385,6 +386,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Store />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/store/product/:id"
+            element={
+              <ProtectedRoute>
+                <Product />
               </ProtectedRoute>
             }
           />

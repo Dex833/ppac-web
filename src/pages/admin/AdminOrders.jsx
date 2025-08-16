@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { collection, onSnapshot, orderBy, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Link } from "react-router-dom";
+import { formatDT } from "@/utils/dates";
 
 export default function AdminOrders() {
   const [rows, setRows] = useState([]);
@@ -35,14 +36,15 @@ export default function AdminOrders() {
       </div>
 
       <div className="overflow-x-auto">
-        <table className="min-w-[1000px] w-full border rounded">
+    <table className="min-w-[1000px] w-full border rounded">
           <thead className="bg-gray-50">
             <tr>
-              <th className="text-left p-2 border-b">Date</th>
-              <th className="text-left p-2 border-b">Items</th>
-              <th className="text-right p-2 border-b">Subtotal</th>
-              <th className="text-left p-2 border-b">Status</th>
-              <th className="text-left p-2 border-b">Actions</th>
+      <th className="text-left p-2 border-b">Date</th>
+      <th className="text-left p-2 border-b">Buyer</th>
+      <th className="text-left p-2 border-b">Items</th>
+      <th className="text-right p-2 border-b">Total</th>
+      <th className="text-left p-2 border-b">Status</th>
+      <th className="text-left p-2 border-b">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -50,7 +52,8 @@ export default function AdminOrders() {
             {!loading && rows.length === 0 && <tr><td className="p-3 text-ink/60" colSpan={5}>No orders.</td></tr>}
             {!loading && rows.map((r) => (
               <tr key={r.id} className="odd:bg-white even:bg-gray-50">
-                <td className="p-2 border-b">{fmtDT(r.createdAt)}</td>
+                <td className="p-2 border-b">{formatDT(r.createdAt)}</td>
+                <td className="p-2 border-b">{r.buyerName || r.userId || "—"}</td>
                 <td className="p-2 border-b text-sm">
                   <ul className="list-disc ml-4">
                     {(r.items||[]).map((it,i)=>(<li key={i}>{it.qty} × {it.name}</li>))}
@@ -60,7 +63,14 @@ export default function AdminOrders() {
                 <td className="p-2 border-b">{r.status||"pending"}</td>
                 <td className="p-2 border-b">
                   <div className="flex items-center gap-2">
-                    {r.paymentId && <Link className="btn btn-sm btn-primary" to={`/receipt/${r.paymentId}`}>Open Receipt</Link>}
+                    {r.paymentId && (
+                      <>
+                        <Link className="btn btn-sm btn-outline" to={`/admin/payments?open=${r.paymentId}`}>Open Payment</Link>
+                        {r.status === "paid" && (
+                          <Link className="btn btn-sm btn-primary" to={`/receipt/${r.paymentId}`}>Receipt</Link>
+                        )}
+                      </>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -72,10 +82,4 @@ export default function AdminOrders() {
   );
 }
 
-function fmtDT(v) {
-  try {
-    if (!v) return "—";
-    if (typeof v.toDate === "function") return v.toDate().toLocaleString();
-    return new Date(v).toLocaleString();
-  } catch { return String(v || "—"); }
-}
+// date formatting centralized in utils/dates

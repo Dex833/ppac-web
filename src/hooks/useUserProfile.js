@@ -1,64 +1,106 @@
 // src/hooks/useUserProfile.jsx
-import { useEffect, useState } from "react";
-import { doc, onSnapshot } from "firebase/firestore";
+import { useEffect, useRef, useState } from "react";
 import { db } from "@/lib/firebase";
+import { doc, onSnapshot } from "firebase/firestore";
 import { useAuth } from "../AuthContext";
 
 export default function useUserProfile() {
   const { user, loading: authLoading } = useAuth();
-  const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [profile, setProfile] = useState(null);
   const [error, setError] = useState(null);
+  const unsubRef = useRef(null);
+  const startedRef = useRef(null);
 
   useEffect(() => {
-    let unsub;
+    let mounted = true;
 
-    // While auth is loading, keep loading true
+    // Clean up previous listener if user changes or during hot reloads
+    if (unsubRef.current) {
+      try { unsubRef.current(); } catch (_) {}
+      unsubRef.current = null;
+    }
+    startedRef.current = null;
+
+    // While auth is determining state, keep loading
     if (authLoading) {
       setLoading(true);
-      return;
+      return () => { mounted = false; };
     }
 
-    // If signed out, clear profile
-    if (!user?.uid) {
-      setProfile(null);
-      setLoading(false);
-      return;
+    // No user? Finish early.
+    if (!user || !user.uid) {
+      if (mounted) {
+        setProfile(null);
+        setLoading(false);
+        setError(null);
+      }
+      return () => { mounted = false; };
     }
 
     const ref = doc(db, "users", user.uid);
-    unsub = onSnapshot(
-      ref,
-      (snap) => {
-        const data = snap.exists() ? snap.data() : {};
 
-        // Normalize roles to array (supports old single 'role')
-        const roles = Array.isArray(data?.roles)
-          ? data.roles
-          : data?.role
-          ? [data.role]
-          : [];
+    // Avoid duplicate start for same uid (helps with dev hot reload)
+    if (startedRef.current === user.uid) {
+      return () => { mounted = false; };
+    }
+    startedRef.current = user.uid;
 
-        setProfile({
-          uid: user.uid,
-          email: user.email ?? data.email ?? null,
-          displayName: data.displayName ?? user.displayName ?? null,
-          photoURL: data.photoURL ?? user.photoURL ?? null,
-          roles,
-          role: data.role ?? null, // legacy support
-          suspended: data.suspended === true,
-          ...data,
-        });
-        setLoading(false);
-      },
-      (err) => {
-        setError(err);
+    try {
+      setLoading(true);
+      const unsub = onSnapshot(
+        ref,
+        (snap) => {
+          if (!mounted) return;
+          if (snap.exists()) {
+            const data = snap.data();
+            // normalize roles
+            const roles = Array.isArray(data.roles)
+              ? data.roles
+              : data.role
+              ? [data.role]
+              : [];
+            setProfile({ id: snap.id, ...data, roles });
+          } else {
+            setProfile(null);
+          }
+          setLoading(false);
+        },
+        (err) => {
+          if (!mounted) return;
+          setError(err);
+          setLoading(false);
+
+          // Helpful dev hints
+          if (err.code === "permission-denied") {
+            console.warn(
+              "[useUserProfile] Permission denied reading /users/{uid}. " +
+                "Check Firestore rules and that the signed-in user is allowed."
+            );
+          } else {
+            console.warn("[useUserProfile] Snapshot error:", err);
+          }
+        }
+      );
+
+      unsubRef.current = unsub;
+    } catch (e) {
+      if (mounted) {
+        setError(e);
         setLoading(false);
       }
-    );
+      console.warn("[useUserProfile] onSnapshot setup error:", e);
+    }
 
-    return () => unsub && unsub();
-  }, [user?.uid, authLoading]);
+    return () => {
+      mounted = false;
+      if (unsubRef.current) {
+        try { unsubRef.current(); } catch (_) {}
+        unsubRef.current = null;
+      }
+  startedRef.current = null;
+    };
+  }, [user?.uid, authLoading]); // re-run when uid state changes
 
-  return { loading: authLoading || loading, profile, error };
+  return { loading, profile, error };
 }

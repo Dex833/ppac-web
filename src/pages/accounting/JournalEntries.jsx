@@ -1,5 +1,8 @@
 // src/pages/accounting/JournalEntries.jsx
 import React, { useEffect, useState, useRef } from "react";
+import SafeText from "@/components/SafeText";
+import { formatD, formatDT } from "@/utils/dates";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import { db } from "@/lib/firebase";
 import {
   collection,
@@ -17,8 +20,7 @@ import {
 } from "firebase/firestore";
 import { useAuth } from "../../AuthContext";
 import useUserProfile from "../../hooks/useUserProfile";
-import { httpsCallable } from "firebase/functions";
-import { functions } from "@/lib/firebase";
+// removed backfill callables
 
 // ----- Accounts for dropdown -----
 function useAccounts() {
@@ -87,8 +89,7 @@ export default function JournalEntries() {
   const [assignEntry, setAssignEntry] = useState(null);
   const [assignName, setAssignName] = useState("");
 
-  // admin: backfill mirror lines
-  const [backfillingLines, setBackfillingLines] = useState(false);
+  // backfill UI removed
 
   // dirty guard
   const [isDirty, setIsDirty] = useState(false);
@@ -295,7 +296,8 @@ export default function JournalEntries() {
 
   // ----- Filters (client-side on last 10) -----
   const visibleEntries = entries.filter((e) => {
-    if (filter.ref && !(e.refNumber || "").includes(filter.ref)) return false;
+    const refStr = e.refNumber || (e.journalNo ? String(e.journalNo).padStart(5, "0") : "");
+    if (filter.ref && !refStr.includes(filter.ref)) return false;
     if (filter.date && e.date !== filter.date) return false;
     if (
       filter.account &&
@@ -310,93 +312,7 @@ export default function JournalEntries() {
     return true;
   });
 
-  // ----- Admin: backfill creators -----
-  async function backfillCreatedBy() {
-    if (!isAdmin) return;
-    if (!window.confirm("Backfill 'Created By' on entries that are missing it?"))
-      return;
-
-    try {
-      // cache users + profiles for id->name lookup
-      const usersSnap = await getDocs(collection(db, "users"));
-      const profilesSnap = await getDocs(collection(db, "profiles"));
-      const byUid = new Map();
-      usersSnap.forEach((d) => byUid.set(d.id, d.data()));
-      profilesSnap.forEach((d) =>
-        byUid.set(d.id, { ...(byUid.get(d.id) || {}), ...d.data() })
-      );
-      const nameFromUid = (uid) => {
-        const u = byUid.get(uid);
-        if (!u) return null;
-        return u.displayName || u.name || u.email || null;
-      };
-
-      const all = await getDocs(collection(db, "journalEntries"));
-      let batch = writeBatch(db);
-      let ops = 0;
-      let changed = 0;
-
-      all.forEach((docSnap) => {
-        const e = docSnap.data();
-        if (e.createdBy || e.createdById || e.createdByName) return;
-
-        let candidate =
-          e.createdByEmail ||
-          (e.createdById && nameFromUid(e.createdById)) ||
-          e.updatedBy ||
-          (e.updatedById && nameFromUid(e.updatedById)) ||
-          null;
-
-        if (!candidate) candidate = "Unknown";
-
-        batch.update(docSnap.ref, {
-          createdBy: candidate,
-          createdById: e.createdById || e.updatedById || "",
-        });
-        ops++;
-        changed++;
-
-        if (ops >= 450) {
-          batch.commit();
-          batch = writeBatch(db);
-          ops = 0;
-        }
-      });
-
-      if (ops > 0) await batch.commit();
-      setNotif({
-        show: true,
-        type: "success",
-        message: `Backfilled ${changed} entries.`,
-      });
-    } catch (e) {
-      setNotif({
-        show: true,
-        type: "error",
-        message: "Backfill failed: " + e.message,
-      });
-    } finally {
-      setTimeout(() => setNotif({ show: false, type: "", message: "" }), 2500);
-    }
-  }
-
-  // ----- Admin: backfill journalEntryLines mirror -----
-  async function backfillMirrorLines() {
-    if (!isAdmin) return;
-    if (!window.confirm("Backfill journalEntryLines from existing journal headers?")) return;
-    setBackfillingLines(true);
-    try {
-  const fn = httpsCallable(functions, "backfillJournalEntryLines");
-      const res = await fn({ days: 0 });
-      const out = res?.data || {};
-      setNotif({ show: true, type: "success", message: `Mirror backfill done. Scanned ${out.scanned ?? 0}, wrote ${out.wrote ?? 0}.` });
-    } catch (e) {
-      setNotif({ show: true, type: "error", message: `Backfill failed: ${e?.message || e}` });
-    } finally {
-      setBackfillingLines(false);
-      setTimeout(() => setNotif({ show: false, type: "", message: "" }), 2500);
-    }
-  }
+  // removed backfill handlers
 
   // ----- Admin: assign creator per row -----
   function openAssignCreator(entry) {
@@ -428,6 +344,7 @@ export default function JournalEntries() {
   }
 
   return (
+    <ErrorBoundary>
     <div className="max-w-4xl">
       <h3 className="text-xl font-semibold mb-4">New Journal Entry</h3>
 
@@ -724,25 +641,7 @@ export default function JournalEntries() {
 
       <div className="flex items-center justify-between mt-10 mb-4">
         <h3 className="text-xl font-semibold">Journal Entry History (latest 10)</h3>
-        {isAdmin && (
-          <div className="flex gap-2">
-            <button
-              className="btn btn-sm btn-outline"
-              onClick={backfillCreatedBy}
-              title="Admin only"
-            >
-              Backfill creators
-            </button>
-            <button
-              className="btn btn-sm btn-outline"
-              onClick={backfillMirrorLines}
-              disabled={backfillingLines}
-              title="Admin: mirror headers to journalEntryLines"
-            >
-              {backfillingLines ? "Backfilling…" : "Backfill lines"}
-            </button>
-          </div>
-        )}
+  {/* Backfill buttons removed */}
       </div>
 
       <div className="mb-4 flex gap-2 flex-wrap">
@@ -784,8 +683,8 @@ export default function JournalEntries() {
                   className="rounded border border-gray-200 bg-white p-3"
                 >
                   <div className="flex items-center justify-between">
-                    <div className="font-mono text-sm">Ref {entry.refNumber}</div>
-                    <div className="text-xs text-ink/60">{entry.date}</div>
+                    <div className="font-mono text-sm">Ref {entry.refNumber || (entry.journalNo ? String(entry.journalNo).padStart(5, "0") : "")}</div>
+                    <div className="text-xs text-ink/60">{formatD(entry.date)}</div>
                   </div>
                   <div className="mt-1 text-sm">{entry.description}</div>
                   <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
@@ -836,20 +735,23 @@ export default function JournalEntries() {
               <colgroup>
                 <col className="w-[12%]" />
                 <col className="w-[12%]" />
-                <col className="w-[32%]" />
+                <col className="w-[24%]" />
+                <col className="w-[10%]" />
                 <col className="w-[14%]" />
                 <col className="w-[14%]" />
                 <col className="w-[12%]" />
-                <col className="w-[14%]" />
+                <col className="w-[16%]" />
               </colgroup>
               <thead className="bg-gray-50">
                 <tr>
                   <th className="text-left p-2 border-b">Ref#</th>
                   <th className="text-left p-2 border-b">Date</th>
                   <th className="text-left p-2 border-b">Description</th>
+                  <th className="text-left p-2 border-b">Type</th>
                   <th className="text-left p-2 border-b">Total Debit</th>
                   <th className="text-left p-2 border-b">Total Credit</th>
                   <th className="text-left p-2 border-b">Created By</th>
+                  <th className="text-left p-2 border-b">Posted</th>
                   <th className="text-left p-2 border-b">Actions</th>
                 </tr>
               </thead>
@@ -871,9 +773,10 @@ export default function JournalEntries() {
 
                 return (
                   <tr key={entry.id} className="odd:bg-white even:bg-gray-50">
-                    <td className="p-2 border-b font-mono">{entry.refNumber}</td>
-                    <td className="p-2 border-b">{entry.date}</td>
+                    <td className="p-2 border-b font-mono">{entry.refNumber || (entry.journalNo ? String(entry.journalNo).padStart(5, "0") : "")}</td>
+                    <td className="p-2 border-b whitespace-nowrap">{formatD(entry.date)}</td>
                     <td className="p-2 border-b">{entry.description}</td>
+                    <td className="p-2 border-b">{entry.type || "general"}</td>
                     <td className="p-2 border-b">
                       {totalD.toLocaleString(undefined, {
                         minimumFractionDigits: 2,
@@ -887,6 +790,7 @@ export default function JournalEntries() {
                       })}
                     </td>
                     <td className="p-2 border-b">{friendlyCreator}</td>
+                    <td className="p-2 border-b whitespace-nowrap">{formatDT(entry.postedAt)}</td>
                     <td className="p-2 border-b">
                       <button
                         className="btn btn-sm btn-outline mr-1"
@@ -1017,6 +921,7 @@ export default function JournalEntries() {
           </div>
         </div>
       )}
-    </div>
+  </div>
+  </ErrorBoundary>
   );
 }

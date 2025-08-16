@@ -54,13 +54,14 @@ export default function Checkout() {
     try {
       // 1) Create order
       const order = {
-    userId: user.uid,
+        userId: user.uid,
+        buyerName: user?.displayName || user?.email || user?.uid || "",
         items: (cart.items || []).map((it) => ({ productId: it.productId, name: it.name, price: Number(it.price), qty: Number(it.qty) })),
         subtotal: Number(subtotal.toFixed(2)),
         status: "pending",
         createdAt: serverTimestamp(),
       };
-      const orderRef = await addDoc(collection(db, "orders"), order);
+  const orderRef = await addDoc(collection(db, "orders"), order);
 
       // Manual methods: require reference and optional proof
   if (["bank_transfer","gcash_manual","static_qr"].includes(method)) {
@@ -72,7 +73,7 @@ export default function Checkout() {
           alert("Valid proof file is required (JPG/PNG/WEBP/PDF up to 2MB).");
           return;
         }
-        const payRef = await addDoc(collection(db, "payments"), {
+  const payRef = await addDoc(collection(db, "payments"), {
           userId: order.userId,
           memberName: null,
           type: "purchase",
@@ -83,6 +84,8 @@ export default function Checkout() {
           status: "pending",
           createdAt: serverTimestamp(),
         });
+  // Link back paymentId to the order for admin navigation
+  await updateDoc(doc(db, "orders", orderRef.id), { paymentId: payRef.id });
         // upload proof
         const ext = (file.name.split(".").pop() || "").toLowerCase();
         const safeExt = ["jpg","jpeg","png","webp","pdf"].includes(ext) ? ext : (file.type === "application/pdf" ? "pdf" : "jpg");

@@ -6,11 +6,12 @@ import { AuthProvider } from './AuthContext.jsx'
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
+  // StrictMode disabled during stream stabilization to prevent double-mount
+  // <React.StrictMode>
     <BrowserRouter>
       <AuthProvider>
         <App />
       </AuthProvider>
     </BrowserRouter>
-  </React.StrictMode>
+  // </React.StrictMode>
 )
