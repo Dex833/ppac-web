@@ -133,6 +133,15 @@ function MobileAccountingMenu({ open, onClose }) {
 export default function Accounting() {
   const [menuOpen, setMenuOpen] = React.useState(false);
 
+  // Listen for global header trigger
+  React.useEffect(() => {
+    function onOpen() {
+      setMenuOpen(true);
+    }
+    window.addEventListener("open-accounting-menu", onOpen);
+    return () => window.removeEventListener("open-accounting-menu", onOpen);
+  }, []);
+
   return (
     <PageBackground
       image={accountingBg}
@@ -151,15 +160,8 @@ export default function Accounting() {
       >
         <div className="flex items-center gap-3 py-2">
           <h2 className="text-2xl font-bold">Accounting</h2>
-          <button
-            className="md:hidden ml-auto inline-flex items-center justify-center p-2 rounded-lg hover:bg-brand-50"
-            aria-label="Open accounting menu"
-            onClick={() => setMenuOpen(true)}
-          >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-          </button>
+          {/* Mobile trigger moved to global header; keep an a11y fallback */}
+          <button className="sr-only" onClick={() => setMenuOpen(true)} aria-label="Open accounting menu">Menu</button>
         </div>
       </div>
 

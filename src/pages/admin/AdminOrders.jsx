@@ -34,8 +34,39 @@ export default function AdminOrders() {
           </select>
         </label>
       </div>
+      {/* Mobile cards */}
+      <div className="space-y-3 sm:hidden">
+        {loading && <div className="card p-3">Loading…</div>}
+        {!loading && rows.length === 0 && <div className="card p-3 text-ink/60">No orders.</div>}
+        {!loading && rows.map((r) => (
+          <div key={r.id} className="card p-3">
+            <div className="flex items-center justify-between text-sm">
+              <div className="text-ink/70">{formatDT(r.createdAt)}</div>
+              <div className="font-medium">{r.status || "pending"}</div>
+            </div>
+            <div className="mt-1 text-sm">Buyer: {r.buyerName || r.userId || "—"}</div>
+            <ul className="mt-2 list-disc ml-5 text-sm">
+              {(r.items||[]).map((it,i)=>(<li key={i}>{it.qty} × {it.name}</li>))}
+            </ul>
+            <div className="mt-2 flex items-center justify-between">
+              <div className="font-mono">₱{Number(r.subtotal||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+              <div className="flex gap-2">
+                {r.paymentId && (
+                  <>
+                    <Link className="btn btn-sm btn-outline" to={`/admin/payments?open=${r.paymentId}`}>Open Payment</Link>
+                    {r.status === "paid" && (
+                      <Link className="btn btn-sm btn-primary" to={`/receipt/${r.paymentId}`}>Receipt</Link>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
 
-      <div className="overflow-x-auto">
+      {/* Desktop table */}
+      <div className="overflow-x-auto hidden sm:block">
     <table className="min-w-[1000px] w-full border rounded">
           <thead className="bg-gray-50">
             <tr>

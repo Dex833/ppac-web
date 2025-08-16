@@ -7,6 +7,14 @@
         { "fieldPath": "posted", "order": "ASCENDING" },
         { "fieldPath": "date", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionId": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "membershipStatus", "order": "ASCENDING" },
+        { "fieldPath": "email", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

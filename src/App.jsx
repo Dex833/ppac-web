@@ -95,6 +95,13 @@ function MobileMenu({
               </li>
             )}
 
+            {/* Store (visible even when logged out; access enforced by route) */}
+            <li>
+              <Link className="block px-3 py-2 rounded hover:bg-brand-50" to="/store" onClick={onClose}>
+                Store
+              </Link>
+            </li>
+
             {isAdmin && notSuspended && (
               <li>
                 <Link className="block px-3 py-2 rounded hover:bg-brand-50" to="/admin/users" onClick={onClose}>
@@ -139,7 +146,7 @@ function MobileMenu({
 // src/App.jsx
 import BecomeMember from "./pages/BecomeMember.jsx";
 import React, { Suspense, lazy } from "react";
-import { Routes, Route, Link, NavLink, Navigate, useNavigate } from "react-router-dom";
+import { Routes, Route, Link, NavLink, Navigate, useNavigate, useLocation } from "react-router-dom";
 
 import { useAuth } from "./AuthContext";
 import useUserProfile from "./hooks/useUserProfile";
@@ -212,6 +219,7 @@ export default function App() {
   const { profile } = useUserProfile();
   const [loginOpen, setLoginOpen] = React.useState(false);
   const nav = useNavigate();
+  const location = useLocation();
   const { signout } = useAuth();
 
   const roles = Array.isArray(profile?.roles) ? profile.roles : profile?.role ? [profile.role] : [];
@@ -222,12 +230,14 @@ export default function App() {
   const notSuspended = profile?.suspended !== true;
 
   const [menuOpen, setMenuOpen] = React.useState(false);
+  const onAdminRoute = location.pathname.startsWith("/admin");
+  const onAccountingRoute = location.pathname.startsWith("/accounting");
 
   return (
     <div className="min-h-screen text-ink">
-      {/* Top info bar */}
-      <div className="w-full bg-brand-50 border-b border-brand-100 text-xs text-ink/70 py-1 px-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <div className="flex flex-col sm:flex-row gap-2 sm:gap-6">
+      {/* Top info bar (desktop only) */}
+      <div className="hidden sm:flex w-full bg-brand-50 border-b border-brand-100 text-xs text-ink/70 py-1 px-2 items-center justify-between gap-2">
+        <div className="flex gap-6">
           <span>📍 Agri Trading Center, Brgy. Irawan, Puerto Princesa City, Palawan 5300</span>
           <span>☎️ 0950-468-6668</span>
         </div>
@@ -297,16 +307,49 @@ export default function App() {
             )}
           </nav>
 
-          {/* Mobile hamburger */}
-          <button
-            className="md:hidden inline-flex items-center justify-center p-2 rounded-lg hover:bg-brand-50"
-            aria-label="Open menu"
-            onClick={() => setMenuOpen(true)}
-          >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-              <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-          </button>
+          {/* Mobile actions: optional Admin menu + main hamburger */}
+          <div className="md:hidden flex items-center gap-2">
+            {onAdminRoute && (
+              <button
+                className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium shadow-sm"
+                aria-label="Open admin menu"
+                onClick={() => {
+                  // Notify Admin layout to open its drawer
+                  window.dispatchEvent(new Event("open-admin-menu"));
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+                <span>Menu</span>
+              </button>
+            )}
+
+            {onAccountingRoute && (
+              <button
+                className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium shadow-sm"
+                aria-label="Open accounting menu"
+                onClick={() => {
+                  window.dispatchEvent(new Event("open-accounting-menu"));
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+                <span>Menu</span>
+              </button>
+            )}
+
+            <button
+              className="inline-flex items-center justify-center p-2 rounded-lg hover:bg-brand-50"
+              aria-label="Open menu"
+              onClick={() => setMenuOpen(true)}
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -566,6 +609,26 @@ export default function App() {
       </main>
 
       <footer className="border-t border-border bg-white/70 backdrop-blur">
+        {/* Info bar moved to footer on mobile */}
+        <div className="sm:hidden bg-brand-50 border-b border-brand-100 text-xs text-ink/70">
+          <div className="mx-auto max-w-5xl px-4 py-2 space-y-1">
+            <div>📍 Agri Trading Center, Brgy. Irawan, Puerto Princesa City, Palawan 5300</div>
+            <div>☎️ 0950-468-6668</div>
+            <div>
+              <a
+                href="https://facebook.com/ppac.coop"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-700 hover:underline inline-flex items-center gap-1"
+              >
+                <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M22.675 0h-21.35C.595 0 0 .592 0 1.326v21.348C0 23.406.595 24 1.325 24h11.495v-9.294H9.692v-3.622h3.128V8.413c0-3.1 1.893-4.788 4.659-4.788 1.325 0 2.463.099 2.797.143v3.24l-1.918.001c-1.504 0-1.797.715-1.797 1.763v2.313h3.587l-.467 3.622h-3.12V24h6.116C23.406 24 24 23.406 24 22.674V1.326C24 .592 23.406 0 22.675 0" />
+                </svg>
+                Facebook
+              </a>
+            </div>
+          </div>
+        </div>
         <div className="mx-auto max-w-5xl px-4 py-6 text-sm text-ink/60">
           © {new Date().getFullYear()} Puerto Princesa Agriculture Cooperative
         </div>

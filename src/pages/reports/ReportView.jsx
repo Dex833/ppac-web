@@ -450,7 +450,7 @@ export default function ReportView() {
     <PageBackground
       image={reportsBg}
       boxed
-      boxedWidth="max-w-4xl"
+  boxedWidth="max-w-7xl"
       overlayClass="bg-white/85 backdrop-blur"
       className="page-gutter"
     >

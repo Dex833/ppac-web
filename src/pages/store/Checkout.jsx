@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import PageBackground from "@/components/PageBackground";
 import { collection, doc, onSnapshot, addDoc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 import { ref as storageRef, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { db, storage } from "@/lib/firebase";
@@ -110,61 +111,75 @@ export default function Checkout() {
 
   if ((cart.items || []).length === 0) {
     return (
-      <div className="mx-auto max-w-xl p-4">
-        <div className="card p-6">
-          <div className="text-lg font-semibold mb-2">Your cart is empty</div>
-          <button className="btn btn-primary" onClick={() => nav("/store")}>Go to Store</button>
+      <PageBackground
+        image="https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80"
+        boxed
+        boxedWidth="max-w-7xl"
+        overlayClass="bg-white/85 backdrop-blur"
+      >
+        <div className="p-2 sm:p-4">
+          <div className="card p-6">
+            <div className="text-lg font-semibold mb-2">Your cart is empty</div>
+            <button className="btn btn-primary" onClick={() => nav("/store")}>Go to Store</button>
+          </div>
         </div>
-      </div>
+      </PageBackground>
     );
   }
 
   return (
-    <div className="mx-auto max-w-3xl p-4">
-      <h1 className="text-2xl font-bold mb-4">Checkout</h1>
-      <form className="card p-4 space-y-3" onSubmit={onSubmit}>
-        <div>
-          <div className="text-xs text-ink/60 mb-1">Method</div>
-          <div className="flex flex-wrap gap-2 items-center">
-            {manualMethods.map((m) => (
-              <button key={m} type="button" className={`px-3 py-2 rounded border ${method===m?"bg-brand-600 text-white border-brand-600":"bg-white"}`} onClick={()=>setMethod(m)}>
-                {MANUAL_METHOD_LABELS[m]}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {method === "static_qr" && (
-          <div className="space-y-2">
-            <p className="text-sm">Scan the QR, then upload your proof below.</p>
-            <div className="flex gap-2">
-              {qr?.static?.gcash?.imageUrl && <img src={qr.static.gcash.imageUrl} alt="GCash QR" className="max-w-[200px] border rounded" />}
-              {qr?.static?.bank?.imageUrl && <img src={qr.static.bank.imageUrl} alt="Bank QR" className="max-w-[200px] border rounded" />}
+    <PageBackground
+      image="https://images.unsplash.com/photo-1502086223501-7ea6ecd79368?auto=format&fit=crop&w=1500&q=80"
+      boxed
+      boxedWidth="max-w-7xl"
+      overlayClass="bg-white/85 backdrop-blur"
+    >
+      <div className="p-2 sm:p-4">
+        <h1 className="text-2xl font-bold mb-4">Checkout</h1>
+        <form className="card p-4 space-y-3" onSubmit={onSubmit}>
+          <div>
+            <div className="text-xs text-ink/60 mb-1">Method</div>
+            <div className="flex flex-wrap gap-2 items-center">
+              {manualMethods.map((m) => (
+                <button key={m} type="button" className={`px-3 py-2 rounded border ${method===m?"bg-brand-600 text-white border-brand-600":"bg-white"}`} onClick={()=>setMethod(m)}>
+                  {MANUAL_METHOD_LABELS[m]}
+                </button>
+              ))}
             </div>
           </div>
-        )}
 
-  {
-          <>
-            <label className="block">
-              <div className="text-xs text-ink/60">Reference No</div>
-              <input className="input" value={referenceNo} onChange={(e)=>setReferenceNo(e.target.value)} />
-            </label>
-            <label className="block">
-              <div className="text-xs text-ink/60">Proof (JPG/PNG/WEBP/PDF ≤ 2MB)</div>
-              <input type="file" onChange={(e)=>setFile(e.target.files?.[0]||null)} />
-            </label>
-          </>
-  }
+          {method === "static_qr" && (
+            <div className="space-y-2">
+              <p className="text-sm">Scan the QR, then upload your proof below.</p>
+              <div className="flex gap-2">
+                {qr?.static?.gcash?.imageUrl && <img src={qr.static.gcash.imageUrl} alt="GCash QR" className="max-w-[200px] border rounded" />}
+                {qr?.static?.bank?.imageUrl && <img src={qr.static.bank.imageUrl} alt="Bank QR" className="max-w-[200px] border rounded" />}
+              </div>
+            </div>
+          )}
 
-        <div className="flex items-center justify-between border-t pt-3">
-          <div className="text-lg font-semibold">Total</div>
-          <div className="text-lg font-bold">₱{Number(subtotal).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
-        </div>
-        <div>
-          <button className="btn btn-primary" disabled={busy || !method} type="submit">{busy?"Processing…":"Place Order"}</button>
-        </div>
-      </form>
-    </div>
+    {
+            <>
+              <label className="block">
+                <div className="text-xs text-ink/60">Reference No</div>
+                <input className="input" value={referenceNo} onChange={(e)=>setReferenceNo(e.target.value)} />
+              </label>
+              <label className="block">
+                <div className="text-xs text-ink/60">Proof (JPG/PNG/WEBP/PDF ≤ 2MB)</div>
+                <input type="file" onChange={(e)=>setFile(e.target.files?.[0]||null)} />
+              </label>
+            </>
+    }
+
+          <div className="flex items-center justify-between border-t pt-3">
+            <div className="text-lg font-semibold">Total</div>
+            <div className="text-lg font-bold">₱{Number(subtotal).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+          </div>
+          <div>
+            <button className="btn btn-primary" disabled={busy || !method} type="submit">{busy?"Processing…":"Place Order"}</button>
+          </div>
+        </form>
+      </div>
+    </PageBackground>
   );
 }

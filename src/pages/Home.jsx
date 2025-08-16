@@ -176,7 +176,6 @@ export default function Home() {
               >
                 What You Have
               </button>
-              <Link to="/reports" className="btn btn-primary">Reports</Link>
             </div>
           ) : (
             <div className="flex flex-col sm:flex-row items-center gap-2 mt-2">
@@ -184,6 +183,15 @@ export default function Home() {
               <Link to="/RequirementsMembership" className="btn btn-outline w-full sm:w-auto text-center">See Requirements</Link>
             </div>
           )}
+          <div className="w-full mt-2">
+            <div className="card p-4 flex flex-col items-center gap-3">
+              <div className="text-xs uppercase tracking-wide text-ink/60">What you can do now</div>
+              <div className="flex flex-wrap justify-center gap-2">
+                {user && <Link to="/reports" className="btn btn-primary">Reports</Link>}
+                <Link to="/store" className="btn btn-outline">Store</Link>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 

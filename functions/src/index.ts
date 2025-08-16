@@ -7,6 +7,7 @@ import { getFirestore, FieldValue, Query } from "firebase-admin/firestore";
 // compat import removed
 import { mirrorJournalToEntries } from "./lib/mirrorJournalEntries.js";
 import { postPayment } from "./lib/postPayment.js";
+import { getNextJournalRefNumber } from "./lib/sequences.js";
 import * as logger from "firebase-functions/logger";
 // import { defineSecret } from "firebase-functions/params";
 
@@ -528,6 +529,31 @@ export const rebuildAutosNow = onCall({ region: "asia-southeast1" }, async (_req
   return { ok: true };
 });
 
+// Allocator callable for manual journals (frontend)
+export const getNextRefNumber = onCall({ region: "asia-southeast1" }, async (_req) => {
+  const refNumber = await getNextJournalRefNumber();
+  return { refNumber } as any;
+});
+
+// Ensure/init the journals sequence without consuming a number
+export const ensureRefSequence = onCall({ region: "asia-southeast1" }, async (_req) => {
+  const seqRef = db.doc("sequences/journals");
+  const snap = await seqRef.get();
+  if (snap.exists) {
+    return { ok: true, exists: true, last: Number(snap.get("last") ?? 0) } as any;
+  }
+  let last = 0;
+  try {
+    const maxSnap = await db.collection("journalEntries").orderBy("refNumber", "desc").limit(1).get();
+    if (!maxSnap.empty) {
+      const raw = maxSnap.docs[0].get("refNumber");
+      last = parseInt(String(raw), 10) || 0;
+    }
+  } catch {}
+  await seqRef.set({ last });
+  return { ok: true, created: true, last } as any;
+});
+
 // 3) Payments → Journal posting
 export const onPaymentStatusPaid = onDocumentWritten(
   { region: "asia-east1", document: "payments/{paymentId}" },
@@ -774,7 +800,11 @@ export const refundPayment = onCall(
       return { ok: true, already: true, refundJournalId } as any;
     }
 
-    // Create reversal journal then update payment in a transaction
+  // Allocate new refNumber for the reversal
+  const refNumber = await getNextJournalRefNumber();
+  const journalNo = parseInt(refNumber, 10) || null;
+
+  // Create reversal journal then update payment in a transaction
     await db.runTransaction(async (tx) => {
       tx.set(newJRef, {
         type: "refund",
@@ -782,12 +812,15 @@ export const refundPayment = onCall(
         sourcePaymentId: paymentId,
         memo: `Refund of ${(p.type || "payment")} ${paymentId}${reason ? " – " + reason : ""}`,
         date: FieldValue.serverTimestamp(),
+    refNumber,
+    journalNo,
         lines: revLines,
         status: "posted",
         postedAt: FieldValue.serverTimestamp(),
         postedByUid: uid,
         createdAt: FieldValue.serverTimestamp(),
         createdByUid: uid,
+    linkedPaymentId: paymentId,
       });
       tx.set(
         pRef,

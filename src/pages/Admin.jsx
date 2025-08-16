@@ -1,6 +1,7 @@
 // src/pages/Admin.jsx
 import React from "react";
 import { NavLink, Outlet } from "react-router-dom";
+import { createPortal } from "react-dom";
 import PageBackground from "../components/PageBackground";
 import useUserProfile from "../hooks/useUserProfile";
 import { ensurePaymentsSettings } from "../lib/settings/payments";
@@ -27,6 +28,82 @@ function AdminNavItem({ to, children, onClick }) {
     >
       {children}
     </NavLink>
+  );
+}
+
+/* ---------- Mobile drawer (ported to <body>) ---------- */
+function MobileAdminMenu({ open, onClose }) {
+  // lock body scroll
+  React.useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
+  // esc to close
+  React.useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    if (open) window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[1000] md:hidden" role="dialog" aria-modal="true">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px]" onClick={onClose} />
+
+      {/* Drawer */}
+      <div
+        className="
+          absolute right-0 top-0 h-full w-[82vw] max-w-[320px]
+          bg-white shadow-2xl flex flex-col
+          pt-[max(env(safe-area-inset-top),0.75rem)]
+          pb-[max(env(safe-area-inset-bottom),0.75rem)]
+        "
+      >
+        <div className="px-4 pb-3 flex items-center justify-between">
+          <span className="font-semibold">Admin Menu</span>
+          <button className="p-2 rounded hover:bg-gray-100" onClick={onClose} aria-label="Close">
+            ✕
+          </button>
+        </div>
+
+        <nav className="px-2 flex-1 overflow-auto">
+          <ul className="space-y-1">
+            <li>
+              <AdminNavItem to="/admin/users" onClick={onClose}>Users</AdminNavItem>
+            </li>
+            <li>
+              <AdminNavItem to="/admin/edit-home" onClick={onClose}>Edit Home</AdminNavItem>
+            </li>
+            <li>
+              <AdminNavItem to="/admin/membership-status" onClick={onClose}>Membership Status</AdminNavItem>
+            </li>
+            <li>
+              <AdminNavItem to="/admin/payments" onClick={onClose}>Payments</AdminNavItem>
+            </li>
+            <li>
+              <AdminNavItem to="/admin/products" onClick={onClose}>Products</AdminNavItem>
+            </li>
+            <li>
+              <AdminNavItem to="/admin/orders" onClick={onClose}>Orders</AdminNavItem>
+            </li>
+            <li>
+              <AdminNavItem to="/admin/settings/accounting" onClick={onClose}>Accounting Settings</AdminNavItem>
+            </li>
+            <li>
+              <AdminNavItem to="/admin/ops" onClick={onClose}>Ops</AdminNavItem>
+            </li>
+          </ul>
+        </nav>
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -58,6 +135,15 @@ export default function AdminLayout() {
     return () => window.removeEventListener("keydown", onKey);
   }, [mobileOpen]);
 
+  // Listen for global header trigger to open the Admin drawer on mobile
+  React.useEffect(() => {
+    function onOpen() {
+      setMobileOpen(true);
+    }
+    window.addEventListener("open-admin-menu", onOpen);
+    return () => window.removeEventListener("open-admin-menu", onOpen);
+  }, []);
+
   return (
     <PageBackground
       image={adminBg}
@@ -69,20 +155,16 @@ export default function AdminLayout() {
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Admin</h1>
-
-        {/* Mobile menu button */}
+        {/* Mobile menu button moved to global header; keep a11y-only fallback hidden visually */}
         <button
           type="button"
-          className="md:hidden inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium shadow-sm"
+          className="sr-only"
           aria-label="Open admin menu"
           aria-expanded={mobileOpen}
           onClick={() => setMobileOpen((v) => !v)}
         >
-          <span className="i-hamburger" aria-hidden>☰</span>
           Menu
         </button>
-
-  {/* Quick init button removed */}
       </div>
 
       {/* Layout */}
@@ -103,81 +185,8 @@ export default function AdminLayout() {
           </div>
         </aside>
 
-        {/* Mobile nav drawer (overlay + panel) */}
-        {mobileOpen && (
-          <div className="md:hidden fixed inset-0 z-40">
-            {/* Dim background */}
-            <div
-              className="absolute inset-0 bg-black/40"
-              onClick={() => setMobileOpen(false)}
-              aria-hidden="true"
-            />
-            {/* Panel */}
-            <div className="absolute left-4 right-4 top-20 rounded-2xl border border-gray-200 bg-white shadow-xl">
-              <div className="flex items-center justify-between px-4 py-3 border-b">
-                <div className="font-semibold">Admin Menu</div>
-                <button
-                  type="button"
-                  className="rounded-lg px-2 py-1 hover:bg-gray-100"
-                  aria-label="Close menu"
-                  onClick={() => setMobileOpen(false)}
-                >
-                  ✕
-                </button>
-              </div>
-              <nav className="p-3 flex flex-col gap-2">
-                <AdminNavItem
-                  to="/admin/users"
-                  onClick={() => setMobileOpen(false)}
-                >
-                  Users
-                </AdminNavItem>
-                <AdminNavItem
-                  to="/admin/edit-home"
-                  onClick={() => setMobileOpen(false)}
-                >
-                  Edit Home
-                </AdminNavItem>
-                <AdminNavItem
-                  to="/admin/membership-status"
-                  onClick={() => setMobileOpen(false)}
-                >
-                  Membership Status
-                </AdminNavItem>
-                <AdminNavItem
-                  to="/admin/payments"
-                  onClick={() => setMobileOpen(false)}
-                >
-                  Payments
-                </AdminNavItem>
-                <AdminNavItem
-                  to="/admin/products"
-                  onClick={() => setMobileOpen(false)}
-                >
-                  Products
-                </AdminNavItem>
-                <AdminNavItem
-                  to="/admin/orders"
-                  onClick={() => setMobileOpen(false)}
-                >
-                  Orders
-                </AdminNavItem>
-                <AdminNavItem
-                  to="/admin/settings/accounting"
-                  onClick={() => setMobileOpen(false)}
-                >
-                  Accounting Settings
-                </AdminNavItem>
-                <AdminNavItem
-                  to="/admin/ops"
-                  onClick={() => setMobileOpen(false)}
-                >
-                  Ops
-                </AdminNavItem>
-              </nav>
-            </div>
-          </div>
-        )}
+  {/* Mobile nav drawer (portaled) */}
+  <MobileAdminMenu open={mobileOpen} onClose={() => setMobileOpen(false)} />
 
         {/* Main content (nested admin routes render here) */}
         <section className="flex-1 min-w-0">

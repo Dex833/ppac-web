@@ -4,6 +4,8 @@ import SafeText from "@/components/SafeText";
 import { formatD, formatDT } from "@/utils/dates";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { db } from "@/lib/firebase";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "@/lib/firebase";
 import {
   collection,
   addDoc,
@@ -68,7 +70,7 @@ export default function JournalEntries() {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [lastRef, setLastRef] = useState(0);
+  // no client-side lastRef guessing
   const [notif, setNotif] = useState({ show: false, type: "", message: "" });
 
   // list / filters
@@ -88,6 +90,7 @@ export default function JournalEntries() {
   const [assignOpen, setAssignOpen] = useState(false);
   const [assignEntry, setAssignEntry] = useState(null);
   const [assignName, setAssignName] = useState("");
+  const [seqInfo, setSeqInfo] = useState(null);
 
   // backfill UI removed
 
@@ -110,29 +113,7 @@ export default function JournalEntries() {
     return () => unsub();
   }, []);
 
-  // ----- Last ref number (top 1) -----
-  useEffect(() => {
-    async function fetchLastRef() {
-      const qJE = query(
-        collection(db, "journalEntries"),
-        orderBy("refNumber", "desc"),
-        limit(1)
-      );
-      const snap = await getDocs(qJE);
-      if (!snap.empty) {
-        setLastRef(Number(snap.docs[0].data().refNumber) || 0);
-      }
-    }
-    fetchLastRef();
-  }, []);
-
-  // auto-increment ref
-  useEffect(() => {
-    setForm((f) => ({
-      ...f,
-      refNumber: (lastRef + 1).toString().padStart(5, "0"),
-    }));
-  }, [lastRef]);
+  // no auto-increment; allocate on submit
 
   // dirty tracking
   useEffect(() => {
@@ -190,8 +171,8 @@ export default function JournalEntries() {
     e.preventDefault();
     setError("");
 
-    if (!form.date || !form.refNumber)
-      return setError("Date and Reference Number are required.");
+    if (!form.date)
+      return setError("Date is required.");
     if (form.lines.some((l) => !l.accountId || (!l.debit && !l.credit)))
       return setError(
         "All lines must have an account and either debit or credit."
@@ -201,8 +182,15 @@ export default function JournalEntries() {
 
     setSaving(true);
     try {
+      // 1) allocate ref number
+      const getNext = httpsCallable(functions, "getNextRefNumber");
+      const res = await getNext({});
+      const refNumber = res?.data?.refNumber || "";
+      if (!refNumber) throw new Error("Failed to allocate Ref#");
+
+      // 2) save entry with allocated refNumber
       await addDoc(collection(db, "journalEntries"), {
-        refNumber: form.refNumber,
+        refNumber,
         date: form.date,
         description: form.description,
         comments: form.comments,
@@ -217,15 +205,12 @@ export default function JournalEntries() {
       });
 
       setForm({
-        refNumber: (parseInt(form.refNumber, 10) + 1)
-          .toString()
-          .padStart(5, "0"),
+        refNumber: "",
         date: new Date().toISOString().slice(0, 10),
         description: "",
         comments: "",
         lines: [{ accountId: "", debit: "", credit: "", memo: "" }],
       });
-      setLastRef((r) => r + 1);
       setIsDirty(false);
       setNotif({
         show: true,
@@ -242,6 +227,20 @@ export default function JournalEntries() {
     } finally {
       setSaving(false);
       setTimeout(() => setNotif({ show: false, type: "", message: "" }), 2500);
+    }
+  }
+
+  // ----- Admin: initialize journals sequence (no consumption) -----
+  async function initSequence() {
+    try {
+      const callable = httpsCallable(functions, "ensureRefSequence");
+      const res = await callable({});
+      setSeqInfo(res?.data || null);
+      setNotif({ show: true, type: "success", message: "Sequence ensured." });
+    } catch (e) {
+      setNotif({ show: true, type: "error", message: "Init failed: " + (e?.message || e) });
+    } finally {
+      setTimeout(() => setNotif({ show: false, type: "", message: "" }), 2000);
     }
   }
 
@@ -345,7 +344,7 @@ export default function JournalEntries() {
 
   return (
     <ErrorBoundary>
-    <div className="max-w-4xl">
+  <div className="max-w-7xl">
       <h3 className="text-xl font-semibold mb-4">New Journal Entry</h3>
 
       {notif.show && (
@@ -641,8 +640,12 @@ export default function JournalEntries() {
 
       <div className="flex items-center justify-between mt-10 mb-4">
         <h3 className="text-xl font-semibold">Journal Entry History (latest 10)</h3>
-  {/* Backfill buttons removed */}
       </div>
+      {seqInfo && (
+        <div className="mb-3 text-sm text-ink/70">
+          Sequence: {seqInfo?.exists ? "exists" : seqInfo?.created ? "created" : ""} | last = {seqInfo?.last}
+        </div>
+      )}
 
       <div className="mb-4 flex gap-2 flex-wrap">
         <input
@@ -733,25 +736,22 @@ export default function JournalEntries() {
           <div className="hidden sm:block">
             <table className="w-full table-fixed border rounded text-sm">
               <colgroup>
+                <col className="w-[14%]" />
                 <col className="w-[12%]" />
-                <col className="w-[12%]" />
-                <col className="w-[24%]" />
-                <col className="w-[10%]" />
+                <col className="w-[30%]" />
                 <col className="w-[14%]" />
                 <col className="w-[14%]" />
                 <col className="w-[12%]" />
-                <col className="w-[16%]" />
+                <col className="w-[14%]" />
               </colgroup>
               <thead className="bg-gray-50">
                 <tr>
                   <th className="text-left p-2 border-b">Ref#</th>
                   <th className="text-left p-2 border-b">Date</th>
                   <th className="text-left p-2 border-b">Description</th>
-                  <th className="text-left p-2 border-b">Type</th>
                   <th className="text-left p-2 border-b">Total Debit</th>
                   <th className="text-left p-2 border-b">Total Credit</th>
                   <th className="text-left p-2 border-b">Created By</th>
-                  <th className="text-left p-2 border-b">Posted</th>
                   <th className="text-left p-2 border-b">Actions</th>
                 </tr>
               </thead>
@@ -776,7 +776,6 @@ export default function JournalEntries() {
                     <td className="p-2 border-b font-mono">{entry.refNumber || (entry.journalNo ? String(entry.journalNo).padStart(5, "0") : "")}</td>
                     <td className="p-2 border-b whitespace-nowrap">{formatD(entry.date)}</td>
                     <td className="p-2 border-b">{entry.description}</td>
-                    <td className="p-2 border-b">{entry.type || "general"}</td>
                     <td className="p-2 border-b">
                       {totalD.toLocaleString(undefined, {
                         minimumFractionDigits: 2,
@@ -790,7 +789,6 @@ export default function JournalEntries() {
                       })}
                     </td>
                     <td className="p-2 border-b">{friendlyCreator}</td>
-                    <td className="p-2 border-b whitespace-nowrap">{formatDT(entry.postedAt)}</td>
                     <td className="p-2 border-b">
                       <button
                         className="btn btn-sm btn-outline mr-1"

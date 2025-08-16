@@ -238,7 +238,7 @@ export default function Reports() {
     <PageBackground
       image={reportsBg}
       boxed
-      boxedWidth="max-w-6xl"
+  boxedWidth="max-w-7xl"
       overlayClass="bg-white/85 backdrop-blur"
       className="page-gutter"
     >

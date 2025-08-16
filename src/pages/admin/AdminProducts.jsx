@@ -46,7 +46,7 @@ export default function AdminProducts() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl p-4 space-y-4">
+  <div className="mx-auto max-w-5xl p-4 space-y-4">
       <h1 className="text-2xl font-bold">Products</h1>
 
       <form className="card p-4 grid grid-cols-1 sm:grid-cols-5 gap-2 items-end" onSubmit={addProduct}>
@@ -74,7 +74,31 @@ export default function AdminProducts() {
         </div>
       </form>
 
-      <div className="overflow-x-auto">
+      {/* Mobile cards */}
+      <div className="sm:hidden space-y-3">
+        {loading && <div className="card p-3">Loading…</div>}
+        {!loading && rows.length === 0 && <div className="card p-3 text-ink/60">No products.</div>}
+        {!loading && rows.map((r) => (
+          <div key={r.id} className="card p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex-1">
+                <div className="font-medium">{r.name}</div>
+                <div className="text-xs text-ink/60">SKU: {r.sku || "—"}</div>
+                <div className="mt-1 font-mono">₱{Number(r.price||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+                <div className="text-xs mt-1">Active: {r.active?"Yes":"No"}</div>
+              </div>
+              {r.imageUrl && <img src={r.imageUrl} alt="" className="h-14 w-20 object-cover rounded border" />}
+            </div>
+            <div className="mt-2 flex gap-2">
+              <button className="btn btn-sm" onClick={()=>toggleActive(r.id, !!r.active)}>{r.active?"Deactivate":"Activate"}</button>
+              <button className="btn btn-sm btn-outline" onClick={()=>remove(r.id)}>Delete</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop table */}
+      <div className="overflow-x-auto hidden sm:block">
         <table className="min-w-[900px] w-full border rounded">
           <thead className="bg-gray-50">
             <tr>

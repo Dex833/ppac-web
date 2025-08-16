@@ -241,50 +241,111 @@ export default function Users() {
           {toast.msg}
         </div>
       )}
+      {/* Controls */}
+      <div className="card p-3 space-y-2">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+          <input
+            className="border rounded px-3 py-2 w-full sm:w-64"
+            placeholder='Add new role (e.g., "inventory")'
+            value={newRole}
+            onChange={(e) => setNewRole(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addRoleToCatalog()}
+          />
+          <button className="px-3 py-2 border rounded" onClick={addRoleToCatalog}>
+            + Add role
+          </button>
+          <div className="mt-2 sm:mt-0 sm:ml-auto flex gap-2">
+            <button
+              onClick={prevPage}
+              disabled={!canPrev}
+              className="px-3 py-1 border rounded disabled:opacity-40"
+            >
+              ← Prev
+            </button>
+            <button
+              onClick={nextPage}
+              disabled={!canNext}
+              className="px-3 py-1 border rounded disabled:opacity-40"
+            >
+              Next →
+            </button>
+          </div>
+        </div>
 
-      {/* catalog controls */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-        <input
-          className="border rounded px-3 py-2 w-full sm:w-64"
-          placeholder='Add new role (e.g., "inventory")'
-          value={newRole}
-          onChange={(e) => setNewRole(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && addRoleToCatalog()}
-        />
-        <button className="px-3 py-2 border rounded" onClick={addRoleToCatalog}>
-          + Add role
-        </button>
-        <div className="mt-2 sm:mt-0 sm:ml-auto flex gap-2">
-          <button
-            onClick={prevPage}
-            disabled={!canPrev}
-            className="px-3 py-1 border rounded disabled:opacity-40"
-          >
-            ← Prev
-          </button>
-          <button
-            onClick={nextPage}
-            disabled={!canNext}
-            className="px-3 py-1 border rounded disabled:opacity-40"
-          >
-            Next →
-          </button>
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search email, name, or member ID…"
+            className="border rounded px-3 py-2 w-full sm:w-80"
+          />
+          <span className="text-sm text-gray-600">
+            Showing {filtered.length} of {rows.length} (page size {PAGE_SIZE})
+          </span>
         </div>
       </div>
 
-      <div className="mb-3 flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3">
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search email, name, or member ID…"
-          className="border rounded px-3 py-2 w-full sm:w-80"
-        />
-        <span className="text-sm text-gray-600">
-          Showing {filtered.length} of {rows.length} (page size {PAGE_SIZE})
-        </span>
+      {/* Mobile cards */}
+      <div className="sm:hidden space-y-3">
+        {loading && <div className="card p-3 text-gray-600">Loading users…</div>}
+        {!loading && filtered.length === 0 && <div className="card p-3 text-gray-500">No users found.</div>}
+        {!loading && filtered.map((u) => {
+          const busy = !!saving[u.id];
+          const currentRole = u.roles?.[0] ?? "";
+          const adminVerified = !!u.verifiedByAdmin;
+          return (
+            <div key={u.id} className="card p-3 space-y-2">
+              <div className="text-sm"><span className="font-medium">{u.displayName || "—"}</span></div>
+              <div className="text-xs text-ink/70 break-all">{u.email || "—"}</div>
+              <div className="text-xs">Member ID: {u.memberId || "—"}</div>
+              <div className="grid grid-cols-1 gap-2">
+                <label className="block text-sm">
+                  <div className="text-xs text-ink/60 mb-0.5">Role</div>
+                  <select className="border rounded px-2 py-1 w-full" value={currentRole} disabled={busy} onChange={(e)=>setSingleRole(u.id, e.target.value)}>
+                    <option value="">— Select role —</option>
+                    {roleOptions.map((r) => (<option key={r} value={r}>{r}</option>))}
+                  </select>
+                </label>
+                <label className="block text-sm">
+                  <div className="text-xs text-ink/60 mb-0.5">Membership Class</div>
+                  <select className="border rounded px-2 py-1 w-full" value={u.memberType || ""} disabled={busy} onChange={async (e)=>{
+                    const value = e.target.value;
+                    setSaving((s)=>({ ...s, [u.id]: true }));
+                    const prev = rows;
+                    setRows((rs)=>rs.map((r)=>r.id===u.id?{ ...r, memberType: value }:r));
+                    try {
+                      await updateDoc(doc(db, "users", u.id), { memberType: value, updatedAt: serverTimestamp() });
+                      showToast("Membership class updated");
+                    } catch (e) {
+                      console.error(e);
+                      setRows(prev);
+                      showToast("Failed to update membership class", "error");
+                    } finally {
+                      setSaving((s)=>{ const { [u.id]: _, ...rest } = s; return rest; });
+                    }
+                  }}>
+                    <option value="">— Select class —</option>
+                    <option value="farmer">Farmer</option>
+                    <option value="consumer">Consumer</option>
+                    <option value="associate">Associate</option>
+                    <option value="institution">Institution</option>
+                  </select>
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" className="h-4 w-4" checked={adminVerified} disabled={busy} onChange={()=>toggleAdminVerified(u.id, adminVerified)} />
+                  <span>Admin Verified</span>
+                </label>
+                <button onClick={()=>toggleSuspend(u.id, u.suspended)} disabled={busy} className="px-3 py-1 border rounded disabled:opacity-50">
+                  {busy?"Saving…":(u.suspended?"Unsuspend":"Suspend")}
+                </button>
+              </div>
+            </div>
+          );
+        })}
       </div>
 
-      <div className="overflow-x-auto">
+      {/* Desktop table */}
+      <div className="overflow-x-auto hidden sm:block">
         <table className="min-w-[1100px] w-full border border-gray-200 rounded">
           <thead className="bg-gray-50">
             <tr>
@@ -401,7 +462,7 @@ export default function Users() {
               );
             })}
 
-      {!loading && filtered.length === 0 && (
+  {!loading && filtered.length === 0 && (
               <tr>
         <td className="p-4 text-gray-500" colSpan={8}>
                   No users found.

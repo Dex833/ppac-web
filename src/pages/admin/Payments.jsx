@@ -208,8 +208,28 @@ export default function AdminPaymentsList() {
         </label>
       </div>
 
-      {/* Table */}
-      <div className="overflow-x-auto">
+      {/* Mobile cards */}
+      <div className="space-y-3 sm:hidden">
+        {loading && <div className="card p-3">Loading…</div>}
+        {!loading && rows.length === 0 && <div className="card p-3 text-ink/60">No payments found.</div>}
+        {!loading && rows.map((p) => (
+          <div key={p.id} className="card p-3" onClick={() => setActiveId(p.id)}>
+            <div className="flex items-center justify-between text-sm">
+              <div className="text-ink/70">{formatDT(p.createdAt)}</div>
+              <StatusBadge s={p.status || "pending"} />
+            </div>
+            <div className="mt-1 text-sm">{p.memberName || p.userName || p.userEmail || p.userId || p.uid || "—"}</div>
+            <div className="mt-1 text-xs text-ink/70">{p.type || "—"} • {p.method === "static_qr" ? "QR (manual)" : (p.method || "—")}</div>
+            <div className="mt-2 flex items-center justify-between">
+              <div className="font-mono">₱{Number(p.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+              <div className="text-xs">Ref: {p.referenceNo || p.refNo || "—"}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop table */}
+      <div className="overflow-x-auto hidden sm:block">
         <table className="min-w-[900px] w-full border rounded">
           <thead className="bg-gray-50">
             <tr>
