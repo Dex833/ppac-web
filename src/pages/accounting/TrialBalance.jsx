@@ -11,7 +11,7 @@ import {
 } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
 import useUserProfile from "../../hooks/useUserProfile";
-import jsPDF from "jspdf";
+// defer heavy PDF lib until export is requested
 
 /* ---------- Save TB snapshot to /financialReports ---------- */
 async function saveTrialBalanceReport({
@@ -78,6 +78,7 @@ export default function TrialBalance() {
   const [sortDir, setSortDir] = useState("asc"); // 'asc' | 'desc'
 
   const [saving, setSaving] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const viewRef = useRef(null); // we snapshot this HTML
 
   // journalEntries in time order
@@ -206,8 +207,11 @@ export default function TrialBalance() {
     URL.revokeObjectURL(url);
   }
 
-  function exportPDF() {
-    const doc = new jsPDF({ unit: "pt", format: "a4" });
+  async function exportPDF() {
+  setDownloading(true);
+  try {
+  const { default: jsPDF } = await import("jspdf");
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
     let y = 40;
 
     doc.setFontSize(14);
@@ -253,6 +257,9 @@ export default function TrialBalance() {
     }
 
     doc.save(`TrialBalance_${from || "start"}_${to || "end"}.pdf`);
+  } finally {
+    setDownloading(false);
+  }
   }
 
   function handleSort(key) {
@@ -350,17 +357,20 @@ export default function TrialBalance() {
           <button
             className="bg-blue-600 text-white px-3 py-2 rounded font-semibold"
             onClick={exportCSV}
-            disabled={loading}
+            disabled={loading || downloading}
           >
             Export CSV
           </button>
           <button
             className="bg-blue-600 text-white px-3 py-2 rounded font-semibold"
             onClick={exportPDF}
-            disabled={loading}
+            disabled={loading || downloading}
           >
             Export PDF
           </button>
+          {downloading && (
+            <span className="text-sm text-ink/60">Preparing PDF…</span>
+          )}
           <button
             className="bg-gray-600 text-white px-3 py-2 rounded font-semibold"
             onClick={() => window.print()}

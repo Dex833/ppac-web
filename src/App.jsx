@@ -81,7 +81,7 @@ function MobileMenu({
             )}
 
             <li>
-              <Link className="block px-3 py-2 rounded hover:bg-brand-50" to="/dashboard" onClick={onClose}>
+              <Link className="block px-3 py-2 rounded hover:bg-brand-50" to="/dashboard" onMouseEnter={() => preloadDashboard()} onFocus={() => preloadDashboard()} onClick={onClose}>
                 Dashboard
               </Link>
             </li>
@@ -89,7 +89,7 @@ function MobileMenu({
             {/* NEW: Reports (signed-in, not suspended) */}
             {profile && notSuspended && (
               <li>
-                <Link className="block px-3 py-2 rounded hover:bg-brand-50" to="/reports" onClick={onClose}>
+                <Link className="block px-3 py-2 rounded hover:bg-brand-50" to="/reports" onMouseEnter={() => preloadReports()} onFocus={() => preloadReports()} onClick={onClose}>
                   Reports
                 </Link>
               </li>
@@ -97,7 +97,7 @@ function MobileMenu({
 
             {/* Store (visible even when logged out; access enforced by route) */}
             <li>
-              <Link className="block px-3 py-2 rounded hover:bg-brand-50" to="/store" onClick={onClose}>
+              <Link className="block px-3 py-2 rounded hover:bg-brand-50" to="/store" onMouseEnter={() => preloadStorefront()} onFocus={() => preloadStorefront()} onClick={onClose}>
                 Store
               </Link>
             </li>
@@ -157,53 +157,84 @@ import GuestRoute from "./components/GuestRoute.jsx";
 import RequireRole from "./components/RequireRole.jsx";
 import LoginModal from "./components/LoginModal.jsx";
 
-import Home from "./pages/Home.jsx"; // <-- new: renders Firestore-driven home content
-import Signup from "./pages/Signup.jsx";
-import Dashboard from "./pages/Dashboard.jsx";
-import Verify from "./pages/Verify.jsx";
-import Reset from "./pages/Reset.jsx";
-import Profile from "./pages/Profile.jsx";
+const preloadHome = () => import("./pages/Home.jsx");
+const Home = lazy(preloadHome);
+const preloadSignup = () => import("./pages/Signup.jsx");
+const Signup = lazy(preloadSignup);
+const preloadDashboard = () => import("./pages/Dashboard.jsx");
+const Dashboard = lazy(preloadDashboard);
+const preloadVerify = () => import("./pages/Verify.jsx");
+const Verify = lazy(preloadVerify);
+const preloadReset = () => import("./pages/Reset.jsx");
+const Reset = lazy(preloadReset);
+const preloadProfile = () => import("./pages/Profile.jsx");
+const Profile = lazy(preloadProfile);
 
-import RequirementsMembership from "./pages/RequirementsMembership.jsx";
+const preloadRequirements = () => import("./pages/RequirementsMembership.jsx");
+const RequirementsMembership = lazy(preloadRequirements);
 
-import AdminLayout from "./pages/Admin.jsx";
-import AdminUsers from "./pages/admin/Users.jsx";
-import EditHome from "./pages/admin/EditHome.jsx";
-import MembershipStatusAdmin from "./pages/admin/MembershipStatus.jsx";
-import MembershipReview from "./pages/admin/MembershipReview.jsx";
-import AdminPayments from "./pages/admin/Payments.jsx";
-import AccountingSettingsPage from "./pages/admin/AccountingSettings.jsx";
-import OpsDashboard from "./pages/admin/OpsDashboard.jsx";
-import PaymentsPage from "./pages/Payments.jsx";
-import ReceiptPage from "./pages/Receipt.jsx";
+const preloadAdminLayout = () => import("./pages/Admin.jsx");
+const AdminLayout = lazy(preloadAdminLayout);
+const preloadAdminUsers = () => import("./pages/admin/Users.jsx");
+const AdminUsers = lazy(preloadAdminUsers);
+const preloadEditHome = () => import("./pages/admin/EditHome.jsx");
+const EditHome = lazy(preloadEditHome);
+const preloadMembershipStatus = () => import("./pages/admin/MembershipStatus.jsx");
+const MembershipStatusAdmin = lazy(preloadMembershipStatus);
+const preloadMembershipReview = () => import("./pages/admin/MembershipReview.jsx");
+const MembershipReview = lazy(preloadMembershipReview);
+const preloadAdminPayments = () => import("./pages/admin/Payments.jsx");
+const AdminPayments = lazy(preloadAdminPayments);
+const preloadAccountingSettings = () => import("./pages/admin/AccountingSettings.jsx");
+const AccountingSettingsPage = lazy(preloadAccountingSettings);
+const preloadOps = () => import("./pages/admin/OpsDashboard.jsx");
+const OpsDashboard = lazy(preloadOps);
+const preloadPaymentsPage = () => import("./pages/Payments.jsx");
+const PaymentsPage = lazy(preloadPaymentsPage);
+const preloadReceiptPage = () => import("./pages/Receipt.jsx");
+const ReceiptPage = lazy(preloadReceiptPage);
 // removed gateway result routes
-import Storefront from "./pages/store/Storefront.jsx";
-import ProductDetail from "./pages/store/ProductDetail.jsx";
-import CartPage from "./pages/store/CartPage.jsx";
-import Checkout from "./pages/store/Checkout.jsx";
+const preloadStorefront = () => import("./pages/store/Storefront.jsx");
+const Storefront = lazy(preloadStorefront);
+const preloadProductDetail = () => import("./pages/store/ProductDetail.jsx");
+const ProductDetail = lazy(preloadProductDetail);
+const preloadCart = () => import("./pages/store/CartPage.jsx");
+const CartPage = lazy(preloadCart);
+const preloadCheckout = () => import("./pages/store/Checkout.jsx");
+const Checkout = lazy(preloadCheckout);
 import { CartProvider } from "@/contexts/CartContext.jsx";
 import AdminProducts from "./pages/admin/AdminProducts.jsx";
 import AdminOrders from "./pages/admin/AdminOrders.jsx";
 
 // Lazy load accounting pages
-const Accounting = lazy(() => import("./pages/accounting/index.jsx"));
-const ChartOfAccounts = lazy(() => import("./pages/accounting/ChartOfAccounts.jsx"));
-const JournalEntries = lazy(() => import("./pages/accounting/JournalEntries.jsx"));
-const GeneralJournal = lazy(() => import("./pages/accounting/GeneralJournal.jsx"));
-const Ledger = lazy(() => import("./pages/accounting/Ledger.jsx"));
-const TrialBalance = lazy(() => import("./pages/accounting/TrialBalance.jsx"));
-const FinancialStatements = lazy(() => import("./pages/accounting/FinancialStatements.jsx"));
+const preloadAccounting = () => import("./pages/accounting/index.jsx");
+const Accounting = lazy(preloadAccounting);
+const preloadChart = () => import("./pages/accounting/ChartOfAccounts.jsx");
+const ChartOfAccounts = lazy(preloadChart);
+const preloadJournalEntries = () => import("./pages/accounting/JournalEntries.jsx");
+const JournalEntries = lazy(preloadJournalEntries);
+const preloadGeneralJournal = () => import("./pages/accounting/GeneralJournal.jsx");
+const GeneralJournal = lazy(preloadGeneralJournal);
+const preloadLedger = () => import("./pages/accounting/Ledger.jsx");
+const Ledger = lazy(preloadLedger);
+const preloadTrialBalance = () => import("./pages/accounting/TrialBalance.jsx");
+const TrialBalance = lazy(preloadTrialBalance);
+const preloadFinancialStatements = () => import("./pages/accounting/FinancialStatements.jsx");
+const FinancialStatements = lazy(preloadFinancialStatements);
 
 // NEW: lazy load reports pages
-const Reports = lazy(() => import("./pages/reports/Reports.jsx"));
-const ReportView = lazy(() => import("./pages/reports/ReportView.jsx"));
+const preloadReports = () => import("./pages/reports/Reports.jsx");
+const Reports = lazy(preloadReports);
+const preloadReportView = () => import("./pages/reports/ReportView.jsx");
+const ReportView = lazy(preloadReportView);
 
 import ppacLogo from "./assets/ppac-logo.png";
 
-function NavItem({ to, children }) {
+function NavItem({ to, children, ...rest }) {
   return (
     <NavLink
       to={to}
+  {...rest}
       className={({ isActive }) =>
         [
           "px-3 py-2 rounded-lg text-sm font-medium transition",
@@ -281,11 +312,11 @@ export default function App() {
                 <NavItem to="/signup">Signup</NavItem>
               </>
             )}
-            <NavItem to="/dashboard">Dashboard</NavItem>
+            <NavItem to="/dashboard" onMouseEnter={() => preloadDashboard()} onFocus={() => preloadDashboard()}>Dashboard</NavItem>
 
             {/* Reports tab visible to any signed-in not-suspended member; access enforced inside route */}
-            {profile && notSuspended && <NavItem to="/reports">Reports</NavItem>}
-            {profile && notSuspended && <NavItem to="/store">Store</NavItem>}
+            {profile && notSuspended && <NavItem to="/reports" onMouseEnter={() => preloadReports()} onFocus={() => preloadReports()}>Reports</NavItem>}
+            {profile && notSuspended && <NavItem to="/store" onMouseEnter={() => preloadStorefront()} onFocus={() => preloadStorefront()}>Store</NavItem>}
 
             {isAdmin && notSuspended && <NavItem to="/admin/users">Admin</NavItem>}
             {(notSuspended && (isAdmin || isTreasurer || isManager)) && <NavItem to="/accounting">Accounting</NavItem>}

@@ -11,7 +11,7 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import useUserProfile from "../../../hooks/useUserProfile";
-import jsPDF from "jspdf";
+// defer heavy PDF lib until export is requested
 import { useNavigate } from "react-router-dom";
 
 /* -------------------- Error Boundary (prevents blank screens) -------------------- */
@@ -247,8 +247,10 @@ function IncomeStatementInner() {
       setPrinting(false);
     }, 50);
   }
-  function handleDownloadPDF(reportObj) {
+  async function handleDownloadPDF(reportObj) {
     setDownloading(true);
+    try {
+    const { default: jsPDF } = await import("jspdf");
     const docPDF = new jsPDF();
     docPDF.setFontSize(16);
     docPDF.text("Income Statement", 14, 16);
@@ -321,7 +323,9 @@ function IncomeStatementInner() {
 
     const fileName = `IncomeStatement_${formatRange(reportObj.from, reportObj.to).replace(/\s+/g, "")}.pdf`;
     docPDF.save(fileName);
-    setDownloading(false);
+    } finally {
+      setDownloading(false);
+    }
   }
   function handleDownloadCSV(reportObj) {
     const revs = A(reportObj.report.revenues);
@@ -480,6 +484,7 @@ function IncomeStatementInner() {
         <div className="mb-4 flex flex-wrap gap-2">
           <button className="btn btn-primary" onClick={() => handleDownloadCSV(reportObj)} disabled={downloading}>Export CSV</button>
           <button className="btn btn-primary" onClick={() => handleDownloadPDF(reportObj)} disabled={downloading}>Export PDF</button>
+          {downloading && <span className="text-sm text-ink/60">Preparing PDF…</span>}
           <button className="btn btn-outline" onClick={handlePrint}>Print</button>
           <button
             className="btn btn-primary disabled:opacity-60"

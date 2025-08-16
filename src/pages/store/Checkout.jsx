@@ -9,7 +9,6 @@ import {
   addDoc,
   serverTimestamp,
   setDoc,
-  updateDoc,
   runTransaction,
   increment,
 } from "firebase/firestore";
@@ -40,8 +39,10 @@ export default function Checkout() {
   const [method, setMethod] = useState("");
   const [referenceNo, setReferenceNo] = useState("");
   const [file, setFile] = useState(null);
+  const [fileError, setFileError] = useState("");
   const [busy, setBusy] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -80,6 +81,17 @@ export default function Checkout() {
 
   const isManual = ["bank_transfer", "gcash_manual", "static_qr"].includes(method);
 
+  // Reset manual-only fields when switching methods
+  useEffect(() => {
+    setUploadProgress(0);
+    setFileError("");
+    setErrorMsg("");
+    if (!isManual) {
+      setReferenceNo("");
+      setFile(null);
+    }
+  }, [isManual]);
+
   function validateFile(f) {
     if (!f) return false;
     const okTypes = [
@@ -93,19 +105,30 @@ export default function Checkout() {
     return ok && small;
   }
 
+  const canSubmit = useMemo(() => {
+    if (busy) return false;
+    if (!method) return false;
+    if (!isManual) return true;
+    const valid = referenceNo.trim() && file && validateFile(file);
+    return Boolean(valid);
+  }, [busy, method, isManual, referenceNo, file]);
+
   async function onSubmit(e) {
     e.preventDefault();
-    if (!user?.uid) return alert("You're not signed in. Please sign in and try again.");
-    if ((cart.items || []).length === 0) return alert("Cart is empty.");
-    if (!method) return alert("Choose a payment method.");
+  setErrorMsg("");
+  if (!user?.uid) { setErrorMsg("You're not signed in. Please sign in and try again."); return; }
+  if ((cart.items || []).length === 0) { setErrorMsg("Cart is empty."); return; }
+  if (!method) { setErrorMsg("Choose a payment method."); return; }
 
     // For manual methods, validate BEFORE creating any records
     if (isManual) {
       if (!referenceNo.trim()) {
-        return alert("Reference No is required for this payment method.");
+        setErrorMsg("Reference No is required for this payment method.");
+        return;
       }
       if (!file || !validateFile(file)) {
-        return alert("Valid proof file is required (JPG/PNG/WEBP/PDF up to 2MB).");
+        setErrorMsg("Valid proof file is required (JPG/PNG/WEBP/PDF up to 2MB).");
+        return;
       }
     }
 
@@ -204,7 +227,6 @@ export default function Checkout() {
   await setDoc(doc(db, "carts", user.uid), { items: [] }, { merge: true });
   try { clearLocalCart(); } catch {}
 
-        alert("Order placed. Your payment is pending verification.");
         nav("/payments");
         return;
       }
@@ -234,14 +256,13 @@ export default function Checkout() {
       });
   await setDoc(doc(db, "carts", user.uid), { items: [] }, { merge: true });
   try { clearLocalCart(); } catch {}
-      alert(`Order ${orderRef.id} placed.`);
       nav("/store");
     } catch (e) {
       // Best-effort cleanup for orphaned proof files when manual flow fails after upload
       if (isManual && manualProofPath) {
         try { await deleteObject(storageRef(storage, manualProofPath)); } catch {}
       }
-      alert(e?.message || String(e));
+  setErrorMsg(e?.message || String(e));
     } finally {
       setBusy(false);
     }
@@ -279,6 +300,11 @@ export default function Checkout() {
 
         <form className="card p-4 space-y-3" onSubmit={onSubmit}>
           {/* Order summary */}
+          {errorMsg && (
+            <div className="p-2 rounded bg-rose-50 text-rose-700 text-sm border border-rose-200">
+              {errorMsg}
+            </div>
+          )}
           <div>
             <div className="text-xs text-ink/60 mb-1">Items</div>
             <div className="divide-y">
@@ -306,7 +332,8 @@ export default function Checkout() {
                       ? "bg-brand-600 text-white border-brand-600"
                       : "bg-white"
                   }`}
-                  onClick={() => setMethod(m)}
+                  onClick={() => !busy && setMethod(m)}
+                  disabled={busy}
                 >
                   {MANUAL_METHOD_LABELS[m]}
                 </button>
@@ -356,8 +383,18 @@ export default function Checkout() {
                 <input
                   type="file"
                   accept="image/jpeg,image/png,image/webp,application/pdf"
-                  onChange={(e) => setFile(e.target.files?.[0] || null)}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] || null;
+                    setFile(f);
+                    if (!f) { setFileError(""); return; }
+                    if (!validateFile(f)) {
+                      setFileError("Must be JPG/PNG/WEBP/PDF up to 2MB.");
+                    } else {
+                      setFileError("");
+                    }
+                  }}
                 />
+                {fileError && <div className="text-sm text-rose-700 mt-1">{fileError}</div>}
               </label>
               {busy && uploadProgress > 0 && uploadProgress < 100 && (
                 <div className="w-full bg-gray-200 rounded h-2 overflow-hidden">
@@ -382,7 +419,7 @@ export default function Checkout() {
           </div>
 
           <div>
-            <button className="btn btn-primary" disabled={busy || !method} type="submit">
+            <button className="btn btn-primary" disabled={!canSubmit} type="submit">
               {busy ? "Processing…" : "Place Order"}
             </button>
           </div>

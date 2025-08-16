@@ -11,7 +11,7 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import useUserProfile from "../../../hooks/useUserProfile";
-import jsPDF from "jspdf";
+// defer heavy PDF lib until export is requested
 
 /* ---------------- Error Boundary (prevents blank screen) ---------------- */
 class BSBoundary extends React.Component {
@@ -341,9 +341,11 @@ function BalanceSheetInner() {
     document.body.removeChild(a); URL.revokeObjectURL(url); setDownloading(false);
   }
 
-  function handleExportPDF(){
+  async function handleExportPDF(){
     if (!asOf) return;
     setDownloading(true);
+    try {
+    const { default: jsPDF } = await import("jspdf");
     const d = new jsPDF();
     d.setFontSize(14); d.text(`Balance Sheet — As of ${formatDateSimple(asOf)}`, 14, 16);
     let y = 26;
@@ -357,7 +359,10 @@ function BalanceSheetInner() {
     section("Liabilities", liabRows, totals.liabilities);
     section("Equity", equityRows, totals.equity);
     d.setFont(undefined,"bold"); d.text("Total Liabilities & Equity", 16, y); d.text(fmt2(totals.liabPlusEquity), 190-14, y, {align:"right"});
-    d.save(`BalanceSheet_${asOf}.pdf`); setDownloading(false);
+    d.save(`BalanceSheet_${asOf}.pdf`);
+    } finally {
+      setDownloading(false);
+    }
   }
 
   /* ---------------- Render ---------------- */
@@ -385,6 +390,7 @@ function BalanceSheetInner() {
           <div className="flex gap-2 ml-auto">
             <button className="btn btn-primary" onClick={handleExportCSV} disabled={!asOf || downloading}>Export CSV</button>
             <button className="btn btn-primary" onClick={handleExportPDF} disabled={!asOf || downloading}>Export PDF</button>
+            {downloading && <span className="text-sm text-ink/60">Preparing PDF…</span>}
             <button className="btn btn-outline" onClick={handlePrint}>Print</button>
             <button className="btn btn-primary disabled:opacity-60" onClick={handleSaveToReports} disabled={!asOf || saving}>
               {saving ? "Saving…" : "Save to Reports"}
