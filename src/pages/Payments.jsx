@@ -47,6 +47,7 @@ const ALLOWED_MIME = [
   "application/pdf",
 ];
 const MAX_MB = 2;
+const COMMON_AMOUNTS = [1000, 2000, 5000, 10000];
 
 function TabButton({ active, onClick, children }) {
   return (
@@ -114,15 +115,19 @@ export default function PaymentsPage() {
 }
 
 function MakePayment({ uid, settings, loadingSettings }) {
+  const amountInputRef = useRef();
   const navigate = useNavigate();
   const [type, setType] = useState("membership_fee");
   const [amount, setAmount] = useState("");
+  const [amountErr, setAmountErr] = useState("");
   const [method, setMethod] = useState("");
   const [referenceNo, setReferenceNo] = useState("");
+  const [referenceErr, setReferenceErr] = useState("");
   const [file, setFile] = useState(null);
   const [fileErr, setFileErr] = useState("");
   const [uploadPct, setUploadPct] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [successMsg, setSuccessMsg] = useState("");
   const [note, setNote] = useState("");
   // Static QR settings only (for manual QR display)
   const [qr, setQr] = useState(null);
@@ -220,6 +225,26 @@ function MakePayment({ uid, settings, loadingSettings }) {
     return true;
   }
 
+  // Real-time validation for amount
+  function validateAmount(val) {
+    if (!val || isNaN(val) || Number(val) <= 0) {
+      setAmountErr("Enter a valid amount > 0.");
+      return false;
+    }
+    setAmountErr("");
+    return true;
+  }
+
+  // Real-time validation for reference number
+  function validateReference(val) {
+    if (["bank_transfer", "gcash_manual", "static_qr"].includes(selectedMethod) && !val.trim()) {
+      setReferenceErr("Reference No is required.");
+      return false;
+    }
+    setReferenceErr("");
+    return true;
+  }
+
   function onFileChange(e) {
     const f = e.target.files?.[0];
     if (!f) {
@@ -229,6 +254,11 @@ function MakePayment({ uid, settings, loadingSettings }) {
     }
     if (validateFile(f)) setFile(f);
     else setFile(null);
+  }
+
+  function removeFile() {
+    setFile(null);
+    setFileErr("");
   }
 
   const membershipLocked = (settings?.oneTimeMembership === true) && alreadyPaidMembership;
@@ -247,13 +277,20 @@ function MakePayment({ uid, settings, loadingSettings }) {
     e.preventDefault();
     if (!uid) return;
     if (!selectedMethod) return alert("Please choose a method.");
-  const amt = Number(amount);
-  if (!isFinite(amt) || amt <= 0) return alert("Enter a valid amount > 0.");
+    const amt = Number(amount);
+    if (!validateAmount(amount)) {
+      amountInputRef.current?.focus();
+      return;
+    }
     const isManual = ["bank_transfer", "gcash_manual", "static_qr"].includes(selectedMethod);
-    if (isManual && !referenceNo.trim()) return alert("Reference No is required.");
-    if (isManual && !file) return alert("Proof file is required.");
+    if (!validateReference(referenceNo)) return;
+    if (isManual && !file) {
+      setFileErr("Proof file is required.");
+      return;
+    }
     if (type === "membership_fee" && settings?.membershipFee != null && Number(settings.membershipFee) !== amt) {
-      return alert("Membership fee amount is fixed.");
+      setAmountErr("Membership fee amount is fixed.");
+      return;
     }
 
     setBusy(true);
@@ -306,13 +343,13 @@ function MakePayment({ uid, settings, loadingSettings }) {
         // 3) Update payment with proofUrl
         await updateDoc(doc(db, "payments", created.id), { proofURL: url });
 
-        alert("Payment submitted. You can track it under Payment History.");
-        // Reset form
-        if (type !== "membership_fee") setAmount("");
-        setReferenceNo("");
-        setFile(null);
-        setUploadPct(0);
-        setNote("");
+  setSuccessMsg("Payment submitted! You can track it under Payment History.");
+  // Reset form
+  if (type !== "membership_fee") setAmount("");
+  setReferenceNo("");
+  setFile(null);
+  setUploadPct(0);
+  setNote("");
       }
     } catch (err) {
       console.error("submit payment:", err);
@@ -364,15 +401,34 @@ function MakePayment({ uid, settings, loadingSettings }) {
           {/* Amount */}
           <label className="block">
             <div className="text-xs text-ink/60">Amount</div>
-            <input
-              className="input"
-              type="number"
-              step="0.01"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              disabled={type === "membership_fee"}
-              placeholder={type === "share_capital" && firstShareCapital ? `Suggested min: ${settings?.initialShareCapitalMin ?? ""}` : "Enter amount"}
-            />
+            <div className="flex gap-2 items-center">
+              <input
+                className="input"
+                type="number"
+                step="0.01"
+                value={amount}
+                ref={amountInputRef}
+                onChange={(e) => {
+                  setAmount(e.target.value);
+                  validateAmount(e.target.value);
+                }}
+                aria-label="Amount"
+                placeholder={type === "share_capital" && firstShareCapital ? `Suggested min: ${settings?.initialShareCapitalMin ?? ""}` : "Enter amount"}
+              />
+              {/* Quick-fill buttons */}
+              {COMMON_AMOUNTS.map((amt) => (
+                <button
+                  key={amt}
+                  type="button"
+                  className="px-2 py-1 rounded border text-xs bg-gray-50 hover:bg-brand-50"
+                  onClick={() => { setAmount(String(amt)); validateAmount(String(amt)); }}
+                  aria-label={`Quick fill ₱${amt}`}
+                >
+                  ₱{amt}
+                </button>
+              ))}
+            </div>
+            {amountErr && <div className="text-xs text-rose-700 mt-1">{amountErr}</div>}
             {type === "share_capital" && firstShareCapital && (
               <div className="text-xs text-emerald-700 mt-1">First contribution</div>
             )}
@@ -420,22 +476,35 @@ function MakePayment({ uid, settings, loadingSettings }) {
           {/* Reference */}
           <label className="block">
             <div className="text-xs text-ink/60">Reference No</div>
-            <input className="input" value={referenceNo} onChange={(e) => setReferenceNo(e.target.value)} />
+            <input
+              className="input"
+              value={referenceNo}
+              onChange={(e) => {
+                setReferenceNo(e.target.value);
+                validateReference(e.target.value);
+              }}
+              aria-label="Reference Number"
+            />
+            {referenceErr && <div className="text-xs text-rose-700 mt-1">{referenceErr}</div>}
           </label>
 
           {/* Proof (required for manual methods) */}
-          {true && (
-            <div>
-              <div className="text-xs text-ink/60 mb-1">Proof (JPG/PNG/WEBP/PDF, ≤ {MAX_MB}MB)</div>
-              <input type="file" accept={ALLOWED_EXT.map((e) => "." + e).join(",")} onChange={onFileChange} />
-              {fileErr && <div className="text-sm text-rose-700 mt-1">{fileErr}</div>}
-              {uploadPct > 0 && (
-                <div className="h-2 bg-gray-200 rounded mt-2 overflow-hidden">
-                  <div className="h-2 bg-brand-600" style={{ width: `${uploadPct}%` }} />
-                </div>
-              )}
-            </div>
-          )}
+          <div>
+            <div className="text-xs text-ink/60 mb-1">Proof (JPG/PNG/WEBP/PDF, ≤ {MAX_MB}MB)</div>
+            <input type="file" accept={ALLOWED_EXT.map((e) => "." + e).join(",")} onChange={onFileChange} aria-label="Proof file upload" />
+            {file && (
+              <div className="flex items-center gap-2 mt-2">
+                <span className="text-xs">{file.name} ({(file.size/1024/1024).toFixed(2)} MB)</span>
+                <button type="button" className="btn btn-xs btn-outline" onClick={removeFile} aria-label="Remove file">Remove</button>
+              </div>
+            )}
+            {fileErr && <div className="text-sm text-rose-700 mt-1">{fileErr}</div>}
+            {uploadPct > 0 && (
+              <div className="h-2 bg-gray-200 rounded mt-2 overflow-hidden" aria-label="Upload progress">
+                <div className="h-2 bg-brand-600" style={{ width: `${uploadPct}%` }} />
+              </div>
+            )}
+          </div>
 
           {/* Note */}
           <label className="block">
@@ -444,18 +513,27 @@ function MakePayment({ uid, settings, loadingSettings }) {
           </label>
 
           <div className="flex items-center gap-3 pt-2">
-            <button className="btn btn-primary" disabled={busy || !selectedMethod} type="submit">
+            <button className="btn btn-primary" disabled={busy || !selectedMethod} type="submit" aria-busy={busy} aria-label="Submit Payment">
               {busy ? "Submitting…" : "Submit Payment"}
             </button>
             {membershipLocked && (
               <span className="text-sm text-ink/60">Membership fee already paid.</span>
+            )}
+            {successMsg && (
+              <span className="text-sm text-emerald-700">{successMsg} <a href="#history" className="underline" onClick={() => navigate('/payments#history')}>View History</a></span>
             )}
           </div>
         </form>
       </div>
       <aside>
         <div className="card p-4 space-y-3">
-          <h3 className="font-semibold">Instructions</h3>
+          <h3 className="font-semibold">Instructions & Support</h3>
+          {type === "membership_fee" && (
+            <div className="text-xs text-ink/80 mb-2">Membership fee is non-refundable. Please double-check your details before submitting.</div>
+          )}
+          {type === "share_capital" && (
+            <div className="text-xs text-ink/80 mb-2">Share capital payments increase your ownership. Minimums may apply.</div>
+          )}
           {selectedMethod === "bank_transfer" && (
             <p className="text-sm whitespace-pre-wrap">{settings?.instructionsBank || "Bank transfer instructions not set."}</p>
           )}
@@ -478,7 +556,7 @@ function MakePayment({ uid, settings, loadingSettings }) {
               )}
             </div>
           )}
-          <div className="text-xs text-ink/60">Fixed fees and reminders may be shown here.</div>
+          <div className="text-xs text-ink/60">For help, contact <a href="mailto:support@ppac.com" className="underline">support@ppac.com</a> or your admin.</div>
         </div>
       </aside>
     </div>

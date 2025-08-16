@@ -644,7 +644,56 @@ export const onJournalEntryCreated = onDocumentCreated(
   }
 );
 
-// Backfill and remirroring callables removed
+
+// ------------------------- Backfill legacy journalEntries date field ------------------------- 
+export const backfillJournalDates = onCall({ region: "asia-southeast1", timeoutSeconds: 540 }, async (req) => {
+  try {
+    const uid = req.auth?.uid || "";
+    if (!uid) throw new Error("auth required");
+    const allowed = await isAdminLike(uid);
+    if (!allowed) throw new Error("permission denied");
+
+    const col = db.collection("journalEntries");
+    const snap = await col.get();
+    let updated = 0;
+    for (const d of snap.docs) {
+      const data = d.data() || {};
+      let dateVal = data.date;
+      let needsUpdate = false;
+      let dateStr = "";
+      if (!dateVal) {
+        // No date, use createdAt or fallback to today
+        if (data.createdAt && typeof data.createdAt.toDate === "function") {
+          dateStr = ymd(data.createdAt.toDate());
+        } else {
+          dateStr = ymd(new Date());
+        }
+        needsUpdate = true;
+      } else if (typeof dateVal === "object" && typeof dateVal.toDate === "function") {
+        // Firestore Timestamp
+        dateStr = ymd(dateVal.toDate());
+        needsUpdate = true;
+      } else if (typeof dateVal === "string" && !/^\d{4}-\d{2}-\d{2}$/.test(dateVal)) {
+        // String but not in YYYY-MM-DD
+        const dt = new Date(dateVal);
+        if (!isNaN(dt.getTime())) {
+          dateStr = ymd(dt);
+          needsUpdate = true;
+        }
+      }
+      if (needsUpdate && dateStr) {
+        await d.ref.set({ date: dateStr, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+        updated++;
+      }
+    }
+    return { ok: true, updated };
+  } catch (err) {
+    // Log error for debugging
+    try { logger.error("backfillJournalDates error", { error: err?.message || String(err), stack: err?.stack }); } catch {}
+    // Return error message to client
+    return { ok: false, error: err?.message || String(err) };
+  }
+});
 
 // ------------------------- Settlements posting -------------------------
 export const postSettlement = onCall({ region: "asia-southeast1" }, async (req) => {

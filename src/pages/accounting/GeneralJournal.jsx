@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import SafeText from "@/components/SafeText";
 import { formatD, formatDT } from "@/utils/dates";
-import { db } from "@/lib/firebase";
+import { db, functions } from "@/lib/firebase";
 import {
   collection,
   query,
@@ -39,6 +39,7 @@ function toYMD(v) {
   } catch {}
   return "";
 }
+
 function useAccounts() {
   const [accounts, setAccounts] = useState([]);
   useEffect(() => {
@@ -79,7 +80,21 @@ export default function GeneralJournal() {
     setLoading(true);
     const q = query(collection(db, "journalEntries"), orderBy("createdAt", "desc"));
     const unsub = onSnapshot(q, (snap) => {
-      setEntries(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      const toYMD = (v) => {
+        try {
+          if (v && typeof v.toDate === "function") return v.toDate().toISOString().slice(0,10);
+          const s = String(v ?? "").trim();
+          if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+          const dt = new Date(s);
+          if (!isNaN(dt.getTime())) return dt.toISOString().slice(0,10);
+        } catch {}
+        return "";
+      };
+      const rows = snap.docs.map((d) => {
+        const raw = { id: d.id, ...d.data() };
+        return { ...raw, date: toYMD(raw.date || raw.createdAt) };
+      });
+      setEntries(rows);
       setLoading(false);
     });
     return () => unsub();
@@ -338,6 +353,7 @@ export default function GeneralJournal() {
 
   // Only show action buttons once per entry (first visible row in desktop table)
   const seen = new Set();
+
 
   return (
     <div className="overflow-x-hidden">
