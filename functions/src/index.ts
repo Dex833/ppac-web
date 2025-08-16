@@ -804,37 +804,38 @@ export const refundPayment = onCall(
   const refNumber = await getNextJournalRefNumber();
   const journalNo = parseInt(refNumber, 10) || null;
 
+  const dateStr = ymd(new Date());
   // Create reversal journal then update payment in a transaction
-    await db.runTransaction(async (tx) => {
-      tx.set(newJRef, {
-        type: "refund",
-        reference: refundKey,
-        sourcePaymentId: paymentId,
-        memo: `Refund of ${(p.type || "payment")} ${paymentId}${reason ? " – " + reason : ""}`,
-        date: FieldValue.serverTimestamp(),
-    refNumber,
-    journalNo,
-        lines: revLines,
-        status: "posted",
-        postedAt: FieldValue.serverTimestamp(),
-        postedByUid: uid,
-        createdAt: FieldValue.serverTimestamp(),
-        createdByUid: uid,
-    linkedPaymentId: paymentId,
-      });
-      tx.set(
-        pRef,
-        {
-          status: "refunded",
-          refundReason: reason || "",
-          refundedBy: uid,
-          refundedAt: FieldValue.serverTimestamp(),
-          refundJournalId: refundJournalId,
-          updatedAt: FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+  await db.runTransaction(async (tx) => {
+    tx.set(newJRef, {
+      type: "refund",
+      reference: refundKey,
+      sourcePaymentId: paymentId,
+      memo: `Refund of ${(p.type || "payment")} ${paymentId}${reason ? " – " + reason : ""}`,
+      date: dateStr,
+      refNumber,
+      journalNo,
+      lines: revLines,
+      status: "posted",
+      postedAt: FieldValue.serverTimestamp(),
+      postedByUid: uid,
+      createdAt: FieldValue.serverTimestamp(),
+      createdByUid: uid,
+      linkedPaymentId: paymentId,
     });
+    tx.set(
+      pRef,
+      {
+        status: "refunded",
+        refundReason: reason || "",
+        refundedBy: uid,
+        refundedAt: FieldValue.serverTimestamp(),
+        refundJournalId: refundJournalId,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+  });
 
     // Optional admin log (best effort)
     try {
