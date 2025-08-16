@@ -14,6 +14,31 @@ import {
 } from "firebase/firestore";
 
 // Live accounts list for mapping and edit dropdowns
+
+// Normalize Firestore Timestamp | string -> "YYYY-MM-DD"
+function toYMD(v) {
+  try {
+    if (!v) return "";
+    if (typeof v === "string") return v.slice(0, 10);
+    // Firestore Timestamp
+    if (typeof v?.toDate === "function") {
+      const d = v.toDate();
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    }
+    // Plain object with seconds/nanoseconds (defensive)
+    if (v?.seconds != null) {
+      const d = new Date(v.seconds * 1000);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    }
+  } catch {}
+  return "";
+}
 function useAccounts() {
   const [accounts, setAccounts] = useState([]);
   useEffect(() => {
@@ -88,9 +113,11 @@ export default function GeneralJournal() {
 
   // --------- Filtering ----------
   function entryMatchesFilters(e) {
-    const refStr = e.refNumber || (e.journalNo ? String(e.journalNo).padStart(5, "0") : "");
-    if (filter.ref && !refStr.includes(filter.ref)) return false;
-    if (filter.date && e.date !== filter.date) return false;
+  const refStr = e.refNumber || (e.journalNo ? String(e.journalNo).padStart(5, "0") : "");
+  if (filter.ref && !refStr.includes(filter.ref)) return false;
+  // normalize date for comparisons
+  const eDate = toYMD(e.date);
+  if (filter.date && eDate !== filter.date) return false;
     if (
       filter.account &&
       !e.lines?.some((l) => {
@@ -111,17 +138,20 @@ export default function GeneralJournal() {
   let lines = entries
     .filter(entryMatchesFilters)
     .flatMap((entry) =>
-      (entry.lines || []).map((line) => ({
-        ...line,
-        entryId: entry.id,
-        refNumber: entry.refNumber || (entry.journalNo ? String(entry.journalNo).padStart(5, "0") : ""),
-        date: entry.date,
-        description: entry.description,
-        comments: entry.comments,
-        createdBy: entry.createdBy,
-        updatedBy: entry.updatedBy,
-        updatedAt: entry.updatedAt,
-      }))
+      (entry.lines || []).map((line) => {
+        const normalizedDate = toYMD(entry.date);
+        return {
+          ...line,
+          entryId: entry.id,
+          refNumber: entry.refNumber || (entry.journalNo ? String(entry.journalNo).padStart(5, "0") : ""),
+          date: normalizedDate,
+          description: entry.description,
+          comments: entry.comments,
+          createdBy: entry.createdBy,
+          updatedBy: entry.updatedBy,
+          updatedAt: entry.updatedAt,
+        };
+      })
     );
 
   // Sort rows (desktop table)
@@ -153,12 +183,13 @@ export default function GeneralJournal() {
   // --------- Grouped (headers-only) rows ----------
   const groupedRows = mobileEntries.map((e) => {
     const refNumber = e.refNumber || (e.journalNo ? String(e.journalNo).padStart(5, "0") : "");
+    const date = toYMD(e.date);
     const debitTotal = (e.lines || []).reduce((s, l) => s + (parseFloat(l.debit) || 0), 0);
     const creditTotal = (e.lines || []).reduce((s, l) => s + (parseFloat(l.credit) || 0), 0);
     return {
       id: e.id,
       refNumber,
-      date: e.date,
+      date,
       description: e.description,
       comments: e.comments,
       createdBy: e.createdBy,
@@ -420,6 +451,7 @@ export default function GeneralJournal() {
                     <tr key={line.entryId + "-" + idx} className="odd:bg-white even:bg-gray-50">
                       <td className="p-2 border-b font-mono">{line.refNumber}</td>
                       <td className="p-2 border-b whitespace-nowrap">{formatD(line.date)}</td>
+                      <td className="p-2 border-b whitespace-nowrap">{formatD(line.date)}</td>
                       <td className="p-2 border-b">{line.description}</td>
                       <td className="p-2 border-b">{getAccountName(line.accountId)}</td>
                       <td className="p-2 border-b">{getAccountType(line.accountId)}</td>
@@ -553,7 +585,9 @@ export default function GeneralJournal() {
                       <div className="text-xs uppercase text-ink/50">Ref#</div>
                       <div className="font-mono">{entry.refNumber || (entry.journalNo ? String(entry.journalNo).padStart(5, "0") : "")}</div>
                       <div className="text-xs uppercase text-ink/50 mt-2">Date</div>
-                      <div className="whitespace-nowrap">{formatD(entry.date)}</div>
+                      <div className="whitespace-nowrap">
+                        {formatD(toYMD(entry.date))}
+                      </div>
                     </div>
                     <div className="text-right">
                       <div className="text-xs uppercase text-ink/50">Created By</div>
